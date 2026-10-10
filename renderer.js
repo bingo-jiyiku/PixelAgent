@@ -130,7 +130,21 @@ function syncCursor() {
 }
 input.addEventListener('input', syncCursor);
 input.addEventListener('focus', () => { cursor.style.background = '#ff2d95'; });
-input.addEventListener('blur', () => { cursor.style.background = '#000'; });
+input.addEventListener('blur', () => { cursor.style.background = '#7ff0ab'; });
+
+/* ---------- 打字机尾部光标：回复流出时跟气泡最后一个字 ---------- */
+function addCaret() {
+  if (!S.bubble || S.bubble.querySelector('.stream-caret')) return;
+  const c = document.createElement('span');
+  c.className = 'stream-caret';
+  c.setAttribute('aria-hidden', 'true');
+  S.bubble.appendChild(c);
+}
+function removeCaret() {
+  if (!S.bubble) return;
+  const c = S.bubble.querySelector('.stream-caret');
+  if (c) c.remove();
+}
 
 /* ============================================================
    发送
@@ -171,6 +185,7 @@ function endTurn(code) {
   S.busy = false;
   stopTimer();
   btnStop.classList.add('hidden');
+  removeCaret();          // 收尾也兜一遍：异常退出时尾部光标不留
   setState('DONE');
   if (code !== 0 && code != null) {
     addMsg('err', 'ERR', 'pi 退出码 ' + code + '（看看是不是没认证）');
@@ -236,9 +251,15 @@ function onMsg(msg) {
         scrollEnd();
         break;
       case 'text_delta':
-        if (S.bubble) { S.bubble.textContent += a.delta || ''; scrollEnd(); }
+        if (S.bubble) {
+          addCaret();                       // 每字流进来时，尾巴挂着方块光标
+          S.bubble.textContent += a.delta || '';
+          addCaret();                       // textContent 赋值会清掉子节点，补回来
+          scrollEnd();
+        }
         break;
       case 'text_end':
+        removeCaret();                      // 回复写完，光标下班
         break;
       case 'toolcall_start':
         setState('TOOL');
@@ -368,7 +389,9 @@ function demoReply(text) {
     let i = 0;
     const t = setInterval(() => {
       if (!S.bubble) return clearInterval(t);
+      addCaret();
       S.bubble.textContent += reply[i++] || '';
+      addCaret();
       scrollEnd();
       if (i >= reply.length) { clearInterval(t); endTurn(0); }
     }, 30);

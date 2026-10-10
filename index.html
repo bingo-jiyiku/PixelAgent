@@ -22,10 +22,10 @@
 
   <!-- ================= 模式按钮行 ================= -->
   <div class="modebar">
-    <button class="px-btn black" id="btn-mode">1.0 模式</button>
-    <button class="px-btn white" id="btn-new">新会话</button>
-    <button class="px-btn white" id="btn-settings">设置</button>
-    <button class="px-btn pink hidden" id="btn-stop">■ 停止</button>
+    <button class="px-btn primary" id="btn-mode">1.0 模式</button>
+    <button class="px-btn" id="btn-new">新会话</button>
+    <button class="px-btn" id="btn-settings">设置</button>
+    <button class="px-btn hidden" id="btn-stop">■ 停止</button>
 
     <!-- 状态像素标签：IDLE / THINKING / TOOL / DONE -->
     <div class="tags" id="tags">
@@ -41,17 +41,18 @@
     <div class="hl-zh">复古像素终端</div>
     <div class="hl-en">PIXEL() TERMINAL —— 一个会自己跑的助手</div>
   </div>
+  <div class="rule"><i></i></div>
 
-  <!-- ================= 主体：假窗口 + 侧栏 ================= -->
+  <!-- ================= 主体：终端窗口 + 侧栏 ================= -->
   <div class="stage">
 
-    <!-- 假窗口：黑粗边框 + 粉色标题栏 + 像素投影 -->
-    <section class="win">
-      <div class="win-title">
-        <span class="win-dot"></span>
-        <span class="win-name">PIXEL() TERMINAL</span>
-        <span class="win-stripes"></span>
-        <span class="win-x">✕</span>
+    <!-- 终端窗口：最亮的面；CRT 扫描线只在这一层里走 -->
+    <section class="term">
+      <div class="term-bar">
+        <span class="term-mark"></span>
+        <span class="term-name">PIXEL() TERMINAL</span>
+        <span class="term-mode">RAW · STREAM</span>
+        <span class="term-x">✕</span>
       </div>
 
       <!-- 聊天记录区 -->
@@ -70,7 +71,12 @@
           <span id="mirror" aria-hidden="true"></span>
           <span class="cursor" id="cursor"></span>
         </div>
-        <button class="px-btn black small" id="btn-send">回车</button>
+        <button class="px-btn primary" id="btn-send">回车</button>
+      </div>
+
+      <!-- CRT 覆盖层：滚动扫描线 + 极淡静态扫描纹理（纯装饰，不接事件） -->
+      <div class="crt" aria-hidden="true">
+        <span class="crt-scan"></span>
       </div>
     </section>
 
@@ -117,12 +123,12 @@
 
 <!-- ================= 设置面板（只读，展示 pi 的信息） ================= -->
 <div class="mask hidden" id="mask">
-  <div class="win dialog">
-    <div class="win-title">
-      <span class="win-dot"></span>
-      <span class="win-name">SETTINGS()</span>
-      <span class="win-stripes"></span>
-      <span class="win-x" id="dlg-x">✕</span>
+  <div class="term dialog">
+    <div class="term-bar">
+      <span class="term-mark"></span>
+      <span class="term-name">SETTINGS()</span>
+      <span class="term-mode">READ ONLY</span>
+      <span class="term-x" id="dlg-x">✕</span>
     </div>
     <div class="dlg-body">
       <div class="kv"><span>后端</span><b>pi</b></div>
@@ -131,7 +137,7 @@
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
       <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
       <p class="dlg-tip">第一版只读展示，不做模型切换 UI（读 pi 自己的默认配置）。</p>
-      <button class="px-btn black" id="dlg-close">知道了</button>
+      <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
     </div>
   </div>
 </div>
