@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PixelAgent · A 深墨终端</title>
+<style>
+@font-face{font-family:'Press Start 2P';src:url('../assets/fonts/press-start-2p-latin-400-normal.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'VT323';src:url('../assets/fonts/vt323-latin-400-normal.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+
+:root{
+  --bg:#14171c;
+  --surface:#1b1f26;
+  --surface-2:#232833;
+  --deep:#171a20;
+  --line:#39404c;
+  --hair:#262c35;
+  --text:#e9e7e0;
+  --muted:#a6aeb9;
+  --accent:#ff2d95;
+  --green:#7ff0ab;
+  --warn:#ffb000;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:#14171c;
+  color:var(--text);
+  font-family:'VT323','Microsoft YaHei','SimHei',monospace;
+  font-size:20px;
+  -webkit-user-select:none;user-select:none;
+  overflow-x:hidden;
+}
+::selection{background:var(--accent);color:#14171c}
+
+/* ---------- 顶部假标题栏 ---------- */
+.topbar{
+  background:#0e1013;
+  border-bottom:2px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;
+  height:44px;padding:0 14px;
+  font-family:'Press Start 2P',monospace;font-size:12px;letter-spacing:1px;
+  color:var(--text);
+}
+.tb-side{display:inline-flex;align-items:center}
+.sq{width:10px;height:10px;display:inline-block}
+.sq-w{background:var(--text);margin-right:10px}
+.sq-p{background:var(--accent);margin-left:10px}
+.tb-btns{display:inline-flex;align-items:center;gap:8px}
+.tb-btn{
+  font-family:'Press Start 2P',monospace;font-size:12px;line-height:1;
+  width:30px;height:26px;padding:0;
+  border:2px solid var(--text);border-radius:0;background:transparent;color:var(--text);
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+}
+.tb-btn:hover{background:var(--text);color:#0e1013}
+.tb-btn.tb-close:hover{background:var(--accent);border-color:var(--accent);color:#14171c}
+.tb-btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+
+/* ---------- 页面 ---------- */
+.page{max-width:1220px;margin:0 auto;padding:20px 24px 30px}
+
+.modebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:26px}
+.px-btn{
+  font-family:'Press Start 2P','Microsoft YaHei',monospace;font-size:12px;line-height:1;
+  padding:11px 14px;border:2px solid var(--line);border-radius:0;cursor:pointer;
+  background:transparent;color:var(--text);
+}
+.px-btn:hover{background:var(--text);color:#14171c;border-color:var(--text)}
+.px-btn:active{transform:translate(2px,2px)}
+.px-btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.px-btn.primary{background:var(--accent);border-color:var(--accent);color:#14171c;box-shadow:4px 4px 0 #000}
+.px-btn.primary:hover{background:var(--green);border-color:var(--green)}
+.px-btn.primary:active{box-shadow:none}
+.hidden{display:none !important}
+
+.tags{display:flex;gap:8px;margin-left:auto}
+.tag{
+  font-family:'Press Start 2P',monospace;font-size:12px;padding:9px 10px;
+  border:2px solid var(--line);color:var(--muted);background:transparent;
+}
+.tag.on{border-color:var(--green);background:var(--green);color:#14171c}
+.tag[data-state="THINKING"].on{border-color:var(--warn);background:var(--warn);color:#14171c}
+.tag[data-state="TOOL"].on{border-color:var(--accent);background:transparent;color:var(--accent)}
+
+/* ---------- 大标题：主区最重的字，颜色最淡，靠尺寸拿层级 ---------- */
+.headline{margin:0 0 8px}
+.hl-zh{
+  font-family:'Microsoft YaHei','SimHei',sans-serif;font-weight:900;
+  font-size:46px;letter-spacing:4px;color:var(--text);
+  text-shadow:3px 3px 0 #2f3742;
+}
+.hl-en{font-family:'Press Start 2P',monospace;font-size:13px;letter-spacing:2px;color:var(--muted);margin-top:14px}
+.rule{height:2px;background:var(--line);margin:22px 0;display:flex}
+.rule i{width:72px;background:var(--accent)}
+
+/* ---------- 主体：聊天终端（最亮面）+ 仪表列（更安静） ---------- */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:stretch}
+
+.term{
+  background:var(--surface);border:2px solid var(--line);
+  box-shadow:8px 8px 0 rgba(0,0,0,.5);
+  display:flex;flex-direction:column;min-height:470px;padding:10px;
+}
+.term-bar{
+  background:var(--surface-2);border-bottom:2px solid var(--line);
+  display:flex;align-items:center;gap:12px;padding:14px;
+}
+.term-mark{width:12px;height:12px;background:var(--accent);flex:0 0 12px}
+.term-name{font-family:'Press Start 2P',monospace;font-size:13px;letter-spacing:2px;color:var(--text)}
+.term-mode{margin-left:auto;font-family:'Press Start 2P',monospace;font-size:12px;letter-spacing:1px;color:var(--muted)}
+.term-x{
+  font-family:'Press Start 2P',monospace;font-size:12px;color:#14171c;background:var(--text);
+  width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.term-x:hover{background:var(--accent)}
+
+.log{flex:1 1 auto;overflow-y:auto;padding:12px 16px;background:var(--surface)}
+.log::-webkit-scrollbar{width:12px}
+.log::-webkit-scrollbar-track{background:var(--deep);border-left:2px solid var(--line)}
+.log::-webkit-scrollbar-thumb{background:var(--line);border:2px solid var(--deep)}
+
+.m{display:flex;gap:12px;margin-bottom:10px;line-height:1.5;font-size:21px}
+.m:last-child{margin-bottom:0}
+.who{
+  font-family:'Press Start 2P',monospace;font-size:12px;line-height:1.35;
+  border:2px solid var(--line);color:var(--muted);
+  padding:5px 8px;flex:0 0 auto;align-self:flex-start;letter-spacing:1px;min-width:78px;text-align:center;
+}
+.m .txt{flex:1 1 auto;-webkit-user-select:text;user-select:text;word-break:break-word}
+.m.sys .txt{color:var(--muted)}
+.m.user .who{background:var(--accent);border-color:var(--accent);color:#14171c}
+.m.user .txt{color:var(--text)}
+.m.bot .who{background:var(--green);border-color:var(--green);color:#14171c}
+.m.bot .txt{border:2px solid var(--line);background:var(--deep);padding:11px 13px;color:var(--text);white-space:pre-wrap;min-height:24px}
+.m.tool .who{border-color:var(--warn);color:var(--warn)}
+.m.tool .txt{color:var(--muted);font-size:19px}
+.m.think .who{border-color:var(--accent);color:var(--accent)}
+.m.think .txt{color:var(--muted)}
+.m.err .who{border-color:#ff6b6b;color:#ff6b6b}
+.m.err .txt{color:#ff9b9b}
+.m.step .who{border-color:var(--line)}
+.m.step .txt{color:var(--muted);font-size:19px}
+
+.inputline{
+  flex:0 0 auto;border-top:2px solid var(--line);background:var(--deep);
+  display:flex;align-items:center;gap:12px;padding:13px 14px;
+}
+.inputline .ps{font-family:'Press Start 2P',monospace;font-size:18px;color:var(--accent)}
+.inputwrap{position:relative;flex:1 1 auto;display:flex;align-items:center}
+#input{
+  width:100%;border:none;outline:none;background:transparent;
+  font-family:'VT323','Microsoft YaHei',monospace;font-size:22px;color:var(--text);
+  padding:0 0 0 17px;caret-color:transparent;-webkit-user-select:text;user-select:text;
+}
+#input::placeholder{color:var(--muted)}
+.cursor{position:absolute;left:0;width:11px;height:22px;background:var(--green);pointer-events:none;animation:blink 1s steps(1) infinite}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* ---------- 侧栏：更小的字、更暗的面，层级低于聊天区 ---------- */
+.side{display:flex;flex-direction:column;gap:16px;justify-content:space-between}
+.panel{background:var(--surface);border:2px solid var(--line);display:flex;flex-direction:column}
+.panel h4{
+  font-family:'Press Start 2P',monospace;font-size:12px;letter-spacing:1px;
+  color:var(--green);background:var(--deep);border-bottom:2px solid var(--line);
+  margin:0;padding:12px 13px;font-weight:400;
+}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:19px;color:var(--muted);padding:8px 14px;border-bottom:1px solid var(--hair)}
+.kv:last-child{border-bottom:none}
+.kv b{color:var(--text);font-weight:400;text-align:right;word-break:break-all}
+
+.conf{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;padding:13px 13px 0}
+.conf i{height:20px;border:2px solid var(--line);background:#101318}
+.conf i.on{background:var(--green);border-color:var(--green)}
+.conf i.on.dim{background:var(--warn);border-color:var(--warn)}
+.conf-cap{font-family:'Press Start 2P',monospace;font-size:12px;letter-spacing:1px;color:var(--muted);padding:10px 13px 13px}
+
+.pipe-line{font-size:19px;color:var(--muted);padding:8px 13px;border-bottom:1px solid var(--hair)}
+.pipe-line:last-child{border-bottom:none}
+.pipe-line em{
+  font-style:normal;font-family:'Press Start 2P',monospace;font-size:12px;
+  background:#101318;border:2px solid var(--line);color:var(--green);
+  padding:3px 6px;margin-right:9px;
+}
+
+/* ---------- 底部说明 + 页脚 ---------- */
+.callout{
+  background:var(--deep);border:2px solid var(--line);
+  padding:14px 18px;font-family:'Microsoft YaHei','SimHei',sans-serif;font-weight:700;
+  font-size:18px;color:var(--text);letter-spacing:1px;margin-top:24px;
+}
+.callout b{color:var(--accent)}
+.foot{text-align:center;color:var(--muted);font-family:'Press Start 2P',monospace;font-size:12px;letter-spacing:2px;margin-top:18px}
+
+/* ---------- 设置弹窗 ---------- */
+.mask{position:fixed;inset:0;background:rgba(4,6,9,.78);display:flex;align-items:center;justify-content:center;z-index:50}
+.dialog{width:min(580px,92vw);max-height:84vh;box-shadow:10px 10px 0 rgba(0,0,0,.6)}
+.dlg-body{padding:4px 0 0;background:var(--surface)}
+.dlg-body .kv{font-size:19px;padding:10px 16px}
+.dlg-tip{font-size:18px;color:var(--muted);margin:0;padding:14px 16px;line-height:1.5}
+.dlg-foot{padding:0 16px 16px}
+</style>
+</head>
+<body>
+<!-- ==== 顶部假标题栏 ==== -->
+<header class="topbar">
+  <span class="tb-side"><i class="sq sq-w"></i>PIXELAGENT</span>
+  <span class="tb-side">PIXEL / AGENT ONE<i class="sq sq-p"></i></span>
+  <span class="tb-btns">
+    <button class="tb-btn" id="tb-min" title="最小化">—</button>
+    <button class="tb-btn" id="tb-max" title="最大化">□</button>
+    <button class="tb-btn tb-close" id="tb-close" title="关闭">✕</button>
+  </span>
+</header>
+
+<div class="page">
+
+  <!-- ==== 模式按钮行 ==== -->
+  <div class="modebar">
+    <button class="px-btn primary" id="btn-mode">1.0 模式</button>
+    <button class="px-btn" id="btn-new">新会话</button>
+    <button class="px-btn" id="btn-settings">设置</button>
+    <button class="px-btn hidden" id="btn-stop">■ 停止</button>
+    <div class="tags" id="tags">
+      <span class="tag" data-state="IDLE">IDLE</span>
+      <span class="tag" data-state="THINKING">THINKING</span>
+      <span class="tag" data-state="TOOL">TOOL</span>
+      <span class="tag on" data-state="DONE">DONE</span>
+    </div>
+  </div>
+
+  <!-- ==== 大标题 ==== -->
+  <div class="headline">
+    <div class="hl-zh">复古像素终端</div>
+    <div class="hl-en">PIXEL() TERMINAL —— 一个会自己跑的助手</div>
+  </div>
+  <div class="rule"><i></i></div>
+
+  <!-- ==== 主体 ==== -->
+  <div class="stage">
+    <section class="term">
+      <div class="term-bar">
+        <span class="term-mark"></span>
+        <span class="term-name">PIXEL() TERMINAL</span>
+        <span class="term-mode">RAW · STREAM</span>
+        <span class="term-x">✕</span>
+      </div>
+
+      <div class="log" id="log">
+        <div class="m sys">
+          <span class="who">SYS</span>
+          <span class="txt">终端就绪。回车发送，ESC 停止。会话自动记忆，点「新会话」开新话题。</span>
+        </div>
+        <div class="m user">
+          <span class="who">YOU</span>
+          <span class="txt">&gt; 给这台终端起个复古像素风的名字，八个字以内</span>
+        </div>
+        <div class="m bot">
+          <span class="who">PI</span>
+          <span class="txt">墨绿屏 · 方块字
+就叫「墨屏 MOPING」：墨是深墨底，屏是它自己对着一块老 CRT 在发光。</span>
+        </div>
+        <div class="m tool">
+          <span class="who">TOOL</span>
+          <span class="txt">&gt; 调用工具: write_file .sessions/chat-0.json</span>
+        </div>
+        <div class="m user">
+          <span class="who">YOU</span>
+          <span class="txt">&gt; 再硬一点，别带英文后缀</span>
+        </div>
+        <div class="m bot">
+          <span class="who">PI</span>
+          <span class="txt">那就砍到两个字：墨屏。
+不留后缀、不配英文，四个字都嫌多。</span>
+        </div>
+        <div class="m tool">
+          <span class="who">TOOL</span>
+          <span class="txt">&gt; 调用工具: read_file assets/fonts/press-start-2p-latin-400-normal.woff2</span>
+        </div>
+      </div>
+
+      <div class="inputline">
+        <span class="ps">&gt;</span>
+        <div class="inputwrap">
+          <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…" />
+          <span class="cursor" aria-hidden="true"></span>
+        </div>
+        <button class="px-btn primary" id="btn-send">回车</button>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="panel">
+        <h4>STATUS</h4>
+        <div class="kv"><span>状态</span><b id="kv-state">IDLE</b></div>
+        <div class="kv"><span>轮次</span><b id="kv-round">0</b></div>
+        <div class="kv"><span>用时</span><b id="kv-time">0.0s</b></div>
+      </div>
+
+      <div class="panel">
+        <h4>MODEL</h4>
+        <div class="kv"><span>后端</span><b>PI</b></div>
+        <div class="kv"><span>模型</span><b id="kv-model">读取中…</b></div>
+        <div class="kv"><span>输出</span><b>JSON 流</b></div>
+      </div>
+
+      <div class="panel">
+        <h4>CONFIDENCE</h4>
+        <div class="conf" id="conf">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="conf-cap" id="conf-cap">STANDBY</div>
+      </div>
+
+      <div class="panel">
+        <h4>PIPE</h4>
+        <div class="pipe-line"><em>1</em><span>渲染层</span></div>
+        <div class="pipe-line"><em>2</em><span>主进程 IPC</span></div>
+        <div class="pipe-line"><em>3</em><span>pi --mode json</span></div>
+        <div class="pipe-line"><em>4</em><span>text_delta 打字机</span></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="callout">按 <b>回车</b> 发送 · 多轮记忆已开 · <b>ESC</b> 停止当前这一轮</div>
+  <div class="foot">PIXELAGENT · 不会聊天的 AI</div>
+</div>
+
+<!-- ==== 设置弹窗（静态展示，默认隐藏） ==== -->
+<div class="mask hidden" id="mask">
+  <div class="term dialog">
+    <div class="term-bar">
+      <span class="term-mark"></span>
+      <span class="term-name">SETTINGS()</span>
+      <span class="term-mode">READ ONLY</span>
+      <span class="term-x" id="dlg-x">✕</span>
+    </div>
+    <div class="dlg-body">
+      <div class="kv"><span>后端</span><b>pi</b></div>
+      <div class="kv"><span>输出模式</span><b id="set-mode">json</b></div>
+      <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
+      <div class="kv"><span>会话文件</span><b id="set-session">未生成</b></div>
+      <div class="kv"><span>pi 入口</span><b id="set-cli">未生成</b></div>
+      <p class="dlg-tip">第一版只读展示，不做模型切换 UI（读 pi 自己的默认配置）。</p>
+      <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 静态展示用假数据：不连 pi，只把界面填满
+(function () {
+  var $ = function (s) { return document.querySelector(s); };
+  $('#kv-state').textContent = 'DONE';
+  $('#kv-round').textContent = '3';
+  $('#kv-time').textContent = '12.4s';
+  $('#kv-model').textContent = 'deepseek-v4.1-flash';
+  $('#set-model').textContent = 'deepseek-v4.1-flash';
+  $('#set-session').textContent = '.sessions/chat-0.json';
+  $('#set-cli').textContent = 'pi --mode json --no-session';
+  var bars = [].slice.call(document.querySelectorAll('#conf i'));
+  bars.forEach(function (b, i) { if (i < 7) b.classList.add('on'); if (i >= 5) b.classList.add('dim'); });
+  $('#conf-cap').textContent = '0.71 · DONE';
+  // 假消息用 createElement 拼，避免 innerHTML 注入面
+  var log = $('#log');
+  var tail = [
+    ['step', 'STEP', '步骤 04 · 量过一遍字号：标题 46px / 正文 21px，没有溢出'],
+    ['think', 'THINK', '已把名字写进会话记忆，下一轮沿用「墨屏」这个称呼。'],
+    ['bot', 'PI', '名字定了。要现在就把它刻进窗口标题吗？']
+  ];
+  tail.forEach(function (row) {
+    var wrap = document.createElement('div');
+    wrap.className = 'm ' + row[0];
+    var who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = row[1];
+    var txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = row[2];
+    wrap.appendChild(who); wrap.appendChild(txt); log.appendChild(wrap);
+  });
+  $('#btn-settings').addEventListener('click', function () { $('#mask').classList.remove('hidden'); });
+  $('#dlg-x').addEventListener('click', function () { $('#mask').classList.add('hidden'); });
+  $('#dlg-close').addEventListener('click', function () { $('#mask').classList.add('hidden'); });
+})();
+</script>
+</body>
+</html>
