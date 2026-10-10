@@ -1,10 +1,12 @@
-// ============================================================
-// renderer.js —— 界面逻辑（纯浏览器 JS，不碰 Node）
-// 干三件事：
-//   1) 把用户输入发给主进程 -> pi
-//   2) 把 pi 吐回来的 JSON 事件流画成"打字机 + 状态行"
-//   3) 状态标签 / 计时 / 置信度方格这些装饰件
-// ============================================================
+/* ============================================================
+   renderer.js —— 界面逻辑（纯浏览器 JS，不碰 Node）
+   干三件事：
+   1) 把用户输入发给主进程 -> pi
+   2) 把 pi 吐回来的 JSON 事件流画成"打字机 + 状态行"
+   3) 状态标签 / 计时 / 置信度方格这些装饰件
+   交互原则：全鼠标可点（发送/停止/新会话/设置/RAW·STREAM/侧栏折叠），
+   回车发送只是输入框天然行为，ESC 停止是加分项。
+   ============================================================ */
 'use strict';
 
 /* ---------- DOM ---------- */
@@ -129,8 +131,8 @@ function syncCursor() {
   cursor.style.left = w + 'px';
 }
 input.addEventListener('input', syncCursor);
-input.addEventListener('focus', () => { cursor.style.background = '#ff2d95'; });
-input.addEventListener('blur', () => { cursor.style.background = '#7ff0ab'; });
+input.addEventListener('focus', () => { cursor.style.background = '#a8669c'; });
+input.addEventListener('blur', () => { cursor.style.background = '#5d5640'; });
 
 /* ---------- 打字机尾部光标：回复流出时跟气泡最后一个字 ---------- */
 function addCaret() {
@@ -309,6 +311,7 @@ if (api) api.onMsg(onMsg);
    ============================================================ */
 btnSend.addEventListener('click', send);
 input.addEventListener('keydown', (e) => {
+  // 回车发送：输入框天然行为（保留）；ESC 停止只是加分项，按钮永远是主力
   if (e.key === 'Enter') { e.preventDefault(); send(); }
   if (e.key === 'Escape') { e.preventDefault(); doAbort(); }
 });
@@ -322,6 +325,7 @@ function doAbort() {
   addMsg('step', 'STOP', '&gt; 已手动停止这一轮');
   endTurn(0);
 }
+btnStop.addEventListener('click', doAbort);
 
 btnNew.addEventListener('click', () => {
   const go = () => {
@@ -353,6 +357,39 @@ mask.addEventListener('click', (e) => { if (e.target === mask) mask.classList.ad
 
 $('btn-mode').addEventListener('click', () => {
   addMsg('step', 'MODE', '&gt; 当前模式：PIXEL TERMINAL v1.0（pi · json 流）');
+});
+
+/* ============================================================
+   鼠标化交互一：RAW / STREAM 两个可点标签
+   （界面标注，不影响 pi 接线；点哪个哪个高亮，状态行告诉用户当前视图）
+   ============================================================ */
+function bindViewTab(id, name) {
+  const b = $(id);
+  if (!b) return;
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.term-tab').forEach((t) => t.classList.remove('on'));
+    b.classList.add('on');
+    addMsg('step', 'VIEW', '&gt; 视图标记：' + name);
+  });
+}
+bindViewTab('tab-raw', 'RAW（原始事件）');
+bindViewTab('tab-stream', 'STREAM（打字机流）');
+
+/* ============================================================
+   鼠标化交互二：侧栏面板点标题收起 / 展开
+   （内容长了一屏放不下时，用户可以自己收起来，不需要滚动条）
+   ============================================================ */
+document.querySelectorAll('.panel > h4').forEach((h) => {
+  const panel = h.parentElement;
+  h.setAttribute('tabindex', '0');
+  h.setAttribute('role', 'button');
+  h.setAttribute('aria-expanded', 'true');
+  const toggle = () => {
+    const collapsed = panel.classList.toggle('collapsed');
+    h.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  };
+  h.addEventListener('click', toggle);
+  h.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); toggle(); } });
 });
 
 /* ============================================================

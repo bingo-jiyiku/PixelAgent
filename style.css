@@ -1,19 +1,13 @@
 /* ============================================================
-   style.css —— A 深墨终端
-   配色系统（深墨底 + 米白字，粉色只做少量强调）：
-   --bg #14171c 页面底 / --surface #1b1f26 终端面（最亮面）
-   --surface-2 #232833 标题栏 / --deep #171a20 输入行·气泡底
-   --line #39404c 分隔线 / --hair #262c35 细线
-   --text #e9e7e0 米白正文 / --muted #b3bcc8 次级说明
-   --accent #ff2d95 强调粉 / --green #7ff0ab 终端绿 / --warn #ffb000
-   动画（遵守 animate.md）：
-   1) CRT 扫描线：只动 transform/opacity，秒级循环，透明度极低
-   2) 方块光标：steps 闪烁；回复流出时尾部跟随，endTurn 后消失
-   3) 状态标签 120ms 过渡 / 新消息 200ms 上移淡入（不逐条错峰）
+   style.css —— B 复古纸面终端（RetroUI 亮色系）
+   配色系统（复古方格纸 + 奶油黄主卡 + 薰衣草紫次卡/强调）：
+   --paper #f7f2e3 米白方格纸底 / --cream #fefcd0 奶油黄主卡片
+   --lav #c381b5 薰衣草紫强调·次卡 / --ink #191510 近黑棕（正文·粗边）
+   硬投影走"同色系偏移"：黄卡影子淡黄 #d6cb8f，紫卡影子粉紫 #a8669c
+   动画：CRT 扫描线（亮底下改成极淡墨线）+ 方块光标 + 消息入场
    全部有 prefers-reduced-motion 降级路径
    ============================================================ */
 
-/* ---------- 本地字体（离线可用，不连外网） ---------- */
 @font-face {
   font-family: 'Press Start 2P';
   src: url('assets/fonts/press-start-2p-latin-400-normal.woff2') format('woff2');
@@ -30,47 +24,54 @@
 }
 
 :root {
-  --bg: #14171c;          /* 页面深墨底 */
-  --surface: #1b1f26;     /* 终端面：全页最亮的一块 */
-  --surface-2: #232833;   /* 终端标题栏 */
-  --deep: #171a20;        /* 输入行 / 气泡底 */
-  --deepest: #101318;     /* 方格条空格 / 编号底 */
-  --line: #39404c;        /* 边框 / 分隔线 */
-  --hair: #262c35;        /* 细线 */
-  --text: #e9e7e0;        /* 米白正文 */
-  --muted: #b3bcc8;       /* 次级说明（对深底 ≥7.6:1） */
-  --accent: #ff2d95;      /* 强调粉，只做少量强调 */
-  --green: #7ff0ab;       /* 终端绿 */
-  --warn: #ffb000;        /* 工具 / 进行中 */
-  --err: #ff8080;         /* 错误 */
-  --shadow: 0 8px 24px rgba(0, 0, 0, .45);   /* 软投影，不再硬边块 */
+  --paper: #f7f2e3;
+  --paper-2: #efe7cf;
+  --cream: #fefcd0;
+  --cream-2: #fffdf0;
+  --lav: #c381b5;
+  --lav-deep: #a8669c;
+  --shadow-cream: #d6cb8f;
+  --ink: #191510;
+  --muted: #6b4f1a;
+  --err: #a3231b;
+  --warn: #e8a33d;
+  --line: #191510;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * { box-sizing: border-box; }
 
-html, body {
-  height: 100%;
-  margin: 0;
-}
+html, body { height: 100%; margin: 0; }
 
 body {
-  background-color: var(--bg);
-  /* 纯平深墨：不加网格底纹，靠面层明暗分主次 */
-  color: var(--text);
+  background-color: var(--paper);
+  background-image: radial-gradient(rgba(25, 21, 16, .07) 1.1px, transparent 1.1px);
+  background-size: 22px 22px;
+  background-position: -11px -11px;
+  color: var(--ink);
   font-family: 'VT323', 'Microsoft YaHei', 'SimHei', monospace;
   font-size: 20px;
-  overflow-x: hidden;
+  overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
 }
 
-::selection { background: var(--accent); color: #14171c; }
+::selection { background: var(--lav); color: var(--ink); }
 
-/* ================= 顶部假标题栏 ================= */
+/* ---------- 全局去滚动条（保留滚动能力） ---------- */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .topbar {
-  background: #0e1013;
-  border-bottom: 2px solid var(--line);
+  background: var(--ink);
+  border-bottom: 4px solid var(--line);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -79,14 +80,14 @@ body {
   font-family: 'Press Start 2P', 'VT323', monospace;
   font-size: 12px;
   letter-spacing: 1px;
-  color: var(--text);
+  color: var(--cream);
+  flex: 0 0 auto;
 }
 .tb-side { display: inline-flex; align-items: center; }
 .bul { width: 10px; height: 10px; display: inline-block; }
-.sq-white { background: var(--text); margin-right: 10px; }
-.sq-pink { background: var(--accent); margin-left: 10px; }
+.sq-white { background: var(--cream); margin-right: 10px; }
+.sq-pink { background: var(--lav); margin-left: 10px; }
 
-/* 窗口控制按钮（无原生窗口后，自己画小平块按钮） */
 .tb-btns { display: inline-flex; align-items: center; gap: 8px; }
 .tb-btn {
   font-family: 'Press Start 2P', monospace;
@@ -95,174 +96,173 @@ body {
   width: 30px;
   height: 26px;
   padding: 0;
-  border: 2px solid var(--text);
+  border: 3px solid var(--cream);
   background: transparent;
-  color: var(--text);
+  color: var(--cream);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 0;
-  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out),
-              border-color 120ms var(--ease-out);
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
-.tb-btn:hover { background: var(--text); color: #0e1013; }
-.tb-btn.tb-close:hover { background: var(--accent); border-color: var(--accent); color: #14171c; }
-.tb-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-/* 假标题栏只留左边一小块能拖动，其他区域照常点鼠标 */
+.tb-btn:hover { background: var(--cream); color: var(--ink); }
+.tb-btn.tb-close:hover { background: var(--lav); border-color: var(--lav); color: var(--ink); }
+.tb-btn:focus-visible { outline: 3px solid var(--lav); outline-offset: 2px; }
 .tb-drag { -webkit-app-region: drag; app-region: drag; padding: 4px 8px; margin-left: -4px; }
 .tb-btns { -webkit-app-region: no-drag; app-region: no-drag; }
 
-/* ================= 页面容器 ================= */
 .page {
+  width: 100%;
   max-width: 1220px;
   margin: 0 auto;
-  padding: 20px 22px 30px;
+  padding: 14px 22px 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-/* ================= 模式按钮行 ================= */
 .modebar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 26px;
+  flex: 0 0 auto;
+  margin-bottom: 14px;
 }
 
-/* 按钮：硬边框、无圆角、按下位移 2px */
 .px-btn {
   font-family: 'Press Start 2P', 'Microsoft YaHei', monospace;
   font-size: 12px;
   line-height: 1.2;
   padding: 11px 14px;
-  border: 2px solid var(--line);
+  border: 3px solid var(--ink);
   border-radius: 0;
   cursor: pointer;
-  background: transparent;
-  color: var(--text);
+  background: var(--cream);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow-cream);
   transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out),
-              border-color 120ms var(--ease-out), transform 120ms var(--ease-out);
+              transform 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
 }
-.px-btn:hover { background: var(--text); color: #14171c; border-color: var(--text); }
-.px-btn:active { transform: translate(2px, 2px); }
-.px-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.px-btn.primary { background: var(--accent); border-color: var(--accent); color: #14171c; }
-.px-btn.primary:hover { background: var(--green); border-color: var(--green); color: #14171c; }
+.px-btn:hover { background: var(--lav); box-shadow: 4px 4px 0 var(--lav-deep); }
+.px-btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--lav-deep); }
+.px-btn:focus-visible { outline: 3px solid var(--lav-deep); outline-offset: 2px; }
+.px-btn.primary { background: var(--lav); border-color: var(--ink); color: var(--ink); box-shadow: 4px 4px 0 var(--lav-deep); }
+.px-btn.primary:hover { background: var(--cream); box-shadow: 4px 4px 0 var(--shadow-cream); }
 
 .hidden { display: none !important; }
 
-/* ================= 状态标签 ================= */
 .tags { display: flex; gap: 8px; margin-left: auto; }
 .tag {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
   letter-spacing: 1px;
   padding: 10px 11px;
-  border: 2px solid var(--line);
+  border: 3px solid var(--ink);
   color: var(--muted);
-  background: transparent;
-  /* 状态切换：120ms 快速过渡，只动颜色（不碰布局） */
-  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out),
-              color 120ms var(--ease-out);
+  background: var(--cream);
 }
-.tag.on { border-color: var(--green); background: var(--green); color: #14171c; }
-.tag[data-state="THINKING"].on { border-color: var(--warn); background: var(--warn); color: #14171c; }
-.tag[data-state="TOOL"].on { border-color: var(--accent); background: transparent; color: var(--accent); }
+.tag.on { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.tag[data-state="THINKING"].on { background: var(--warn); color: var(--ink); }
+.tag[data-state="TOOL"].on { background: var(--lav); color: var(--ink); }
+.tag[data-state="DONE"].on { background: var(--lav); color: var(--ink); }
 
-/* ================= 大标题 ================= */
-.headline { margin: 0 0 10px; }
+.headline { margin: 0 0 8px; flex: 0 0 auto; }
 .hl-zh {
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
   font-weight: 900;
-  font-size: 46px;
+  font-size: 38px;
   letter-spacing: 4px;
-  color: var(--text);
-  text-shadow: 3px 3px 0 #2f3742;
+  color: var(--ink);
+  text-shadow: 4px 4px 0 var(--lav);
 }
 .hl-en {
   font-family: 'Press Start 2P', monospace;
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 2px;
   color: var(--muted);
-  margin-top: 14px;
+  margin-top: 10px;
 }
-.rule { height: 2px; background: var(--line); margin: 22px 0; display: flex; }
-.rule i { width: 72px; background: var(--accent); }
+.rule { height: 4px; background: var(--ink); margin: 12px 0; display: flex; flex: 0 0 auto; }
+.rule i { width: 72px; background: var(--lav); }
 
-/* ================= 主体布局 ================= */
 .stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) 292px;
+  gap: 18px;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-/* ---------- 终端窗口（最亮的面） ---------- */
 .term {
-  position: relative;          /* CRT 覆盖层的定位基准 */
-  background: var(--surface);
-  border: 2px solid var(--line);
-  box-shadow: var(--shadow);
+  position: relative;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  box-shadow: 7px 7px 0 var(--lav-deep);
   display: flex;
   flex-direction: column;
-  min-height: 470px;
-  max-height: 58vh;
-  overflow: hidden;            /* CRT 覆盖层不溢出窗口 */
+  min-height: 0;
+  overflow: hidden;
 }
 
-/* 终端标题栏 */
 .term-bar {
-  background: var(--surface-2);
-  border-bottom: 2px solid var(--line);
+  background: var(--lav);
+  border-bottom: 4px solid var(--ink);
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px;
+  padding: 10px 12px;
+  flex: 0 0 auto;
 }
-.term-mark { width: 12px; height: 12px; background: var(--accent); flex: 0 0 12px; }
+.term-mark { width: 12px; height: 12px; background: var(--ink); flex: 0 0 12px; }
 .term-name {
   font-family: 'Press Start 2P', monospace;
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 2px;
-  color: var(--text);
+  color: var(--ink);
 }
-.term-mode {
-  margin-left: auto;
+.term-tabs { margin-left: auto; display: flex; gap: 6px; }
+.term-tab {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
-  letter-spacing: 1px;
-  color: var(--muted);
+  line-height: 1;
+  padding: 8px 10px;
+  border: 3px solid var(--ink);
+  background: var(--cream);
+  color: var(--ink);
+  cursor: pointer;
+  border-radius: 0;
 }
+.term-tab:hover { background: var(--paper-2); }
+.term-tab.on { background: var(--ink); color: var(--cream); }
+.term-tab:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 .term-x {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
-  color: #14171c;
-  background: var(--text);
+  color: var(--cream);
+  background: var(--ink);
   width: 26px; height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
   flex: 0 0 26px;
 }
-.term-x:hover { background: var(--accent); color: #14171c; }
 
-/* ---------- CRT 覆盖层：滚动扫描线 + 极淡静态扫描纹理 ---------- */
 .crt {
   position: absolute;
   inset: 0;
-  pointer-events: none;         /* 不拦点击 / 选字 / 滚轮 */
+  pointer-events: none;
   z-index: 5;
   overflow: hidden;
-  /* 极淡横向扫描纹理：2px 一条线，亮度差约 1%，只添老 CRT 的质地，
-     低到不参与阅读、也不被当成装饰套路 */
   background: repeating-linear-gradient(
     to bottom,
-    rgba(233, 231, 224, .012) 0, rgba(233, 231, 224, .012) 1px,
+    rgba(25, 21, 16, .022) 0, rgba(25, 21, 16, .022) 1px,
     transparent 1px, transparent 3px
   );
 }
-/* 淡淡一道横向亮带缓慢走过整屏：老 CRT 的行扫感 */
 .crt-scan {
   position: absolute;
   left: 0;
@@ -271,38 +271,32 @@ body {
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(233, 231, 224, .028) 45%,
-    rgba(233, 231, 224, .045) 50%,
-    rgba(233, 231, 224, .028) 55%,
+    rgba(25, 21, 16, .02) 45%,
+    rgba(25, 21, 16, .035) 50%,
+    rgba(25, 21, 16, .02) 55%,
     transparent 100%
   );
   will-change: transform, opacity;
   animation: crt-roll 6s linear infinite;
 }
-/* 只动 transform / opacity */
 @keyframes crt-roll {
   0%   { transform: translateY(-200px); opacity: .55; }
   50%  { opacity: 1; }
   100% { transform: translateY(560px); opacity: .55; }
 }
 
-/* ---------- 聊天记录区 ---------- */
 .log {
   position: relative;
-  z-index: 1;                  /* 内容在 CRT 覆盖层下面 */
+  z-index: 1;
   flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 16px;
-  background: var(--surface);
+  background: var(--cream);
   -webkit-user-select: text;
   user-select: text;
 }
-.log::-webkit-scrollbar { width: 12px; }
-.log::-webkit-scrollbar-track { background: var(--deep); border-left: 2px solid var(--line); }
-.log::-webkit-scrollbar-thumb { background: var(--line); border: 2px solid var(--deep); }
-.log::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
-/* 新消息入场：轻微上移 + 淡入，200ms；不逐条错峰 */
 .m {
   display: flex;
   gap: 12px;
@@ -321,8 +315,9 @@ body {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
   line-height: 1.35;
-  border: 2px solid var(--line);
-  color: var(--muted);
+  border: 3px solid var(--ink);
+  color: var(--ink);
+  background: var(--paper-2);
   padding: 5px 8px;
   flex: 0 0 auto;
   align-self: flex-start;
@@ -333,43 +328,39 @@ body {
 .m .txt { flex: 1 1 auto; -webkit-user-select: text; user-select: text; word-break: break-word; }
 
 .m.sys .txt { color: var(--muted); }
-.m.user .who { background: var(--accent); border-color: var(--accent); color: #14171c; }
-.m.user .txt { color: var(--text); }
+.m.user .who { background: var(--lav); color: var(--ink); }
+.m.user .txt { color: var(--ink); }
 
-/* 助手回复：深一格的底 + 细边框 */
 .m.bot .txt {
-  border: 2px solid var(--line);
-  background: var(--deep);
+  border: 3px solid var(--ink);
+  background: var(--cream-2);
   padding: 11px 13px;
-  color: var(--text);
+  color: var(--ink);
   white-space: pre-wrap;
   min-height: 24px;
 }
-.m.tool .who { border-color: var(--warn); color: var(--warn); }
+.m.tool .who { border-color: var(--ink); background: var(--warn); }
 .m.tool .txt { color: var(--muted); font-size: 19px; }
-.m.think .who { border-color: var(--accent); color: var(--accent); }
+.m.think .who { border-color: var(--ink); background: var(--lav); }
 .m.think .txt { color: var(--muted); }
-.m.err .who { border-color: var(--err); color: var(--err); }
+.m.err .who { border-color: var(--ink); background: var(--err); color: var(--cream); }
 .m.err .txt { color: var(--err); }
-.m.step .who { border-color: var(--line); }
 .m.step .txt { color: var(--muted); font-size: 19px; }
 
-/* 打字机尾部光标：回复流出时跟在最后一个字后面 */
 .stream-caret {
   display: inline-block;
   width: 10px;
   height: 19px;
   margin-left: 2px;
   vertical-align: -3px;
-  background: var(--accent);
+  background: var(--lav-deep);
   animation: blink 1s steps(1) infinite;
 }
 @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 
-/* 思考中：三个跳动方块（步骤化跳动，贴终端节奏） */
 .dots i {
   width: 8px; height: 8px;
-  background: var(--accent);
+  background: var(--lav-deep);
   display: inline-block;
   margin-left: 3px;
   animation: hop .9s steps(2) infinite;
@@ -378,22 +369,21 @@ body {
 .dots i:nth-child(3) { animation-delay: .3s; }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 
-/* ---------- 输入行 ---------- */
 .inputline {
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
-  border-top: 2px solid var(--line);
-  background: var(--deep);
+  border-top: 4px solid var(--ink);
+  background: var(--paper-2);
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 14px;
+  padding: 10px 12px;
 }
 .inputline .ps {
   font-family: 'Press Start 2P', monospace;
   font-size: 18px;
-  color: var(--accent);
+  color: var(--lav-deep);
 }
 .inputwrap { position: relative; flex: 1 1 auto; display: flex; align-items: center; }
 #input {
@@ -403,14 +393,13 @@ body {
   background: transparent;
   font-family: 'VT323', 'Microsoft YaHei', monospace;
   font-size: 22px;
-  color: var(--text);
+  color: var(--ink);
   padding: 0 0 0 17px;
-  caret-color: transparent;      /* 系统光标关掉，用自己画的方块 */
+  caret-color: transparent;
   -webkit-user-select: text;
   user-select: text;
 }
-#input::placeholder { color: var(--muted); }   /* 占位符也过对比度 */
-/* 量宽用的隐藏镜像：让方块光标正好贴在字后面 */
+#input::placeholder { color: var(--muted); }
 #mirror {
   position: absolute;
   left: 0; top: 0;
@@ -419,36 +408,56 @@ body {
   font-family: 'VT323', 'Microsoft YaHei', monospace;
   font-size: 22px;
 }
-/* 输入行方块光标：steps 闪烁（聚焦时转粉） */
 .cursor {
   position: absolute;
   left: 0;
   width: 11px;
   height: 22px;
-  background: var(--green);
+  background: var(--muted);
   pointer-events: none;
   animation: blink 1s steps(1) infinite;
 }
 
-/* ================= 侧栏面板 ================= */
-.side { display: flex; flex-direction: column; gap: 16px; }
-.panel {
-  background: var(--surface);
-  border: 2px solid var(--line);
+.side {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.panel {
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--shadow-cream);
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
 }
 .panel h4 {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
   letter-spacing: 1px;
-  color: var(--green);
-  background: var(--deep);
-  border-bottom: 2px solid var(--line);
+  color: var(--cream);
+  background: var(--ink);
+  border-bottom: 4px solid var(--ink);
   margin: 0;
-  padding: 12px 13px;
+  padding: 11px 13px;
   font-weight: 400;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  -webkit-user-select: none;
+  user-select: none;
 }
+.panel h4::after {
+  content: '\2015\2015';
+  font-family: 'Press Start 2P', monospace;
+  font-size: 12px;
+}
+.panel.collapsed h4::after { content: '\ff0b\uff0b'; }
+.panel.collapsed .panel-body { display: none; }
+.panel h4:focus-visible { outline: 3px solid var(--lav-deep); outline-offset: 2px; }
 .kv {
   display: flex;
   justify-content: space-between;
@@ -456,21 +465,20 @@ body {
   gap: 10px;
   font-size: 19px;
   color: var(--muted);
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--hair);
+  padding: 8px 13px;
+  border-bottom: 2px solid var(--paper-2);
 }
 .kv:last-child { border-bottom: none; }
-.kv b { color: var(--text); font-weight: 400; text-align: right; word-break: break-all; }
+.kv b { color: var(--ink); font-weight: 400; text-align: right; word-break: break-all; }
 
-/* 置信度方格条：10 格，纯 CSS */
 .conf { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; padding: 13px 13px 0; }
 .conf i {
   height: 20px;
-  border: 2px solid var(--line);
-  background: var(--deepest);
+  border: 3px solid var(--ink);
+  background: var(--paper-2);
 }
-.conf i.on { background: var(--green); border-color: var(--green); }
-.conf i.on.dim { background: var(--warn); border-color: var(--warn); }
+.conf i.on { background: var(--lav); }
+.conf i.on.dim { background: var(--warn); }
 .conf-cap {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
@@ -479,82 +487,77 @@ body {
   padding: 10px 13px 13px;
 }
 
-/* 管线步骤 */
 .pipe-line {
   font-size: 19px;
   color: var(--muted);
   padding: 8px 13px;
-  border-bottom: 1px solid var(--hair);
+  border-bottom: 2px solid var(--paper-2);
 }
 .pipe-line:last-child { border-bottom: none; }
 .pipe-line em {
   font-style: normal;
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
-  background: var(--deepest);
-  border: 2px solid var(--line);
-  color: var(--green);
+  background: var(--paper-2);
+  border: 3px solid var(--ink);
+  color: var(--ink);
   padding: 3px 6px;
   margin-right: 9px;
 }
-.pipe-line.done em { border-color: var(--green); }
-.pipe-line.live em { border-color: var(--accent); color: var(--accent); }
+.pipe-line.done em { background: var(--lav); }
+.pipe-line.live em { background: var(--warn); }
 
-/* ================= 底部说明块 + 页脚 ================= */
 .callout {
-  background: var(--deep);
-  border: 2px solid var(--line);
-  padding: 14px 18px;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--shadow-cream);
+  padding: 12px 16px;
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
   font-weight: 700;
   font-size: 18px;
-  color: var(--text);
-  letter-spacing: 1px;
-  margin-top: 24px;
+  color: var(--ink);
+  margin-top: 14px;
+  flex: 0 0 auto;
 }
-.callout b { color: var(--accent); }
+.callout b { color: var(--err); }
 .foot {
   text-align: center;
   color: var(--muted);
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
   letter-spacing: 2px;
-  margin-top: 18px;
+  margin-top: 10px;
+  flex: 0 0 auto;
 }
 
-/* ================= 设置面板 ================= */
 .mask {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 9, .78);
+  background: rgba(25, 21, 16, .55);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 50;
 }
-.dialog { width: min(580px, 92vw); max-height: 84vh; }
-.dlg-body { padding: 4px 0 0; background: var(--surface); }
+.dialog { width: min(580px, 92vw); max-height: 84vh; box-shadow: 7px 7px 0 var(--lav-deep); }
+.dlg-body { padding: 4px 0 0; background: var(--cream); overflow-y: auto; }
 .dlg-body .kv { font-size: 19px; padding: 10px 16px; }
 .dlg-tip { font-size: 18px; color: var(--muted); margin: 0; padding: 14px 16px; line-height: 1.5; }
 .dlg-foot { padding: 0 16px 16px; }
+.term-x { cursor: default; }
 
-/* 窄屏兜底 */
 @media (max-width: 980px) {
   .stage { grid-template-columns: minmax(0, 1fr); }
   .hl-zh { font-size: 30px; }
+  .side { max-height: none; }
 }
 
-/* ============================================================
-   降级路径：prefers-reduced-motion
-   去掉位移 / 滚动这类大动作，保留仍能说明状态的轻微变化：
-   输入光标改为柔和呼吸（不是硬闪），颜色过渡缩短但保留
-   ============================================================ */
 @media (prefers-reduced-motion: reduce) {
-  .crt-scan { animation: none; display: none; }     /* 扫描线是纯氛围：直接停 */
-  .m { animation: none; }                           /* 入场位移去掉，内容照常显示 */
+  .crt-scan { animation: none; display: none; }
+  .m { animation: none; }
   .dots i { animation: none; }
-  .stream-caret { animation: none; opacity: 1; }    /* 输出光标常亮，仍表示正在流出 */
+  .stream-caret { animation: none; opacity: 1; }
   .cursor { animation: caret-soft 1.6s ease-in-out infinite; }
-  .px-btn, .tag, .tb-btn { transition-duration: 60ms; }
+  .px-btn, .tag, .tb-btn, .term-tab { transition-duration: 60ms; }
 }
 @keyframes caret-soft { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }

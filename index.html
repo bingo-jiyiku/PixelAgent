@@ -51,15 +51,18 @@
       <div class="term-bar">
         <span class="term-mark"></span>
         <span class="term-name">PIXEL() TERMINAL</span>
-        <span class="term-mode">RAW · STREAM</span>
-        <span class="term-x">✕</span>
+        <span class="term-tabs">
+          <button class="term-tab on" id="tab-raw" type="button">RAW</button>
+          <button class="term-tab" id="tab-stream" type="button">STREAM</button>
+        </span>
+        <span class="term-x" aria-hidden="true">✕</span>
       </div>
 
       <!-- 聊天记录区 -->
       <div class="log" id="log">
         <div class="m sys">
           <span class="who">SYS</span>
-          <span class="txt">终端就绪。回车发送，ESC 停止。会话自动记忆，点「新会话」开新话题。</span>
+          <span class="txt">终端就绪。在下面输入框打字，点「发送」发出；正在跑的时候点「停止」打断。</span>
         </div>
       </div>
 
@@ -71,7 +74,7 @@
           <span id="mirror" aria-hidden="true"></span>
           <span class="cursor" id="cursor"></span>
         </div>
-        <button class="px-btn primary" id="btn-send">回车</button>
+        <button class="px-btn primary" id="btn-send">发送</button>
       </div>
 
       <!-- CRT 覆盖层：滚动扫描线 + 极淡静态扫描纹理（纯装饰，不接事件） -->
@@ -83,40 +86,48 @@
     <!-- 侧栏：状态 / 模型 / 装饰 -->
     <aside class="side">
       <div class="panel">
-        <h4>STATUS</h4>
-        <div class="kv"><span>状态</span><b id="kv-state">IDLE</b></div>
-        <div class="kv"><span>轮次</span><b id="kv-round">0</b></div>
-        <div class="kv"><span>用时</span><b id="kv-time">0.0s</b></div>
+        <h4 id="p-status">STATUS</h4>
+        <div class="panel-body">
+          <div class="kv"><span>状态</span><b id="kv-state">IDLE</b></div>
+          <div class="kv"><span>轮次</span><b id="kv-round">0</b></div>
+          <div class="kv"><span>用时</span><b id="kv-time">0.0s</b></div>
+        </div>
       </div>
 
       <div class="panel">
-        <h4>MODEL</h4>
-        <div class="kv"><span>后端</span><b>PI</b></div>
-        <div class="kv"><span>模型</span><b id="kv-model">读取中…</b></div>
-        <div class="kv"><span>输出</span><b>JSON 流</b></div>
+        <h4 id="p-model">MODEL</h4>
+        <div class="panel-body">
+          <div class="kv"><span>后端</span><b>PI</b></div>
+          <div class="kv"><span>模型</span><b id="kv-model">读取中…</b></div>
+          <div class="kv"><span>输出</span><b>JSON 流</b></div>
+        </div>
       </div>
 
       <!-- 置信度方格条（纯 CSS 画的装饰） -->
       <div class="panel">
-        <h4>CONFIDENCE</h4>
-        <div class="conf" id="conf">
-          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <h4 id="p-conf">CONFIDENCE</h4>
+        <div class="panel-body">
+          <div class="conf" id="conf">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="conf-cap" id="conf-cap">STANDBY</div>
         </div>
-        <div class="conf-cap" id="conf-cap">STANDBY</div>
       </div>
 
       <div class="panel">
-        <h4>PIPE</h4>
-        <div class="pipe-line"><em>1</em><span>渲染层</span></div>
-        <div class="pipe-line"><em>2</em><span>主进程 IPC</span></div>
-        <div class="pipe-line"><em>3</em><span>pi --mode json</span></div>
-        <div class="pipe-line"><em>4</em><span>text_delta 打字机</span></div>
+        <h4 id="p-pipe">PIPE</h4>
+        <div class="panel-body">
+          <div class="pipe-line"><em>1</em><span>渲染层</span></div>
+          <div class="pipe-line"><em>2</em><span>主进程 IPC</span></div>
+          <div class="pipe-line"><em>3</em><span>pi --mode json</span></div>
+          <div class="pipe-line"><em>4</em><span>text_delta 打字机</span></div>
+        </div>
       </div>
     </aside>
   </div>
 
   <!-- 底部黑框说明块（代替字幕） -->
-  <div class="callout" id="callout">按 <b>回车</b> 发送 · 多轮记忆已开 · <b>ESC</b> 停止当前这一轮</div>
+  <div class="callout" id="callout">全部操作都能用鼠标完成：<b>发送</b> / <b>停止</b> / <b>新会话</b> / <b>设置</b> / <b>RAW·STREAM</b> / 侧栏面板点标题可收起</div>
 
   <div class="foot">PIXELAGENT · 不会聊天的 AI</div>
 </div>
