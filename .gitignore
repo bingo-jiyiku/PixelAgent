@@ -1,3 +1,8 @@
 node_modules/
 .sessions/
 *.log
+/p*.bin
+/px*.bin
+/shot*.png
+/shot*.jpg
+/shots/
