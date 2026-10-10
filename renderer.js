@@ -74,6 +74,19 @@ function setState(state, detail) {
     t.classList.toggle('on', t.dataset.state === state);
   });
   $('kv-state').textContent = state;
+  // 像素小女孩办公动画：状态联动（IDLE 眨眼敲键 / THINKING 冒泡 / TOOL 齿轮 / DONE 欢呼）
+  const girl = $('pixel-girl');
+  const scene = $('girl-scene');
+  const cap = document.querySelector('.girl-cap');
+  if (girl) girl.dataset.state = state;
+  if (scene) scene.dataset.state = state;
+  if (cap) {
+    cap.textContent =
+      state === 'THINKING' ? 'THINKING…' :
+      state === 'TOOL' ? 'WORKING…' :
+      state === 'DONE' ? 'DONE!' :
+      state === 'IDLE' ? 'STANDBY' : state;
+  }
   // 管线高亮：跑的时候亮第一步到第三步
   document.querySelectorAll('.pipe-line').forEach((p, i) => {
     p.classList.remove('done', 'live');
