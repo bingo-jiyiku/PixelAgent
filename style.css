@@ -34,7 +34,7 @@
   --purple: #8a2be2;    /* 强调紫 */
   --green: #338855;     /* 终端绿（成功态） */
   --gray: #666666;
-  --shadow: rgba(0, 0, 0, .85);
+  --shadow: rgba(0, 0, 0, .45);   /* 像素投影统一调淡调薄：有层次但不脏 */
 }
 
 * { box-sizing: border-box; }
@@ -63,7 +63,7 @@ body {
 .zh-pixel {
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
   font-weight: 900;
-  text-shadow: 2px 2px 0 rgba(0, 0, 0, .25);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .25);   /* 中文块感阴影收薄 */
   letter-spacing: 3px;
 }
 
@@ -83,6 +83,31 @@ body {
 .bul { width: 10px; height: 10px; display: inline-block; }
 .sq-white { background: #fff; margin-right: 9px; }
 .sq-pink { background: var(--pink); margin-left: 9px; }
+
+/* 窗口控制按钮（无原生窗口后，自己画小平块按钮） */
+.tb-btns { display: inline-flex; align-items: center; gap: 6px; }
+.tb-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  line-height: 1;
+  width: 24px;
+  height: 20px;
+  border: 2px solid #fff;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+.tb-btn:hover { background: var(--pink); color: #000; border-color: var(--pink); }
+.tb-btn.tb-close:hover { background: #c00000; color: #fff; border-color: #fff; }
+/* 假标题栏只留左边一小块能拖动（按住 PIXELAGENT 字样拖动窗口），
+   其他区域照常点鼠标，不影响选字/滚轮 */
+.tb-drag { -webkit-app-region: drag; app-region: drag; padding: 4px 8px; margin-left: -4px; }
+.tb-btns { -webkit-app-region: no-drag; app-region: no-drag; }
 
 /* ================= 页面容器 ================= */
 .page {
@@ -145,9 +170,9 @@ body {
   font-weight: 900;
   font-size: 40px;
   letter-spacing: 6px;
-  color: var(--ink);
-  /* 洋红错位阴影：参考图里中文大标题的效果 */
-  text-shadow: 4px 4px 0 var(--magenta);
+  color: #111;
+  /* 洋红错位阴影：保留参考图的中文大标题效果，但收窄一档不糊 */
+  text-shadow: 3px 3px 0 var(--magenta);
 }
 .hl-en {
   font-family: 'Press Start 2P', monospace;
@@ -169,7 +194,7 @@ body {
 .win {
   background: var(--paper);
   border: 4px solid #000;
-  box-shadow: 8px 8px 0 var(--shadow);   /* 右下像素投影 */
+  box-shadow: 5px 5px 0 var(--shadow);    /* 主投影收薄到 5px，不再 8px 厚 */
   display: flex;
   flex-direction: column;
   min-height: 460px;
@@ -269,7 +294,6 @@ body {
   color: #111;
   white-space: pre-wrap;
   word-break: break-word;
-  box-shadow: 4px 4px 0 rgba(0, 0, 0, .18);
   -webkit-user-select: text;
   user-select: text;
   min-height: 18px;
@@ -371,7 +395,7 @@ body {
 .panel {
   background: var(--paper);
   border: 3px solid #000;
-  box-shadow: 5px 5px 0 var(--shadow);
+  box-shadow: 4px 4px 0 var(--shadow);    /* 投影统一收薄：4px，跟主窗口一个力度 */
   padding: 10px;
 }
 .panel h4 {
@@ -430,7 +454,7 @@ body {
 .callout {
   background: var(--paper);
   border: 4px solid #000;
-  box-shadow: 6px 6px 0 var(--shadow);
+  box-shadow: 4px 4px 0 var(--shadow);    /* 投影统一收薄：4px */
   padding: 11px 14px;
   text-align: center;
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif;

@@ -7,10 +7,15 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<!-- ================= 顶部黑条状态栏 ================= -->
-<header class="topbar">
-  <span class="tb-side"><i class="bul sq-white"></i>PIXELAGENT</span>
+<!-- ================= 顶部假标题栏（无原生窗口，可拖动+关小关按钮） ================= -->
+<header class="topbar" id="titlebar">
+  <span class="tb-side tb-drag"><i class="bul sq-white"></i>PIXELAGENT</span>
   <span class="tb-side">PIXEL / AGENT ONE<i class="bul sq-pink"></i></span>
+  <span class="tb-btns">
+    <button class="tb-btn" id="tb-min" title="最小化">—</button>
+    <button class="tb-btn" id="tb-max" title="最大化">□</button>
+    <button class="tb-btn tb-close" id="tb-close" title="关闭">✕</button>
+  </span>
 </header>
 
 <div class="page">

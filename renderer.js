@@ -335,6 +335,19 @@ $('btn-mode').addEventListener('click', () => {
 });
 
 /* ============================================================
+   假标题栏按钮（原生窗口关掉后，最小化/最大化/关闭自己来）
+   ============================================================ */
+$('tb-min').addEventListener('click', () => window.pixelAPI && window.pixelAPI.winMin());
+$('tb-max').addEventListener('click', () => window.pixelAPI && window.pixelAPI.winMax());
+$('tb-close').addEventListener('click', () => window.pixelAPI && window.pixelAPI.winClose());
+
+/* ESC 关弹窗已有；无原生窗口后双击标题栏也能最大化，补一条双击空隙处关弹窗 */
+$('titlebar').addEventListener('dblclick', (e) => {
+  if (e.target.closest('.tb-btn')) return;   // 点按钮不触发
+  window.pixelAPI && window.pixelAPI.winMax();
+});
+
+/* ============================================================
    演示模式：没有 pixelAPI（比如用浏览器直接打开 index.html）时
    自己模拟一段流式回复，方便看样式 / 截图。
    ============================================================ */

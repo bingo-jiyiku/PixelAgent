@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   newSession: () => ipcRenderer.invoke('pi:new-session'),
   // 读信息（模型/会话路径），设置面板用
   info: () => ipcRenderer.invoke('pi:info'),
+  // 窗口控制（无原生标题栏后，按钮自己发号施令）
+  winMin: () => ipcRenderer.invoke('win:min'),
+  winMax: () => ipcRenderer.invoke('win:max'),
+  winClose: () => ipcRenderer.invoke('win:close'),
   // 收主进程推过来的所有消息
   onMsg: (cb) => {
     ipcRenderer.on('pi:msg', (_e, data) => cb(data));

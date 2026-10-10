@@ -37,7 +37,11 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#f5f5f2',
     title: 'PixelAgent',
-    // 第一版用系统标题栏：省事、稳，页面内部自己做"假窗口"装饰
+    // 不要系统原生标题栏/菜单栏：整个窗口就是一块画布，
+    // 标题栏用页面里 HTML 做的假标题栏（win-title）代替，像素风统一。
+    frame: false,
+    autoHideMenuBar: true,
+    useContentSize: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -102,6 +106,14 @@ ipcMain.handle('pi:info', () => {
     mode: 'json（换行分隔事件流）'
   };
 });
+
+// ---------- 窗口控制：最小化 / 最大化 / 关闭（无原生标题栏用） ----------
+ipcMain.handle('win:min', () => { if (win && !win.isDestroyed()) win.minimize(); });
+ipcMain.handle('win:max', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+});
+ipcMain.handle('win:close', () => { if (win && !win.isDestroyed()) win.close(); });
 
 app.whenReady().then(() => {
   createWindow();
