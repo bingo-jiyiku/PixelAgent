@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; font-src 'self' data:;" />
+  <title>PixelAgent</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<!-- ================= 顶部黑条状态栏 ================= -->
+<header class="topbar">
+  <span class="tb-side"><i class="bul sq-white"></i>PIXELAGENT</span>
+  <span class="tb-side">PIXEL / AGENT ONE<i class="bul sq-pink"></i></span>
+</header>
+
+<div class="page">
+
+  <!-- ================= 模式按钮行 ================= -->
+  <div class="modebar">
+    <button class="px-btn black" id="btn-mode">1.0 模式</button>
+    <button class="px-btn white" id="btn-new">新会话</button>
+    <button class="px-btn white" id="btn-settings">设置</button>
+    <button class="px-btn pink hidden" id="btn-stop">■ 停止</button>
+
+    <!-- 状态像素标签：IDLE / THINKING / TOOL / DONE -->
+    <div class="tags" id="tags">
+      <span class="tag on" data-state="IDLE">IDLE</span>
+      <span class="tag" data-state="THINKING">THINKING</span>
+      <span class="tag" data-state="TOOL">TOOL</span>
+      <span class="tag" data-state="DONE">DONE</span>
+    </div>
+  </div>
+
+  <!-- ================= 大标题（中文 + 粉色错位阴影） ================= -->
+  <div class="headline">
+    <div class="hl-zh">复古像素终端</div>
+    <div class="hl-en">PIXEL() TERMINAL —— 一个会自己跑的助手</div>
+  </div>
+
+  <!-- ================= 主体：假窗口 + 侧栏 ================= -->
+  <div class="stage">
+
+    <!-- 假窗口：黑粗边框 + 粉色标题栏 + 像素投影 -->
+    <section class="win">
+      <div class="win-title">
+        <span class="win-dot"></span>
+        <span class="win-name">PIXEL() TERMINAL</span>
+        <span class="win-stripes"></span>
+        <span class="win-x">✕</span>
+      </div>
+
+      <!-- 聊天记录区 -->
+      <div class="log" id="log">
+        <div class="m sys">
+          <span class="who">SYS</span>
+          <span class="txt">终端就绪。回车发送，ESC 停止。会话自动记忆，点「新会话」开新话题。</span>
+        </div>
+      </div>
+
+      <!-- 输入行：> 开头 + 闪烁方块光标 -->
+      <div class="inputline">
+        <span class="ps">&gt;</span>
+        <div class="inputwrap">
+          <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…" />
+          <span id="mirror" aria-hidden="true"></span>
+          <span class="cursor" id="cursor"></span>
+        </div>
+        <button class="px-btn black small" id="btn-send">回车</button>
+      </div>
+    </section>
+
+    <!-- 侧栏：状态 / 模型 / 装饰 -->
+    <aside class="side">
+      <div class="panel">
+        <h4>STATUS</h4>
+        <div class="kv"><span>状态</span><b id="kv-state">IDLE</b></div>
+        <div class="kv"><span>轮次</span><b id="kv-round">0</b></div>
+        <div class="kv"><span>用时</span><b id="kv-time">0.0s</b></div>
+      </div>
+
+      <div class="panel">
+        <h4>MODEL</h4>
+        <div class="kv"><span>后端</span><b>PI</b></div>
+        <div class="kv"><span>模型</span><b id="kv-model">读取中…</b></div>
+        <div class="kv"><span>输出</span><b>JSON 流</b></div>
+      </div>
+
+      <!-- 置信度方格条（纯 CSS 画的装饰） -->
+      <div class="panel">
+        <h4>CONFIDENCE</h4>
+        <div class="conf" id="conf">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="conf-cap" id="conf-cap">STANDBY</div>
+      </div>
+
+      <div class="panel">
+        <h4>PIPE</h4>
+        <div class="pipe-line"><em>1</em><span>渲染层</span></div>
+        <div class="pipe-line"><em>2</em><span>主进程 IPC</span></div>
+        <div class="pipe-line"><em>3</em><span>pi --mode json</span></div>
+        <div class="pipe-line"><em>4</em><span>text_delta 打字机</span></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 底部黑框说明块（代替字幕） -->
+  <div class="callout" id="callout">按 <b>回车</b> 发送 · 多轮记忆已开 · <b>ESC</b> 停止当前这一轮</div>
+
+  <div class="foot">PIXELAGENT · 不会聊天的 AI</div>
+</div>
+
+<!-- ================= 设置面板（只读，展示 pi 的信息） ================= -->
+<div class="mask hidden" id="mask">
+  <div class="win dialog">
+    <div class="win-title">
+      <span class="win-dot"></span>
+      <span class="win-name">SETTINGS()</span>
+      <span class="win-stripes"></span>
+      <span class="win-x" id="dlg-x">✕</span>
+    </div>
+    <div class="dlg-body">
+      <div class="kv"><span>后端</span><b>pi</b></div>
+      <div class="kv"><span>输出模式</span><b id="set-mode">json</b></div>
+      <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
+      <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
+      <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
+      <p class="dlg-tip">第一版只读展示，不做模型切换 UI（读 pi 自己的默认配置）。</p>
+      <button class="px-btn black" id="dlg-close">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>
