@@ -1,0 +1,15 @@
+/* ============================================================
+   L3 控制台分舱：上面聊天假窗口 + 下面一整条横向状态栏
+   像老机房控制台，状态横排一目了然
+   ============================================================ */
+#main{
+  height:calc(100vh - 44px);padding:14px 22px 10px;
+  display:flex;flex-direction:column;gap:14px;
+}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
+.stage{flex:1 1 auto;min-height:0;display:flex}
+.stage .win{flex:1 1 auto}
+/* 底部横条：4个面板横排 */
+.deck{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;flex:0 0 auto}
+.deck .kv{font-size:18px;padding:3px 0}
+.deck .pipe{font-size:18px;padding:2px 0}

@@ -1,0 +1,18 @@
+/* ============================================================
+   L4 对等两栏：左聊天 + 右一个大仪表盘（4面板重组成有层级的整体）
+   右边不再是4个小方块堆叠，而是一整块仪表盘
+   ============================================================ */
+#main{
+  height:calc(100vh - 44px);padding:14px 22px 10px;
+  display:flex;flex-direction:column;gap:14px;
+}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
+.stage{flex:1 1 auto;min-height:0;display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.dash{display:flex;flex-direction:column;gap:14px;min-height:0}
+/* 右栏重组：上=STATUS+MODEL 并排，中=CONFIDENCE 大块，下=PIPE */
+.dash-top{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.dash-mid{flex:1 1 auto;display:flex;flex-direction:column}
+.dash .kv{font-size:19px}
+.dash .conf i{height:22px}
+.dash .cap{font-size:13px}

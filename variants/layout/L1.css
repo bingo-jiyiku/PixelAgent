@@ -1,0 +1,16 @@
+/* ============================================================
+   L1 视频复刻：大标题在上 → 中间假窗口几乎占满 → 右侧窄侧栏
+   参考老板最初给的那个视频：标题大、窗口大、侧栏弱化
+   ============================================================ */
+#main{
+  max-width:1220px;margin:0 auto;padding:16px 22px 10px;
+  display:flex;flex-direction:column;gap:14px;min-height:calc(100vh - 44px);
+}
+.modebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:18px;
+  flex:1 1 auto;min-height:0}
+/* 窄侧栏：面板内容更紧，只留关键数字 */
+.side-narrow{display:flex;flex-direction:column;gap:12px;min-height:0}
+.side-narrow .kv{font-size:18px}
+.side-narrow .pipe{font-size:18px}
+.callout{margin-top:2px}

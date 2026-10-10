@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>L3 控制台分舱</title><style>
+:root{
+  --paper:#ffffff; --panel:#ffffff; --panel-2:#f2f2f2;
+  --lav:#c381b5; --lav-deep:#a8669c; --ink:#191510;
+  --muted:#5c5348; --err:#a3231b; --line:#191510;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--paper);
+  background-image:radial-gradient(rgba(25,21,16,.05) 1.1px, transparent 1.1px);
+  background-size:22px 22px; color:var(--ink);
+  font-family:'VT323','Microsoft YaHei','SimHei',monospace; font-size:20px;
+  -webkit-user-select:none; user-select:none;
+}
+*{scrollbar-width:none;-ms-overflow-style:none}
+::-webkit-scrollbar{width:0;height:0;display:none}
+button{font-family:inherit}
+
+/* 顶部标题栏 */
+.topbar{background:var(--ink);border-bottom:4px solid var(--line);display:flex;
+  justify-content:space-between;align-items:center;height:44px;padding:0 12px;
+  font-family:'Press Start 2P','VT323',monospace;font-size:12px;letter-spacing:1px;
+  color:#fff;flex:0 0 auto}
+.tb-side{display:inline-flex;align-items:center;gap:10px}
+.tb-btns{display:inline-flex;gap:8px}
+.tb-btn{width:30px;height:26px;border:3px solid #fff;background:transparent;color:#fff;
+  font-family:'Press Start 2P',monospace;font-size:12px;cursor:pointer;border-radius:0;
+  display:inline-flex;align-items:center;justify-content:center;padding:0}
+.tb-btn:hover{background:#fff;color:var(--ink)}
+.tb-btn.x:hover{background:var(--lav);color:#fff;border-color:var(--lav)}
+.bul{width:10px;height:10px;display:inline-block}
+.sq-w{background:#fff}.sq-p{background:var(--lav)}
+
+/* 通用像素按钮 */
+.px-btn{font-family:'Press Start 2P','Microsoft YaHei',monospace;font-size:12px;
+  line-height:1.2;padding:10px 12px;border:3px solid var(--ink);background:var(--panel);
+  color:var(--ink);cursor:pointer;border-radius:0;box-shadow:4px 4px 0 var(--lav-deep)}
+.px-btn:hover{background:var(--lav);box-shadow:4px 4px 0 var(--lav-deep)}
+.px-btn.primary{background:var(--lav);box-shadow:4px 4px 0 var(--lav-deep)}
+.px-btn.primary:hover{background:var(--panel)}
+
+/* 状态标签 */
+.tags{display:flex;gap:8px;margin-left:auto}
+.tag{font-family:'Press Start 2P',monospace;font-size:12px;padding:9px 10px;
+  border:3px solid var(--ink);background:var(--panel);color:var(--muted);
+  box-shadow:3px 3px 0 var(--lav-deep)}
+.tag.on{background:var(--lav);color:#fff}
+.tag.on[data-state="DONE"]{background:var(--ink);color:#fff}
+
+/* 假窗口三件套 */
+.win{background:var(--panel);border:4px solid var(--ink);display:flex;flex-direction:column;
+  box-shadow:7px 7px 0 var(--lav-deep);min-height:0}
+.win-title{background:var(--lav);border-bottom:4px solid var(--ink);display:flex;
+  align-items:center;gap:10px;padding:0 8px;height:40px;flex:0 0 40px}
+.win-name{font-family:'Press Start 2P',monospace;font-size:13px;letter-spacing:2px;color:#fff}
+.win-grip{flex:1 1 auto;align-self:stretch;min-width:24px;margin:0 6px;border:3px solid var(--ink);
+  background-color:var(--panel);
+  background-image:repeating-linear-gradient(-45deg,var(--ink) 0,var(--ink) 3px,var(--panel) 3px,var(--panel) 8px);
+  background-size:11.32px 11.32px}
+.term-tabs{display:flex;gap:6px;flex:0 0 auto}
+.term-tab{font-family:'Press Start 2P',monospace;font-size:12px;padding:7px 9px;
+  border:3px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer;border-radius:0}
+.term-tab.on{background:var(--ink);color:#fff}
+.win-ctl{display:inline-flex;gap:4px;flex:0 0 auto}
+.win-btn{width:26px;height:22px;border:3px solid var(--ink);background:var(--panel);
+  font-family:'Press Start 2P',monospace;font-size:11px;cursor:pointer;border-radius:0;
+  display:inline-flex;align-items:center;justify-content:center;padding:0}
+.win-btn.x:hover{background:var(--err);color:#fff;border-color:var(--err)}
+.win-btn.mn:hover,.win-btn.mx:hover{background:var(--lav);color:#fff;border-color:var(--lav)}
+
+/* 消息区 */
+.log{flex:1 1 auto;overflow-y:auto;padding:14px 16px;background:var(--panel)}
+.m{margin-bottom:12px;line-height:1.45;font-size:21px}
+.who{font-family:'Press Start 2P',monospace;font-size:12px;background:var(--ink);color:#fff;
+  padding:5px 7px;margin-right:8px;display:inline-block}
+.m.user .who{background:var(--lav);color:#fff}
+.m.sys .txt{display:inline-block;border:3px solid var(--ink);background:var(--panel-2);
+  padding:8px 10px;font-size:20px}
+.m.bot .bubble{display:block;border:3px solid var(--ink);background:var(--panel);
+  padding:10px 12px;margin-top:6px;font-size:21px;white-space:pre-wrap}
+.m.tool .txt{color:var(--muted);font-size:20px}
+.m.tool .who{background:var(--lav-deep)}
+.m.think .txt{color:var(--lav-deep);font-size:20px}
+
+/* 输入行 */
+.inputline{flex:0 0 auto;border-top:4px solid var(--ink);background:var(--panel-2);
+  display:flex;align-items:center;gap:10px;padding:10px 12px}
+.ps{font-family:'Press Start 2P',monospace;font-size:16px;color:var(--lav-deep)}
+.inputwrap{position:relative;flex:1 1 auto;display:flex;align-items:center}
+#input,.ia{width:100%;border:3px solid var(--ink);background:var(--panel);
+  font-family:'VT323','Microsoft YaHei',monospace;font-size:22px;color:var(--ink);
+  padding:6px 10px;outline:none;border-radius:0}
+.cursor{width:12px;height:22px;background:var(--lav-deep);animation:blink 1s steps(1) infinite;flex:0 0 auto}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* 侧栏面板 */
+.panel{background:var(--panel);border:4px solid var(--ink);box-shadow:5px 5px 0 var(--lav-deep)}
+.panel h4{font-family:'Press Start 2P',monospace;font-size:12px;background:var(--lav);
+  color:#fff;margin:0;padding:9px 11px;display:flex;justify-content:space-between;align-items:center}
+.panel .bd{padding:11px}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-size:20px;color:var(--muted);padding:4px 0;border-bottom:2px solid var(--panel-2)}
+.kv:last-child{border-bottom:none}
+.kv b{color:var(--ink);text-align:right}
+.conf{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}
+.conf i{height:16px;border:2px solid var(--ink);background:var(--panel)}
+.conf i.on{background:var(--lav)}
+.cap{font-family:'Press Start 2P',monospace;font-size:12px;color:var(--muted);margin-top:8px}
+.pipe{font-size:20px;color:var(--muted);padding:3px 0;display:flex;align-items:center;gap:8px}
+.pipe em{font-style:normal;font-family:'Press Start 2P',monospace;font-size:12px;
+  background:var(--ink);color:#fff;padding:4px 6px}
+.pipe.live em{background:var(--lav);color:#fff}
+
+/* 底部说明块 + 页脚 */
+.callout{background:var(--panel);border:4px solid var(--ink);box-shadow:4px 4px 0 var(--lav-deep);
+  padding:11px 14px;text-align:center;font-family:'Microsoft YaHei','SimHei',sans-serif;
+  font-weight:700;font-size:18px;flex:0 0 auto}
+.foot{text-align:center;color:var(--muted);font-size:17px;letter-spacing:2px;padding:8px 0}
+.rule{height:4px;background:var(--ink);display:flex;flex:0 0 auto}
+.rule i{width:72px;background:var(--lav)}
+
+/* ============================================================
+   L3 控制台分舱：上面聊天假窗口 + 下面一整条横向状态栏
+   像老机房控制台，状态横排一目了然
+   ============================================================ */
+#main{
+  height:calc(100vh - 44px);padding:14px 22px 10px;
+  display:flex;flex-direction:column;gap:14px;
+}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
+.stage{flex:1 1 auto;min-height:0;display:flex}
+.stage .win{flex:1 1 auto}
+/* 底部横条：4个面板横排 */
+.deck{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;flex:0 0 auto}
+.deck .kv{font-size:18px;padding:3px 0}
+.deck .pipe{font-size:18px;padding:2px 0}
+</style></head><body>
+<div class="topbar">
+  <span class="tb-side"><i class="bul sq-w"></i>PIXELAGENT</span>
+  <span class="tb-side">PIXEL / AGENT ONE<i class="bul sq-p"></i></span>
+  <span class="tb-btns">
+    <button class="tb-btn">—</button><button class="tb-btn">□</button><button class="tb-btn x">✕</button>
+  </span>
+</div>
+
+<div id="main">
+  <div class="bar modebar">
+    <button class="px-btn primary">1.0 模式</button>
+    <button class="px-btn">新会话</button>
+    <button class="px-btn">设置</button>
+    <button class="px-btn">■ 停止</button>
+    <div class="tags">
+      <span class="tag">IDLE</span><span class="tag">THINKING</span>
+      <span class="tag">TOOL</span><span class="tag on" data-state="DONE">DONE</span>
+    </div>
+  </div>
+  <div class="stage"><section class="win">
+      <div class="win-title">
+        <span class="win-name">PIXEL() TERMINAL</span>
+        <span class="win-grip"></span>
+        <div class="term-tabs"><button class="term-tab on">RAW</button><button class="term-tab">STREAM</button></div>
+        <div class="win-ctl">
+          <button class="win-btn mn">—</button><button class="win-btn mx">□</button><button class="win-btn x">✕</button>
+        </div>
+      </div>
+      <div class="log" id="log">
+<div class="m sys"><span class="who">SYS</span><span class="txt">终端就绪。鼠标点「发送」发出；运行中可点「■ 停止」打断。点「新会话」开新话题。</span></div>
+<div class="m user"><span class="who">YOU</span><span class="txt">给这台终端起个复古像素风的名字，八个字以内。</span></div>
+<div class="m tool"><span class="who">TOOL</span><span class="txt">调用工具：write_file /sessions/chat-0.json</span></div>
+<div class="m bot"><span class="who">PI</span><span class="bubble">墨绿屏、方块字，就叫「墨屏 NOPID」：墨是深黑屏幕，屏是自己对着一块老 CRT 在发光。</span></div>
+<div class="m think"><span class="who">THINK</span><span class="txt">已把名字写进会话记忆，下一轮沿用「墨屏」这个称呼。</span></div>
+<div class="m user"><span class="who">YOU</span><span class="txt">再硬一点，别带英文后缀。</span></div>
+<div class="m bot"><span class="who">PI</span><span class="bubble">那就叫两个字：墨屏。不留后缀、不配英文，四个字都嫌多。</span></div>
+</div>
+      <div class="inputline">
+        <span class="ps">&gt;</span>
+        <div class="inputwrap"><input class="ia" placeholder="说点什么…" /></div>
+        <button class="px-btn primary">发送</button>
+      </div>
+    </section></div>
+  <div class="deck">
+    <div class="panel"><h4>STATUS <span>▾</span></h4><div class="bd">
+      <div class="kv"><span>状态</span><b>DONE</b></div>
+      <div class="kv"><span>轮次</span><b>3</b></div>
+      <div class="kv"><span>用时</span><b>12.4s</b></div>
+    </div></div>
+    <div class="panel"><h4>MODEL <span>▾</span></h4><div class="bd">
+      <div class="kv"><span>后端</span><b>PI</b></div>
+      <div class="kv"><span>模型</span><b>deepseek-v4.1-flash</b></div>
+      <div class="kv"><span>输出</span><b>JSON 流</b></div>
+    </div></div>
+    <div class="panel"><h4>CONFIDENCE <span>▾</span></h4><div class="bd">
+      <div class="conf"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+      <div class="cap">0.71 · DONE</div>
+    </div></div>
+    <div class="panel"><h4>PIPE <span>▾</span></h4><div class="bd">
+      <div class="pipe"><em>1</em>渲染层</div>
+      <div class="pipe"><em>2</em>主进程 IPC</div>
+      <div class="pipe live"><em>3</em>pi --mode json</div>
+      <div class="pipe"><em>4</em>text_delta 打字机</div>
+    </div></div>
+    </div>
+</div>
+</body></html>

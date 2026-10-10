@@ -1,0 +1,21 @@
+/* ============================================================
+   L2 全屏终端：假窗口独占窗口，4个状态面板藏右上角点开才出
+   默认极简，只有一个大终端
+   ============================================================ */
+#main{
+  height:calc(100vh - 44px);padding:12px 18px;display:flex;flex-direction:column;gap:10px;
+  position:relative;
+}
+.bar{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+/* 右上角徽章抽屉 */
+.drawer{position:absolute;top:60px;right:18px;width:300px;display:none;z-index:20;
+  flex-direction:column;gap:12px}
+.drawer.open{display:flex}
+.badge{font-family:'Press Start 2P','Microsoft YaHei',monospace;font-size:12px;
+  padding:10px 12px;border:3px solid var(--ink);background:var(--panel);color:var(--ink);
+  cursor:pointer;border-radius:0;box-shadow:4px 4px 0 var(--lav-deep);margin-left:auto}
+.badge.on{background:var(--lav);color:#fff}
+.stage{flex:1 1 auto;min-height:0;display:flex}
+.stage .win{flex:1 1 auto}
+.mask{position:fixed;inset:0;background:rgba(25,21,16,.35);display:none;z-index:10}
+.mask.open{display:block}
