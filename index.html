@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<!-- ================= 顶部假标题栏（无原生窗口，可拖动+关小关按钮） ================= -->
+<!-- ================= 顶部真标题栏（无原生窗口，可拖动 + 真的窗口按钮） ================= -->
 <header class="topbar" id="titlebar">
   <span class="tb-side tb-drag"><i class="bul sq-white"></i>PIXELAGENT</span>
   <span class="tb-side">PIXEL / AGENT ONE<i class="bul sq-pink"></i></span>
@@ -20,7 +20,7 @@
 
 <div class="page">
 
-  <!-- ================= 模式按钮行 ================= -->
+  <!-- ================= 模式按钮行（全鼠标可点） ================= -->
   <div class="modebar">
     <button class="px-btn primary" id="btn-mode">1.0 模式</button>
     <button class="px-btn" id="btn-new">新会话</button>
@@ -36,26 +36,31 @@
     </div>
   </div>
 
-  <!-- ================= 大标题（中文 + 粉色错位阴影） ================= -->
+  <!-- ================= 大标题（像素块中文 + 紫色错位硬阴影） ================= -->
   <div class="headline">
     <div class="hl-zh">复古像素终端</div>
     <div class="hl-en">PIXEL() TERMINAL —— 一个会自己跑的助手</div>
   </div>
   <div class="rule"><i></i></div>
 
-  <!-- ================= 主体：终端窗口 + 侧栏 ================= -->
+  <!-- ================= 主体：仿 Win95 假窗口 + 仪表侧栏 ================= -->
   <div class="stage">
 
-    <!-- 终端窗口：最亮的面；CRT 扫描线只在这一层里走 -->
+    <!-- 仿 Win95 假窗口：紫标题栏 + 斜纹拖动把手 + 像素控制按钮 -->
     <section class="term">
       <div class="term-bar">
-        <span class="term-mark"></span>
+        <span class="win-ico" aria-hidden="true"></span>
         <span class="term-name">PIXEL() TERMINAL</span>
+        <span class="win-grip" aria-hidden="true"></span>
         <span class="term-tabs">
           <button class="term-tab on" id="tab-raw" type="button">RAW</button>
           <button class="term-tab" id="tab-stream" type="button">STREAM</button>
         </span>
-        <span class="term-x" aria-hidden="true">✕</span>
+        <span class="win-ctl">
+          <button class="win-btn" id="w-min" type="button" title="最小化窗口">—</button>
+          <button class="win-btn" id="w-max" type="button" title="最大化窗口">□</button>
+          <button class="win-btn win-x" id="w-close" type="button" title="关闭窗口">✕</button>
+        </span>
       </div>
 
       <!-- 聊天记录区 -->
@@ -77,13 +82,13 @@
         <button class="px-btn primary" id="btn-send">发送</button>
       </div>
 
-      <!-- CRT 覆盖层：滚动扫描线 + 极淡静态扫描纹理（纯装饰，不接事件） -->
+      <!-- 覆盖层：滚动扫描线（极淡，纯装饰，不接事件） -->
       <div class="crt" aria-hidden="true">
         <span class="crt-scan"></span>
       </div>
     </section>
 
-    <!-- 侧栏：状态 / 模型 / 装饰 -->
+    <!-- 侧栏：状态 / 模型 / 置信度 / 管线 -->
     <aside class="side">
       <div class="panel">
         <h4 id="p-status">STATUS</h4>
@@ -136,10 +141,12 @@
 <div class="mask hidden" id="mask">
   <div class="term dialog">
     <div class="term-bar">
-      <span class="term-mark"></span>
+      <span class="win-ico" aria-hidden="true"></span>
       <span class="term-name">SETTINGS()</span>
-      <span class="term-mode">READ ONLY</span>
-      <span class="term-x" id="dlg-x">✕</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="dlg-x" type="button" title="关闭">✕</button>
+      </span>
     </div>
     <div class="dlg-body">
       <div class="kv"><span>后端</span><b>pi</b></div>

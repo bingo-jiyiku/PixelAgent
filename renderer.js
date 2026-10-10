@@ -399,6 +399,20 @@ $('tb-min').addEventListener('click', () => window.pixelAPI && window.pixelAPI.w
 $('tb-max').addEventListener('click', () => window.pixelAPI && window.pixelAPI.winMax());
 $('tb-close').addEventListener('click', () => window.pixelAPI && window.pixelAPI.winClose());
 
+/* 仿 Win95 假窗口标题栏上的窗口按钮：跟真标题栏同一套动作 */
+function bindWinBtn(id, fn) {
+  const b = $(id);
+  if (b) b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+}
+bindWinBtn('w-min', () => window.pixelAPI && window.pixelAPI.winMin());
+bindWinBtn('w-max', () => window.pixelAPI && window.pixelAPI.winMax());
+bindWinBtn('w-close', () => window.pixelAPI && window.pixelAPI.winClose());
+
+/* 斜纹拖动把手也认双击最大化（跟真标题栏一个手感） */
+document.querySelectorAll('.win-grip').forEach((g) => {
+  g.addEventListener('dblclick', () => window.pixelAPI && window.pixelAPI.winMax());
+});
+
 /* ESC 关弹窗已有；无原生窗口后双击标题栏也能最大化，补一条双击空隙处关弹窗 */
 $('titlebar').addEventListener('dblclick', (e) => {
   if (e.target.closest('.tb-btn')) return;   // 点按钮不触发
