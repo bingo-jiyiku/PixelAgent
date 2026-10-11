@@ -69,6 +69,14 @@ app.whenReady().then(async () => {
   await shoot(win, '09-model.png');
   await win.webContents.executeJavaScript(`document.getElementById('mdl-x').click()`);
 
+  // 设置面板（改中文之后要复核：输出模式 / 配置目录 / 凭据 / pi 入口 这些标签）
+  await sleep(400);
+  await win.webContents.executeJavaScript(`document.getElementById('btn-settings').click()`);
+  await sleep(1400);   // 里面还会真跑一次 pi:info
+  await shoot(win, '10-settings.png');
+  await win.webContents.executeJavaScript(
+    `(function(){const b=document.getElementById('dlg-x'); if(b) b.click(); return 1;})()`);
+
   console.log('✅ 补充截图完成');
   app.exit(0);
 });

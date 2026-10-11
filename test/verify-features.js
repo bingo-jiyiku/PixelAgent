@@ -317,7 +317,7 @@ app.whenReady().then(async () => {
     const ns = document.querySelectorAll('.m.err');
     for (let i = ns.length - 1; i >= 0; i--) {
       const w = ns[i].querySelector('.who');
-      if (w && w.textContent === 'IMG') return ns[i].textContent;
+      if (w && w.textContent === '图片') return ns[i].textContent;
     }
     return '';
   })()`);
@@ -336,7 +336,7 @@ app.whenReady().then(async () => {
     const ns = document.querySelectorAll('.m.err');
     for (let i = 0; i < ns.length; i++) {
       const w = ns[i].querySelector('.who');
-      if (w && w.textContent === 'IMG' && ns[i].textContent.indexOf('图片没能进入请求') >= 0) n++;
+      if (w && w.textContent === '图片' && ns[i].textContent.indexOf('图片没能进入请求') >= 0) n++;
     }
     return n;
   })()`);
@@ -360,7 +360,7 @@ app.whenReady().then(async () => {
     const ns = document.querySelectorAll('.m.err');
     for (let i = ns.length - 1; i >= 0; i--) {
       const w = ns[i].querySelector('.who');
-      if (w && w.textContent === 'IMG' && ns[i].textContent.indexOf('一个图片块都没有') >= 0) return ns[i].textContent;
+      if (w && w.textContent === '图片' && ns[i].textContent.indexOf('一个图片块都没有') >= 0) return ns[i].textContent;
     }
     return '';
   })()`);
@@ -376,14 +376,14 @@ app.whenReady().then(async () => {
   const shOut = await js(`(function(){ const o = document.querySelector('.m.shell .sh-out'); return o ? o.textContent : 'NO_EL'; })()`);
   t('shell 输出里含回显标记', String(shOut).indexOf('pixelagent-shell-ok') >= 0, true);
   const shCode = await js(`(function(){ const c = document.querySelector('.m.shell .sh-code'); return c ? c.textContent : 'NO_EL'; })()`);
-  t('shell 退出码为 0', shCode, 'EXIT 0');
+  t('shell 退出码为 0', shCode, '退出码 0');
   await shot('14-shell.png');
 
   // 非零退出码也要如实回显
   await js(`(function(){ const i = document.getElementById('input'); i.value = '!exit 3'; send(); return true; })()`);
   await sleep(2500);
   const codes = await js(`Array.prototype.map.call(document.querySelectorAll('.m.shell .sh-code'), function(e){ return e.textContent; })`);
-  t('非零退出码被回显', codes.indexOf('EXIT 3') >= 0, true);
+  t('非零退出码被回显', codes.indexOf('退出码 3') >= 0, true);
 
   /* ================= 4b. stderr 分档：成功的那轮别拿红色砸人 ================= */
   // 来自真机截图顶部那条：pi 清理自己的锁时撞上本机安全策略，
@@ -630,7 +630,124 @@ app.whenReady().then(async () => {
   console.log('  ℹ 清单: ' + JSON.stringify(extNames));
   await shot('13-agents.png');
 
-  /* ================= 7. 收尾截图 ================= */
+  /* ================= 7. 中文体检：界面上不该再冒英文标签 =================
+     这条断言**读真实 DOM 里渲染出来的文字**，不是"源码里还有没有那个字符串"。
+     第一版是**手写选择器清单**，人工挑要检查的类名 —— 结果 `.cap-t`
+     不在清单里，我把它改回 "SESSIONS" 反向验证时**照样全绿**（假通过）。
+     现在改成**结构式全扫**：从 body 往下走，凡是"叶子元素"（没有元素子节点、
+     只有一段文字）都算候选标签位，只排除"内容/数据位"（用户正文、模型名、
+     路径、工具名…… 这些天生可能是英文），并给每个排除写清理由。
+     排除清单写错的风险靠**反向验证**兜底：故意塞个英文标签必须变红。 */
+  console.log('\n[7] 中文体检（界面标签不该再是英文）');
+  // 先喂一条带代码块的 AI 消息 —— 代码块右上角那个复制按钮只在这时才存在。
+  // （上一版漏了它：它是从 md.js 里生成的，看不见就扫不到，"COPY" 一直留着）
+  await js(`(function(){
+    const feed = (ev) => window.__pixelFeed({kind:'ev', ev:ev});
+    feed({type:'message_update', assistantMessageEvent:{type:'text_start'}});
+    feed({type:'message_update', assistantMessageEvent:{type:'text_delta',
+      delta:'\\u4ee3\\u7801\\u5757\\u6f14\\u793a\\uff1a\\n\\n\\u0060\\u0060\\u0060js\\nconsole.log(1)\\n\\u0060\\u0060\\u0060\\n'}});
+    feed({type:'message_update', assistantMessageEvent:{type:'text_end'}});
+    return true; })()`);
+  await sleep(400);
+  const mdCopy = await js(`(function(){ const b=document.querySelector('#log .md-copy'); return b ? b.textContent.trim() : 'NO_EL'; })()`);
+  console.log('  ℹ 代码块复制按钮: ' + mdCopy);
+  t('代码块右上角复制按钮是中文', mdCopy, '复制');
+  // 文件面板要切过去才会有 .f-ico（原来是 "DIR"/"FIL"，也是改文案时漏掉的）
+  await js(`(function(){ const t=document.querySelector('.rtab[data-tab="files"]'); if(t) t.click(); return 1; })()`);
+  await sleep(700);
+  const fico = await js(`Array.prototype.map.call(document.querySelectorAll('#files-list .f-ico'), function(e){ return e.textContent.trim(); })`);
+  console.log('  ℹ 文件列表图标文字: ' + JSON.stringify(Array.from(new Set(fico))) + '（共 ' + fico.length + ' 个）');
+  // 空列表会让 every() 平凡通过 —— 先确认真拿到了元素
+  t('文件列表里确实有图标位（否则下面的断言是空转）', fico.length > 0, true);
+  t('文件列表图标文字是中文', fico.every((x) => x === '目录' || x === '文件'), true);
+  const labels = await js(`(function(){
+    // 内容/数据位（按 class）：这些的值天生可能是英文，不是 UI 标签
+    const CONTENT_CLS = new Set([
+      'txt','md','md-code','sh-out','sh-cmd',        // 消息正文 / 代码 / shell 输出与命令
+      't-name','t-arg','ag-p','ag-n',                // 工具名、工具入参、扩展路径与包名
+      'mi-n','mi-tag','mdl-prov','mdl-name','mdl-arg',// 模型 id / 标签 / 服务商
+      'fp','fname','fpath','filebar-p',              // 文件路径与文件名
+      'sess-name','todo-txt','search-c','att-n','att-s', // 会话标题 / 待办正文 / 附件名
+      'hl-en','tb-brand','sb-keys',                  // 品牌字、快捷键提示（含 ESC 等保留词）
+      'pal-list'                                     // 命令/文件面板里的候选项
+    ]);
+    // 内容位（按**标签名**）：<pre>/<code> 装的是工具原始输出、参数 JSON、代码 —— 天生英文
+    // （上一版把 'pre' 当成类名塞进 CONTENT_CLS，结果一个都没排掉）
+    const CONTENT_TAG = new Set(['PRE', 'CODE', 'SCRIPT', 'STYLE', 'INPUT', 'TEXTAREA']);
+    // 虽然是"标签位"，但它们在 #log 里（#log 是内容位）—— 必须单独留下，否则 .who 会被一起排掉
+    // 它们虽然是"标签位"，但祖先落在内容位里（#log / #session-list）——
+    // 必须单独捞出来，否则会被一起排掉（.who 和 .md-copy 都踩过这个坑）
+    const KEEP_CLS = new Set(['who', 'att-note', 'sh-code', 'md-copy', 'f-ico', 'm-btn', 'sess-op']);
+    // 内容/数据位（按 id）
+    const CONTENT_ID = new Set([
+      'log','input','mirror','attbar','files-list','ext-list','pal-list','session-list',
+      'kv-model','kv-model2','kv-cwd','kv-time','kv-round','ub-text','files-root',
+      'set-cli','set-session','set-cwd','set-agentdir','set-mode','set-model'
+    ]);
+    const cls0 = (el) => String(el.className || '').trim().split(/\\s+/)[0];
+    const inContent = (el) => {
+      if (KEEP_CLS.has(cls0(el))) return false;
+      for (let p = el; p && p !== document.body; p = p.parentElement) {
+        if (CONTENT_ID.has(p.id) || CONTENT_CLS.has(cls0(p)) || CONTENT_TAG.has(p.tagName)) return true;
+      }
+      return false;
+    };
+    const skipped = [];
+    const out = [];
+    const walk = (el) => {
+      let hasEl = false;
+      for (const n of el.childNodes) if (n.nodeType === 1) { hasEl = true; break; }
+      if (hasEl) { for (const n of el.childNodes) if (n.nodeType === 1) walk(n); return; }
+      const t = (el.textContent || '').trim();
+      if (!t) return;
+      const c0 = cls0(el);
+      if (inContent(el)) { skipped.push(c0 || ('#' + el.id) || el.tagName.toLowerCase()); return; }
+      out.push({ sel: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (c0 ? '.' + c0 : ''), t: t });
+    };
+    walk(document.body);
+    return { labels: out, skipped: skipped };
+  })()`);
+  const labelList = labels.labels || [];
+  console.log('  ℹ 扫到 ' + labelList.length + ' 个标签位，排除 ' + (labels.skipped || []).length + ' 个内容位');
+  console.log('  ℹ 排除的内容位: ' + JSON.stringify(Array.from(new Set(labels.skipped || []))));
+  const EN_OK = ['JSON', 'ESC', 'pi', 'PixelAgent', 'PIXELAGENT', 'PIXEL()', 'v1.0',
+    '...', '?', '—', '□', '✕', '↻', '▾', '▶', '▼', '⚙', '■', '·', '#—', 'OK'];
+  // 纯 ASCII 的短纯符号/数字（'#1'、'0.0s'、'--:--:--'）不算英文标签
+  const isEnglishLabel = (s) => /^[\x20-\x7E]+$/.test(s) && /[A-Za-z]/.test(s) && EN_OK.indexOf(s) < 0;
+  const bad = labelList.filter((x) => isEnglishLabel(x.t));
+  const badUniq = Array.from(new Set(bad.map((x) => x.sel + ' = ' + x.t)));
+  console.log('  ℹ 纯英文标签: ' + JSON.stringify(badUniq));
+  t('没有整块都是英文的界面标签', badUniq.length, 0);
+
+  // 第二道：混在中文里的英文关键词（纯英文检查抓不到 "⏎ SEND · ESC STOP" 这种）
+  const BLOCK = ['SESSIONS', 'COMMANDS', 'REFERENCE', 'STANDBY', 'THINKING', 'WORKING',
+    'RENAME()', 'DELETE()', 'INPUT()', 'SETTINGS()', 'MODEL()', 'EXIT ', 'IMG×',
+    'COPY', 'RETRY', 'RUNNING', 'FAILED', 'SESSION #', 'BACKEND', 'WORKDIR', 'SEND',
+    'TOOLS', 'TODOS', 'FILES', 'AGENTS', 'NEW'];
+  const hitLines = BLOCK.map((w) => labelList.filter((x) => x.t.indexOf(w) >= 0)
+    .map((x) => w + ' @ ' + x.sel + ' = ' + x.t)).reduce((a, b) => a.concat(b), []);
+  const hits = Array.from(new Set(hitLines));
+  console.log('  ℹ 命中的英文关键词: ' + JSON.stringify(hits));
+  t('标签文字里没有残留的英文关键词', hits.length, 0);
+
+  // 正向确认：新标签确实上了界面（避免"什么都没渲染"也算通过）
+  const stateZh = await js(`(function(){ const e = document.getElementById('sb-state'); return e ? e.textContent.trim() : 'NO_EL'; })()`);
+  console.log('  ℹ 状态灯: ' + stateZh);
+  t('状态灯显示中文', /^[\u4e00-\u9fa5]+$/.test(stateZh), true);
+  const visZh = await js(`(function(){ const e = document.getElementById('kv-vis'); return e ? e.textContent.trim() : 'NO_EL'; })()`);
+  console.log('  ℹ 看图标记: ' + visZh);
+  t('看图标记不是 YES/NO', visZh !== 'YES' && visZh !== 'NO', true);
+  // 内部值必须还是英文（CSS 动画 / setState 选择器都依赖它）
+  const dataEnv = await js(`(function(){
+    const t = document.getElementById('sb-state');
+    const g = document.getElementById('pixel-girl');
+    return { status: t && t.dataset.status, girl: g && g.dataset.state };
+  })()`);
+  console.log('  ℹ 内部状态值: ' + JSON.stringify(dataEnv));
+  t('状态灯的 data-status 仍是英文内部值', ['IDLE','THINKING','TOOL','DONE'].indexOf(dataEnv.status) >= 0, true);
+  t('女孩的 data-state 与状态灯同源', dataEnv.girl, dataEnv.status);
+
+  /* ================= 8. 收尾截图 ================= */
   await js(`document.querySelector('.rtab[data-tab="tools"]').click()`);
   await sleep(300);
   await shot('11-final.png');

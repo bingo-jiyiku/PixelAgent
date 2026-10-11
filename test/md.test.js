@@ -53,7 +53,12 @@ inc('代码块保留字面反引号', code, '`tick`', true);
 inc('代码块保留字面星号', code, '**not bold**', true);
 inc('代码块内 HTML 被转义', code, '&lt;b&gt;', true);
 inc('代码块带语言标签', MD.toHtml('```js\nx\n```'), '<span class="md-lang">js</span>', true);
+// 没写语言时别显示英文 'text' —— 界面文案一律中文
+t('无语言时标签显示"纯文本"', MD.toHtml('```\nx\n```').indexOf('<span class="md-lang">纯文本</span>') >= 0, true);
 inc('代码块带复制按钮', MD.toHtml('```\nx\n```'), 'class="md-copy"', true);
+// 界面文案一律中文：这个按钮是从这里生成的，改中文时最容易漏（漏了就当没改）
+t('复制按钮文案是中文', /<button class="md-copy"[^>]*>复制<\/button>/.test(MD.toHtml('```\nx\n```')), true);
+t('复制按钮不再出现 COPY', MD.toHtml('```\nx\n```').indexOf('>COPY<') < 0, true);
 t('未闭合代码块也能收尾', MD.toHtml('```\nabc').indexOf('<pre><code>abc</code></pre>') >= 0, true);
 
 /* ---------- 表格 ---------- */

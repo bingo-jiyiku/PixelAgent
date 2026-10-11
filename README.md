@@ -127,7 +127,7 @@ npm run test:pi           # pi 接线单测（真调一次 pi）
 - 一轮结束：`agent_settled`
 - 用量：`turn_end.message.usage` = `{input, output, cacheRead, cacheWrite, reasoning, totalTokens, cost}`
 
-### 十一个必须记住的坑
+### 十四个必须记住的坑
 
 1. **stdin 必须断开**：`spawn` 的 `stdio` 必须是 `['ignore','pipe','pipe']`。
    pi 在 stdin 是管道时会一直等，表现为整个进程卡死。
@@ -198,6 +198,57 @@ npm run test:pi           # pi 接线单测（真调一次 pi）
 
 > 另：Electron 里 `window.prompt` / `window.confirm` 不可用（会被直接忽略），
 > 需要自绘对话框（`index.html` 的 `#mask-input`）。
+
+12. **界面文案一律中文，但"面向用户的字符串"散在 4 个地方，改一边会漏。**
+    这一轮把英文界面全转中文时，漏了三次，每次都是**同一类错**：
+    | 漏在哪 | 为什么漏 | 怎么才发现 |
+    |---|---|---|
+    | `md.js` 里代码块的 `>COPY<` | 它是渲染 Markdown 时**拼**出来的，只有"消息里恰好含代码块"时才进 DOM | 源码级审计扫出来的 |
+    | `renderer.js` 文件面板的 `DIR` / `FIL` | 面板要切到「文件」tab、且目录里有内容才渲染 | 同上 |
+    | 对话框标题 / 状态灯 / 思考档位 | 是**运行时**赋值的（`setState`、`openPalette`），静态 HTML 里看不到 | 读代码 + 真机截图 |
+    ⇒ **动手前先把"文案的来源"列出来**：静态 HTML、运行时赋值、拼字符串生成的 HTML。
+      三类都要覆盖，只查 `index.html` 等于没查。
+
+13. **判"英文清干净了没有"，用「扫结构」而不是「列选择器清单」。**
+    第一版体检是**手写一份 class 名单**（`.who` / `.rtab` / `.pal-hd` …）逐个查，
+    看着很全。反向验证时我把标题改回 `SESSIONS` —— 而 `.cap-t` 不在名单里，
+    断言**照样全绿**。这就是"只扫我想到的地方"。
+    ⇒ 正确姿势：从 `body` 往下走，**凡是"叶子元素"（只有一段文字）都算候选标签位**，
+      只排除"内容/数据位"（用户正文、模型名、路径、工具名、`<pre>` 原始输出），
+      每个排除都写理由。改动后**必须做反向验证**：故意塞个英文标签，看它红不红。
+      实测这套结构式扫描一次扫到 **142 个标签位**，比自己列的清单多一倍。
+
+14. **两步验证都要做，因为它们会互相兜底 —— 但也会互相"传染"假绿。**
+    反向验证时我踩了两次假绿，都是**排除规则写太宽**：
+    ① 把 `pre` 写进"按 class 排除"的集合 —— 可 `<pre>` 是**标签名**不是类名，
+       一个都没排掉（改完才发现，比误报更隐蔽的是"以为排了其实没排"）；
+    ② 扫描器写成"含 `<` 就整条跳过" —— 于是 `'>COPY</button>'` 这种
+       **HTML 字符串里的用户可见文字**被一起跳掉了。
+    ⇒ 排除规则本身要**反向验证**：把坏样本塞回去，看它到底红不红。
+      只对"正向全绿"负责的排除规则，等于没写。
+
+### 三个工具的用法（都是这一轮留下来的）
+
+```bash
+npm test                       # 纯逻辑 178 断言 + 文案审计（node，秒级）
+npm run verify:features        # 真机 79 断言（必须用 electron）
+npm run audit:copy             # 只扫"英文文案残留"（辅助；已挂在 npm test 末尾）
+npm run zoom:parts             # 按 DOM 选择器自动定位 + 放大截图，肉眼核对
+npm run shot:extra             # 全屏截图（含模型面板 / 设置面板）
+```
+
+**真机验收必须去掉 `ELECTRON_RUN_AS_NODE`**，否则 electron 会被当普通 node 跑，
+报 `Cannot read properties of undefined (reading 'handle')`（`ipcMain` 不存在），
+**而且是秒退 + 退出码 1** —— 很容易被当成"跑完了、只是有失败项"：
+
+```bash
+env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS ./node_modules/.bin/electron test/verify-features.js
+```
+
+`zoom:parts` 存在的理由：`crop-shot.js` 要手填 `x/y/w/h`，而整屏 1340×880 的图
+在对话框里是**缩过**的（`devicePixelRatio = 2`），我手算坐标连试 4 次全打偏。
+改成先问 DOM 要 `getBoundingClientRect()` 再 `capturePage(rect)`，坐标永远对得上
+—— 而且**只有放大才看得见**的问题（按钮压标题、中文挤压）也就查得动了。
 
 ### 配置目录（重要）
 

@@ -15,9 +15,9 @@
     <em class="tb-ver">v1.0</em>
   </span>
   <span class="tb-mid tb-drag">
-    <span class="tb-cur" id="tb-cur">SESSION #—</span>
+    <span class="tb-cur" id="tb-cur">会话 #—</span>
   </span>
-  <span class="tb-side">TERMINAL / AGENT ONE<i class="bul sq-pink"></i></span>
+  <span class="tb-side">智能体终端<i class="bul sq-pink"></i></span>
   <span class="tb-btns">
     <button class="tb-btn" id="tb-min" title="最小化">—</button>
     <button class="tb-btn" id="tb-max" title="最大化">□</button>
@@ -31,8 +31,8 @@
   <!-- ───── 左栏：会话列表 ───── -->
   <aside class="rail rail-left">
     <div class="rail-cap">
-      <span class="cap-t">SESSIONS</span>
-      <button class="cap-btn" id="btn-new" title="新会话">+ NEW</button>
+      <span class="cap-t">会话</span>
+      <button class="cap-btn" id="btn-new" title="新会话">+ 新建</button>
     </div>
     <!-- 跨会话搜索：扫全部会话文件的消息正文 -->
     <div class="sess-search">
@@ -43,10 +43,10 @@
       <!-- renderer 填充 -->
     </div>
     <div class="rail-foot">
-      <div class="kv"><span>BACKEND</span><b>PI</b></div>
-      <div class="kv"><span>MODEL</span><b id="kv-model">—</b></div>
-      <div class="kv"><span>MODE</span><b>JSON</b></div>
-      <div class="kv"><span>WORKDIR</span><b id="kv-cwd" title="">—</b></div>
+      <div class="kv"><span>后端</span><b>pi</b></div>
+      <div class="kv"><span>模型</span><b id="kv-model">—</b></div>
+      <div class="kv"><span>输出</span><b>JSON</b></div>
+      <div class="kv"><span>工作目录</span><b id="kv-cwd" title="">—</b></div>
     </div>
   </aside>
 
@@ -55,7 +55,7 @@
     <!-- 空状态：大标题 + 像素女孩（有消息后自动隐藏） -->
     <div class="welcome" id="welcome">
       <div class="hl-zh">复古像素终端</div>
-      <div class="hl-en">PIXEL() TERMINAL</div>
+      <div class="hl-en">PIXEL() 像素终端</div>
       <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
         <div class="girl-desk">
           <div class="gd-screen"><div class="gd-scan"></div></div>
@@ -77,7 +77,7 @@
           <div class="g-keyboard"><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="g-desk"></div>
         </div>
-        <div class="girl-cap" id="girl-cap">STANDBY</div>
+        <div class="girl-cap" id="girl-cap">待机</div>
       </div>
       <div class="hl-hint">
         <span><b>/</b> 命令</span><span><b>@</b> 引用文件</span><span><b>!</b> 执行命令</span><span><b>ESC</b> 打断</span>
@@ -93,10 +93,10 @@
   <!-- ───── 右栏：上下文面板（四 tab） ───── -->
   <aside class="rail rail-right">
     <div class="rtabs" id="rtabs">
-      <button class="rtab on" data-tab="tools" type="button">TOOLS</button>
-      <button class="rtab" data-tab="todos" type="button">TODOS</button>
-      <button class="rtab" data-tab="files" type="button">FILES</button>
-      <button class="rtab" data-tab="sub" type="button">AGENTS</button>
+      <button class="rtab on" data-tab="tools" type="button">工具</button>
+      <button class="rtab" data-tab="todos" type="button">待办</button>
+      <button class="rtab" data-tab="files" type="button">文件</button>
+      <button class="rtab" data-tab="sub" type="button">智能体</button>
     </div>
 
     <div class="rail-scroll tab-body" id="tab-tools">
@@ -130,7 +130,7 @@
       <div class="agents-sec">
         <div class="agents-hd">
           <span>已装扩展</span>
-          <button class="cap-btn" id="btn-agents-refresh" type="button" title="重新读取 pi list">↻</button>
+          <button class="cap-btn" id="btn-agents-refresh" type="button" title="重新读取已装扩展清单">↻</button>
         </div>
         <div class="agentlist" id="ext-list"></div>
         <div class="empty" id="ext-empty">读取中…</div>
@@ -147,7 +147,7 @@
   <div class="promptbar">
     <!-- 命令面板 / 文件引用浮层（输入 / 或 @ 时弹出） -->
     <div class="palette hidden" id="palette">
-      <div class="pal-hd" id="pal-hd">COMMANDS</div>
+      <div class="pal-hd" id="pal-hd">命令</div>
       <div class="pal-list" id="pal-list"></div>
     </div>
 
@@ -157,13 +157,13 @@
       <span id="mirror" aria-hidden="true"></span>
       <span class="cursor" id="cursor"></span>
     </div>
-    <button class="px-btn att" id="btn-att" title="添加图片（也可以直接粘贴 / 拖进来）">+ IMG</button>
-    <button class="px-btn primary" id="btn-send">SEND</button>
-    <button class="px-btn hidden" id="btn-stop">■ STOP</button>
+    <button class="px-btn att" id="btn-att" title="添加图片（也可以直接粘贴 / 拖进来）">+ 图片</button>
+    <button class="px-btn primary" id="btn-send">发送</button>
+    <button class="px-btn hidden" id="btn-stop">■ 停止</button>
   </div>
 
   <div class="statusbar">
-    <span class="sb-tag on" id="sb-state" data-status="IDLE">IDLE</span>
+    <span class="sb-tag on" id="sb-state" data-status="IDLE">空闲</span>
     <span class="sb-item">轮次 <b id="kv-round">0</b></span>
     <span class="sb-item">用时 <b id="kv-time">0.0s</b></span>
     <button class="sb-item sb-pick" id="btn-model" type="button" title="切换模型 / 思考档位">
@@ -179,7 +179,7 @@
       <b id="ub-text">— / —</b>
     </span>
     <span class="sb-spacer"></span>
-    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件 · ! shell</span>
+    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件 · ! 执行命令</span>
     <span class="sb-item sb-clock" id="sb-clock">--:--:--</span>
     <button class="sb-btn" id="btn-settings" title="设置">⚙</button>
   </div>
@@ -195,7 +195,7 @@
   <div class="win dialog dialog-input">
     <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="win-name" id="inp-title">INPUT()</span>
+      <span class="win-name" id="inp-title">输入()</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="inp-x" type="button" title="关闭">✕</button>
@@ -217,7 +217,7 @@
   <div class="win dialog">
     <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="win-name">SETTINGS()</span>
+      <span class="win-name">设置()</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="dlg-x" type="button" title="关闭">✕</button>
@@ -225,7 +225,7 @@
     </div>
     <div class="dlg-body">
       <div class="kv"><span>后端</span><b>pi</b></div>
-      <div class="kv"><span>输出模式</span><b id="set-mode">json</b></div>
+      <div class="kv"><span>输出模式</span><b id="set-mode">JSON</b></div>
       <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
       <div class="kv"><span>工作目录</span><b id="set-cwd">—</b></div>
       <div class="kv"><span>配置目录</span><b id="set-agentdir">—</b></div>
@@ -234,7 +234,7 @@
       <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
       <p class="dlg-tip">
         配置目录是隔离的：PixelAgent 用自己那份，跟终端里的 pi 各不打扰
-        （共用会被 stale 锁互相牵连）。首次运行会从终端配置里抄一份凭据过来。
+        （共用会被残留的锁文件互相牵连）。首次运行会从终端配置里抄一份凭据过来。
       </p>
       <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
     </div>
@@ -246,17 +246,17 @@
   <div class="win dialog dialog-model">
     <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="win-name">MODEL()</span>
+      <span class="win-name">模型()</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="mdl-x" type="button" title="关闭">✕</button>
       </span>
     </div>
     <div class="mdl-top">
-      <input id="mdl-q" type="text" placeholder="搜索模型 / provider…" autocomplete="off" spellcheck="false" />
+      <input id="mdl-q" type="text" placeholder="搜索模型 / 服务商…" autocomplete="off" spellcheck="false" />
     </div>
     <div class="mdl-think">
-      <span class="mdl-lb">THINKING</span>
+      <span class="mdl-lb">思考档位</span>
       <span class="mdl-think-btns" id="mdl-think-btns"></span>
     </div>
     <div class="mdl-list" id="mdl-list"></div>

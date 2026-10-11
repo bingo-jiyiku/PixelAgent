@@ -758,7 +758,7 @@ ipcMain.handle('pi:info', () => {
     cwd: cfg.workDir,
     agentDir: AGENT_DIR,
     agentDirState,
-    mode: 'json（换行分隔事件流）',
+    mode: 'JSON（换行分隔事件流）',
     current: modelState()
   };
 });

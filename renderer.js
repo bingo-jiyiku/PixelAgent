@@ -108,7 +108,7 @@ function copyText(text, btn) {
   const done = () => {
     if (!btn) return;
     const old = btn.textContent;
-    btn.textContent = 'OK!';
+    btn.textContent = '已复制';
     setTimeout(() => { btn.textContent = old; }, 1100);
   };
   const fallback = () => {
@@ -153,10 +153,38 @@ function bindMdCopy(root) {
 function showTimeline() { if (welcome) welcome.classList.add('hidden'); }
 function scrollEnd() { log.scrollTop = log.scrollHeight; }
 
+// 面向用户的标签一律中文；代码/样式/测试里仍用英文内部键（WHO_ZH 只负责显示层）
+const WHO_ZH = {
+  PI: '助手', YOU: '你', SYS: '系统', ERR: '错误',
+  IMG: '图片', TOOL: '工具', STOP: '已停止', SHELL: '命令'
+};
+function whoZh(w) { return WHO_ZH[w] || w; }
+
+// 主进程回传的 reason 是英文码（内部约定，别动）；显示前翻一下，别把 NOT_FOUND 直接甩给用户
+const REASON_ZH = {
+  BUSY: '上一轮还没结束',
+  IMAGE_REJECTED: '图片没收下',
+  EMPTY: '内容为空',
+  BAD_SEQ: '会话号不对',
+  NOT_FOUND: '文件不存在',
+  TRASH_FAILED: '回收站操作失败',
+  NO_WINDOW: '窗口不可用',
+  CANCELED: '已取消',
+  EXPORT_FAILED: '导出失败',
+  NOT_DIR: '不是目录',
+  SPAWN_FAILED: '启动子进程失败',
+  unknown: '未知原因'
+};
+function reasonZh(r) { return (r && REASON_ZH[r]) || r || '未知'; }
+
+// 扩展来源标签（pi list 里解析出来的）：npm 是包名，保留；其余给中文
+const EXT_SRC_ZH = { npm: 'npm 包', file: '本地文件', git: 'Git 仓库', local: '自带', workspace: '工作区' };
+function extSrcZh(s) { return (s && EXT_SRC_ZH[s]) || s || ''; }
+
 function addMsg(cls, who, txt, extra) {
   showTimeline();
   const m = el('div', 'm ' + cls);
-  m.appendChild(el('span', 'who', who));
+  m.appendChild(el('span', 'who', whoZh(who)));
   if (txt != null) m.appendChild(el('span', 'txt', txt));
   if (extra) m.appendChild(el('span', 'att-note', extra));
   log.appendChild(m);
@@ -168,7 +196,7 @@ function addMsg(cls, who, txt, extra) {
 function addBotMsg() {
   showTimeline();
   const m = el('div', 'm bot');
-  m.appendChild(el('span', 'who', 'PI'));
+  m.appendChild(el('span', 'who', whoZh('PI')));
   const main = el('div', 'm-main');
   const body = el('div', 'txt', '');
   main.appendChild(body);
@@ -186,11 +214,11 @@ function finishBotMsg(body, text, withRetry) {
   const main = body.parentElement;
   if (main && !main.querySelector('.m-tools')) {
     const bar = el('div', 'm-tools');
-    const c = el('button', 'm-btn', 'COPY');
+    const c = el('button', 'm-btn', '复制');
     c.addEventListener('click', () => copyText(text, c));
     bar.appendChild(c);
     if (withRetry) {
-      const r = el('button', 'm-btn', 'RETRY');
+      const r = el('button', 'm-btn', '重答');
       r.title = '重发上一条输入（让 AI 再答一次）';
       r.addEventListener('click', retryLast);
       bar.appendChild(r);
@@ -209,11 +237,14 @@ function retryLast() {
 }
 
 /* ---------- 状态灯 + 像素女孩状态联动 ---------- */
+// 显示用中文；dataset.status / dataset.state 仍是英文内部值（CSS 动画选择器依赖）
+const STATE_ZH = { IDLE: '空闲', THINKING: '思考中', TOOL: '处理中', DONE: '完成' };
+const CAP_ZH = { THINKING: '思考中…', TOOL: '处理中…', DONE: '完成！', IDLE: '待机' };
 function setState(state) {
   S.lastState = state;
   const tag = $('sb-state');
   if (tag) {
-    tag.textContent = state;
+    tag.textContent = STATE_ZH[state] || state;
     tag.dataset.status = state;
     tag.classList.toggle('on', state !== 'IDLE');
   }
@@ -222,13 +253,7 @@ function setState(state) {
   const cap = $('girl-cap');
   if (girl) girl.dataset.state = state;
   if (scene) scene.dataset.state = state;
-  if (cap) {
-    cap.textContent =
-      state === 'THINKING' ? 'THINKING…' :
-      state === 'TOOL' ? 'WORKING…' :
-      state === 'DONE' ? 'DONE!' :
-      state === 'IDLE' ? 'STANDBY' : state;
-  }
+  if (cap) cap.textContent = CAP_ZH[state] || state;
 }
 
 /* ---------- 计时 ---------- */
@@ -299,11 +324,11 @@ function updateVision() {
   const b = $('kv-vis');
   box.classList.toggle('yes', v === true);
   box.classList.toggle('no', v === false);
-  if (b) b.textContent = v === true ? 'YES' : (v === false ? 'NO' : '?');
+  if (b) b.textContent = v === true ? '支持' : (v === false ? '不支持' : '?');
   box.title = v === true
     ? '当前模型支持看图，可以直接粘贴/拖拽图片进来'
     : v === false
-      ? '当前模型不支持看图：发图后它只能靠命令行 OCR 去猜，建议切到带 img 标记的模型'
+      ? '当前模型不支持看图：发图后它只能靠命令行工具去认字猜，建议切到带「看图」标记的模型'
       : '未知（模型目录还没读到）';
 }
 
@@ -367,7 +392,7 @@ function renderAtt() {
   const vis = visionOf(activeModelName());
   if (vis === false) {
     bar.appendChild(el('div', 'att-warn',
-      '⚠ 当前模型（' + esc(activeModelName()) + '）不支持看图 —— 发出去它只能靠命令行 OCR 去猜，建议切到带 img 标记的模型'));
+      '⚠ 当前模型（' + esc(activeModelName()) + '）不支持看图 —— 发出去它只能靠命令行工具去认字猜，建议切到带「看图」标记的模型'));
   } else if (vis === null) {
     // 未知 ≠ 没问题。这里不当成"能看图"（那是在替用户拍胸脯），
     // 也不当成"不能看图"（那会天天误警）。就说实话，并告诉他怎么看结果。
@@ -472,11 +497,11 @@ function runShell(cmd) {
 
   const id = 'sh' + (++shellSeq);
   const m = el('div', 'm shell');
-  m.appendChild(el('span', 'who', 'SHELL'));
+  m.appendChild(el('span', 'who', whoZh('SHELL')));
   const main = el('div', 'm-main');
   main.appendChild(el('span', 'sh-cmd', esc(text)));
   const out = el('div', 'sh-out');
-  const code = el('span', 'sh-code', 'RUNNING');
+  const code = el('span', 'sh-code', '运行中');
   main.appendChild(out);
   main.appendChild(code);
   m.appendChild(main);
@@ -487,7 +512,7 @@ function runShell(cmd) {
 
   if (!api) {
     out.textContent = '（演示模式：浏览器直开时不会真的执行命令）';
-    code.textContent = 'DEMO';
+    code.textContent = '演示';
     delete S.shellEls[id];
     return;
   }
@@ -495,8 +520,8 @@ function runShell(cmd) {
     if (r && r.ok === false) {
       const t = S.shellEls[id];
       if (t) {
-        t.out.textContent += '启动失败：' + (r.reason || r.error || '未知') + '\n';
-        t.code.textContent = 'FAILED';
+        t.out.textContent += '启动失败：' + reasonZh(r.reason || r.error) + '\n';
+        t.code.textContent = '失败';
         t.code.classList.add('bad');
         delete S.shellEls[id];
       }
@@ -505,7 +530,7 @@ function runShell(cmd) {
     const t = S.shellEls[id];
     if (t) {
       t.out.textContent += String(e && e.message ? e.message : e) + '\n';
-      t.code.textContent = 'FAILED';
+      t.code.textContent = '失败';
       t.code.classList.add('bad');
       delete S.shellEls[id];
     }
@@ -547,7 +572,7 @@ function send() {
   btnStop.classList.remove('hidden');
   setState('THINKING');
   startTimer();
-  addMsg('user', 'YOU', esc(text || '(只看图)'), nAtt ? ('IMG×' + nAtt) : null);
+  addMsg('user', 'YOU', esc(text || '(只看图)'), nAtt ? ('图×' + nAtt) : null);
   clearAtt();
 
   if (!api) { demoReply(text); return; }
@@ -557,7 +582,7 @@ function send() {
       if (r.reason === 'IMAGE_REJECTED') {
         addMsg('err', 'IMG', '这些图没收下，所以没发出去：' + esc(rejText(r.rejected)));
       } else {
-        addMsg('err', 'ERR', '主进程拒绝了这次请求：' + (r.reason || '未知'));
+        addMsg('err', 'ERR', '主进程拒绝了这次请求：' + esc(reasonZh(r.reason)));
       }
       endTurn(-1);
       return;
@@ -665,7 +690,7 @@ function onMsg(msg) {
     const t = S.shellEls[msg.id];
     if (!t) return;
     if (msg.done) {
-      t.code.textContent = 'EXIT ' + msg.code;
+      t.code.textContent = '退出码 ' + msg.code;
       if (msg.code !== 0) t.code.classList.add('bad');
       delete S.shellEls[msg.id];
       log.scrollTop = log.scrollHeight;
@@ -950,7 +975,7 @@ function renderHits(hits, q) {
 
 function updateCur(seq) {
   const e = $('tb-cur');
-  if (e) e.textContent = 'SESSION #' + seq;
+  if (e) e.textContent = '会话 #' + seq;
 }
 
 async function refreshSessions() {
@@ -980,7 +1005,7 @@ async function openSession(seq) {
   } else {
     h.msgs.forEach((m) => {
       if (m.role === 'user') {
-        addMsg('user', 'YOU', esc(m.text || '(只看图)'), m.images ? ('IMG×' + m.images) : null);
+        addMsg('user', 'YOU', esc(m.text || '(只看图)'), m.images ? ('图×' + m.images) : null);
       } else {
         const b = addBotMsg();
         finishBotMsg(b.body, m.text, false);
@@ -1032,7 +1057,7 @@ function doNewSessionLocal() {
 /* ---------- 会话操作 ---------- */
 async function renameSession(r) {
   if (!api) return;
-  const name = await askInput('RENAME()', r.renamed ? r.title : '', '留空 = 恢复成自动标题');
+  const name = await askInput('重命名()', r.renamed ? r.title : '', '留空 = 恢复成自动标题');
   if (name == null) return;
   const res = await api.renameSession(r.seq, name);
   if (res && res.sessions) renderSessions(res.sessions);
@@ -1041,7 +1066,7 @@ async function renameSession(r) {
 async function deleteSession(r) {
   if (!api) return;
   const ok = await confirmBox(
-    'DELETE()',
+    '删除()',
     '把会话 #' + r.seq + ' 删掉？\n\n「' + r.title + '」\n\n会进系统回收站（可恢复），不会直接抹掉。'
   );
   if (!ok) return;
@@ -1053,7 +1078,7 @@ async function deleteSession(r) {
 // 自动化验收点不了它 —— 逻辑留在一个点不动的地方，就只能靠肉眼看了。
 function applyDeleteResult(seq, res) {
   if (!res || res.ok === false) {
-    addMsg('err', 'ERR', '删除失败：' + ((res && res.reason) || '未知'));
+    addMsg('err', 'ERR', '删除失败：' + reasonZh(res && res.reason));
     return false;
   }
   if (res.sessions) renderSessions(res.sessions);
@@ -1082,7 +1107,7 @@ async function exportSession(r, outPath) {
   const res = await api.exportSession(r.seq, outPath);
   if (res && res.ok) addMsg('step', 'SYS', '&gt; 已导出：' + esc(res.out));
   else if (res && res.reason !== 'CANCELED') {
-    addMsg('err', 'ERR', '导出失败：' + (res.error || res.reason || '未知'));
+    addMsg('err', 'ERR', '导出失败：' + (res.error || reasonZh(res.reason)));
   }
   return res;
 }
@@ -1146,10 +1171,10 @@ function renderTools() {
 
     const body = el('div', 't-body hidden');
     const secIn = el('div', 't-sec');
-    secIn.appendChild(el('span', 't-k', 'IN'));
+    secIn.appendChild(el('span', 't-k', '入参'));
     secIn.appendChild(el('pre', null, esc(t.argsJson || '(无参数)')));
     const secOut = el('div', 't-sec');
-    secOut.appendChild(el('span', 't-k', 'OUT'));
+    secOut.appendChild(el('span', 't-k', '返回'));
     secOut.appendChild(el('pre', null, esc(t.out ? t.out.slice(0, 4000) : '(空输出)')));
     body.appendChild(secIn);
     body.appendChild(secOut);
@@ -1237,7 +1262,7 @@ function renderExts() {
     d.innerHTML =
       '<span class="ag-n">' + esc(x.name) + '</span>' +
       (x.path ? '<span class="ag-p">' + esc(x.path) + '</span>' : '') +
-      '<span class="ag-tag">' + esc(x.source) + '</span>';
+      '<span class="ag-tag">' + esc(extSrcZh(x.source)) + '</span>';
     box.appendChild(d);
   });
 }
@@ -1270,14 +1295,14 @@ async function loadFiles(dir) {
   box.innerHTML = '';
   if (r.parent) {
     const up = el('div', 'file-item dir');
-    up.innerHTML = '<span class="f-ico">DIR</span><span class="f-n">..</span>';
+    up.innerHTML = '<span class="f-ico">目录</span><span class="f-n">..</span>';
     up.addEventListener('click', () => loadFiles(r.parent));
     box.appendChild(up);
   }
   (r.items || []).forEach((it) => {
     const d = el('div', 'file-item' + (it.dir ? ' dir' : ''));
     d.innerHTML =
-      '<span class="f-ico">' + (it.dir ? 'DIR' : 'FIL') + '</span>' +
+      '<span class="f-ico">' + (it.dir ? '目录' : '文件') + '</span>' +
       '<span class="f-n">' + esc(it.name) + '</span>' +
       '<span class="f-s">' + (it.dir ? '' : fmtBytes(it.size)) + '</span>';
     if (it.dir) d.addEventListener('click', () => loadFiles(it.path));
@@ -1290,7 +1315,7 @@ async function pickDir() {
   if (!api) return;
   const r = await api.pickDir();
   if (!r || r.ok === false) {
-    if (r && r.reason && r.reason !== 'CANCELED') addMsg('err', 'ERR', '换目录失败：' + (r.error || r.reason));
+    if (r && r.reason && r.reason !== 'CANCELED') addMsg('err', 'ERR', '换目录失败：' + (r.error || reasonZh(r.reason)));
     return;
   }
   S.fileDir = r.dir;
@@ -1307,6 +1332,8 @@ if ($('btn-pick-dir')) $('btn-pick-dir').addEventListener('click', pickDir);
    模型 / 思考档位选择器
    ============================================================ */
 const TH_LEVELS = ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+// 档位显示成中文；传回 pi 的仍是上面的英文内部值（--thinking <lv>）
+const TH_ZH = { off: '关闭', minimal: '极少', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' };
 
 function modelLabel() {
   if (!S.curModel) return '默认';
@@ -1315,7 +1342,7 @@ function modelLabel() {
 function paintModelBar() {
   $('kv-model2').textContent = modelLabel();
   $('kv-model2').title = S.curModel ? S.curModel.provider + '/' + S.curModel.model : '用 pi 自己的默认配置';
-  $('kv-think').textContent = S.curThinking || '默认';
+  $('kv-think').textContent = S.curThinking ? (TH_ZH[S.curThinking] || S.curThinking) : '默认';
   updateVision();
   renderAtt();     // 换了模型，附件条的「看不懂图」警告要跟着重算
 }
@@ -1325,9 +1352,9 @@ function renderThinkBtns() {
   box.innerHTML = '';
   TH_LEVELS.forEach((lv) => {
     const on = (S.curThinking || '') === lv;
-    const b = el('button', 'th-btn' + (on ? ' on' : ''), lv || '默认');
+    const b = el('button', 'th-btn' + (on ? ' on' : ''), lv ? (TH_ZH[lv] || lv) : '默认');
     b.type = 'button';
-    b.title = lv ? ('--thinking ' + lv) : '用 pi 默认档位';
+    b.title = lv ? ('--thinking ' + lv + '（' + (TH_ZH[lv] || lv) + '）') : '用 pi 默认档位';
     b.addEventListener('click', async () => {
       if (api) { const r = await api.setThinking(lv || null); if (r && r.current) S.curThinking = r.current.thinking; }
       else S.curThinking = lv || null;
@@ -1354,7 +1381,7 @@ function renderModelList(q) {
       box.appendChild(el('div', 'mdl-prov', esc(m.provider) + '  ·  ' + n));
     }
     const on = S.curModel && S.curModel.provider === m.provider && S.curModel.model === m.model;
-    const tags = [m.context, m.thinking ? 'think' : '', m.images ? 'img' : ''].filter(Boolean).join(' · ');
+    const tags = [m.context, m.thinking ? '思考' : '', m.images ? '看图' : ''].filter(Boolean).join(' · ');
     const d = el('div', 'mdl-item' + (on ? ' on' : ''));
     d.innerHTML = '<span class="mi-n">' + esc(m.model) + '</span><span class="mi-tag">' + esc(tags) + '</span>';
     d.title = m.provider + '/' + m.model + ' · 上下文 ' + m.context + ' · 最大输出 ' + m.maxOut +
@@ -1381,7 +1408,7 @@ async function openModelPicker() {
   renderThinkBtns();
   if (!api) { renderModelList(''); return; }
   if (!S.modelsLoaded) {
-    $('mdl-count').textContent = '读取中…（真跑 pi --list-models）';
+    $('mdl-count').textContent = '读取中…（正在运行 pi --list-models）';
     const r = await api.models();
     if (r && r.ok && r.models && r.models.length) {
       S.models = r.models;
@@ -1411,7 +1438,7 @@ function openInputDialog(opts) {
   return new Promise((resolve) => {
     inpResolve = resolve;
     inpMode = opts.mode || 'input';
-    $('inp-title').textContent = opts.title || 'INPUT()';
+    $('inp-title').textContent = opts.title || '输入()';
     $('inp-tip').textContent = opts.tip || '回车确定，ESC 取消。';
     const f = $('inp-field');
     if (inpMode === 'confirm') {
@@ -1473,10 +1500,10 @@ const COMMANDS = [
   { k: '/dir',    d: '切换工作目录',                  run: () => pickDir() },
   { k: '/export', d: '导出当前会话为 HTML',           run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
   { k: '/search', d: '跳到左栏搜索框',                run: () => { $('sess-q').focus(); } },
-  { k: '/tools',  d: '打开右栏 TOOLS',                run: () => switchTab('tools') },
-  { k: '/todos',  d: '打开右栏 TODOS',                run: () => switchTab('todos') },
-  { k: '/files',  d: '打开右栏 FILES',                run: () => switchTab('files') },
-  { k: '/agents', d: '打开右栏 AGENTS（看已装扩展）',  run: () => switchTab('sub') },
+  { k: '/tools',  d: '打开右栏「工具」',            run: () => switchTab('tools') },
+  { k: '/todos',  d: '打开右栏「待办」',            run: () => switchTab('todos') },
+  { k: '/files',  d: '打开右栏「文件」',            run: () => switchTab('files') },
+  { k: '/agents', d: '打开右栏「智能体」（看已装扩展）', run: () => switchTab('sub') },
   { k: '/clear',  d: '清空当前视图（不动会话文件）',   run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
   { k: '/info',   d: '查看后端 / 会话信息',            run: () => $('btn-settings').click() }
 ];
@@ -1520,7 +1547,7 @@ function updatePalette() {
     pal.items = COMMANDS
       .filter((c) => c.k.slice(1).toLowerCase().includes(q) || c.d.includes(v.slice(1)))
       .map((c) => ({ label: c.k, desc: c.d, run: c.run }));
-    if (pal.items.length) { if (!pal.open || pal.mode !== 'cmd') pal.idx = 0; openPalette('cmd', 'COMMANDS'); renderPalette(); }
+    if (pal.items.length) { if (!pal.open || pal.mode !== 'cmd') pal.idx = 0; openPalette('cmd', '命令'); renderPalette(); }
     else closePalette();
     return;
   }
@@ -1542,7 +1569,7 @@ function updatePalette() {
         desc: (f.dir ? '目录' : (fmtBytes(f.size) || '文件')) + ' · ' + (S.fileDir || '工作目录'),
         run: () => { input.value = v.slice(0, at) + '@' + f.name + ' '; syncCursor(); input.focus(); }
       }));
-    if (pal.items.length) { if (!pal.open || pal.mode !== 'file') pal.idx = 0; openPalette('file', 'REFERENCE'); renderPalette(); }
+    if (pal.items.length) { if (!pal.open || pal.mode !== 'file') pal.idx = 0; openPalette('file', '引用文件'); renderPalette(); }
     else closePalette();
     return;
   }

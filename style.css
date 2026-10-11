@@ -378,7 +378,7 @@ body {
 }
 .file-item:last-child { border-bottom: none; }
 .file-item .f-ico {
-  font-family: var(--f-px); font-size: 8px; flex: 0 0 auto;
+  font-family: var(--f-px); font-size: 11px; flex: 0 0 auto;
   border: 2px solid var(--ink); padding: 2px 3px; background: var(--panel-3);
 }
 .file-item.dir .f-ico { background: var(--lav); }

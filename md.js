@@ -80,14 +80,14 @@
       const fence = /^\s*```+\s*([\w+#.-]*)\s*$/.exec(line);
       if (fence) {
         flushPara(); closeLists(0);
-        const lang = fence[1] || 'text';
+        const lang = fence[1] || '纯文本';
         const buf = [];
         i++;
         while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
         i++;
         out.push('<div class="md-code"><div class="md-code-hd">' +
           '<span class="md-lang">' + esc(lang) + '</span>' +
-          '<button class="md-copy" type="button">COPY</button></div>' +
+          '<button class="md-copy" type="button">复制</button></div>' +
           '<pre><code>' + esc(buf.join('\n')) + '</code></pre></div>');
         continue;
       }
