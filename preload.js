@@ -43,6 +43,10 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   modelTest: (sel) => ipcRenderer.invoke('pi:model-test', sel),
   // 老板 2026-10-11：新增自定义模型
   addModel: (p) => ipcRenderer.invoke('pi:add-model', p),
+  // 老板 2026-10-11 17:44：新增模型时按 base/key 直接拉 provider 支持的模型清单
+  fetchProviderModels: (p) => ipcRenderer.invoke('pi:fetch-provider-models', p),
+  // 老板 2026-10-11 17:44：新增模型时发一次 max_tokens=1 的最小请求验证连通
+  testConnection: (p) => ipcRenderer.invoke('pi:test-connection', p),
 
   // 扩展清单
   agents: () => ipcRenderer.invoke('pi:agents'),

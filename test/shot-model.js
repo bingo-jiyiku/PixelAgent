@@ -183,15 +183,17 @@ app.whenReady().then(async () => {
     var p = window.__pixel; return p.curModel || p.piDefault || null; })()`);
   console.log('  ℹ 生效模型 = ' + JSON.stringify(def));
   const opener = await js(`(function(){
+    // 老板 2026-10-11 17:44：行内「配置」按钮被移除了，改成模型选择器底部
+    // 的「⚙ 配置当前」。所以：先点这一行把它设为当前，再点 mdl-config 打开 mcfg。
     var rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
     var row = rows.filter(function(r){
       var n = r.querySelector('.mi-n');
       return n && n.textContent.trim() === ${JSON.stringify(String((def && def.model) || ''))};
     })[0];
     if (!row) return 'NO_ROW';
-    var ops = [].slice.call(row.querySelectorAll('.mi-op'));
-    var b = ops.filter(function(x){ return x.textContent.trim() === '配置'; })[0];
-    if (!b) return 'NO_BTN';
+    row.click();
+    var b = document.getElementById('mdl-config');
+    if (!b) return 'NO_CFG_BTN';
     b.click(); return 'OK'; })()`);
   t('模型行上的「配置」按钮点得到', opener, 'OK');
   await sleep(1600);                       // 里面要真读一次 pi:model-info
@@ -285,8 +287,9 @@ app.whenReady().then(async () => {
     var row = rows.filter(function(r){ var n=r.querySelector('.mi-n');
       return n && n.textContent.trim() === ${JSON.stringify(String((def && def.model) || ''))}; })[0];
     if (!row) return 'NO_ROW';
-    var b = [].slice.call(row.querySelectorAll('.mi-op')).filter(function(x){ return x.textContent.trim()==='配置'; })[0];
-    if (!b) return 'NO_BTN'; b.click(); return 'OK'; })()`);
+    row.click();
+    var b = document.getElementById('mdl-config');
+    if (!b) return 'NO_CFG_BTN'; b.click(); return 'OK'; })()`);
   await sleep(1200);
   t('重新打开配置框（为验 Esc）', (await probe(['#mask-mcfg .dialog-mcfg']))['#mask-mcfg .dialog-mcfg'].state, 'OK');
   await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);

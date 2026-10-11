@@ -46,6 +46,9 @@ const INTERNAL_KEEP = new Set([
   '@earendil-works', 'E:/npm-global',             // 包名 / 本机 pi 安装路径
   'Enter', 'Escape', 'ArrowDown', 'ArrowUp', 'Tab', // KeyboardEvent.key 值
   'var(--warn)'                                    // CSS 变量引用（内部值，不是文案）
+  // 老板 2026-10-11 17:44：新增模型时打 OpenAI-compatible REST ——
+  //   HTTP 方法名 / 请求头都是标准协议标识，用户看不到，只出现在 main.js 的 fetch() 里。
+  , 'GET', 'POST', 'Authorization', 'Accept', 'Content-Type'  // HTTP 方法 / 标准请求头
 ]);
 // 内部"词汇表"：消息标签 / 状态值 / 错误码 / 快捷键。
 // 这些字面量**不会单独显示给用户**（显示前都过 WHO_ZH / STATE_ZH / REASON_ZH / TH_ZH 翻译），

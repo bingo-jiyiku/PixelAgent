@@ -602,6 +602,122 @@ ipcMain.handle('pi:add-model', (_e, p) => {
   return { ok: true, provider, modelId };
 });
 
+// ============================================================
+// 老板 2026-10-11 17:44：「新增模型那一块需要链接测试那些功能」
+// 「模型 ID 在配置好获取模型就会自动读取它里面所有可用的模型」
+// 「上下文窗口和读写输出那些配置模型的时候要自动读取它原本的」
+//
+// 两个 IPC，都直接打 OpenAI-compatible REST（不走 pi CLI，避免把用户还没落盘的
+// 半填表单硬写进 .pi-agent/models.json 才做试连）：
+//   - pi:fetch-provider-models  GET  {base}/v1/models           拿这个 base/key 下所有模型 ID
+//   - pi:test-connection        POST {base}/v1/chat/completions 发一次 max_tokens=1 的最小请求
+//
+// 两条都用 Node 18+ 内置的 global fetch（Electron 20+ 已支持，不用引依赖）。
+// ============================================================
+// 把用户填的 base URL 规范化成「{base}/v1」，能同时接住下面几种写法：
+//   https://api.openai.com                      → https://api.openai.com/v1
+//   https://api.openai.com/                     → https://api.openai.com/v1
+//   https://api.openai.com/v1                   → https://api.openai.com/v1（已带 /v1，不重复加）
+//   https://api.openai.com/v1/                  → https://api.openai.com/v1
+//   https://api.openai.com/chat/completions     → https://api.openai.com（把 /chat/completions 剥掉）
+function normalizeOpenAIBase(baseUrl) {
+  let s = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!s) return '';
+  // 用户不小心填成 .../chat/completions 或 .../completions 的，剥到最后一段
+  s = s.replace(/\/chat\/completions$/, '').replace(/\/completions$/, '');
+  if (/\/v\d+$/.test(s)) return s;          // 已经带 /v1 /v2 之类，直接用
+  return s + '/v1';                          // 没带版本号，补一个默认的 /v1
+}
+
+ipcMain.handle('pi:fetch-provider-models', async (_e, p) => {
+  const baseUrl = normalizeOpenAIBase((p && p.baseUrl) || '');
+  const apiKey = String((p && p.apiKey) || '').trim();
+  if (!baseUrl) return { ok: false, error: '接入地址不能为空' };
+  if (!apiKey) return { ok: false, error: 'API Key 不能为空' };
+  const url = baseUrl + '/models';
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (e) {
+    return { ok: false, error: '请求失败：' + (e && e.message || e) };
+  }
+  if (!resp.ok) {
+    let body = '';
+    try { body = (await resp.text()).slice(0, 300); } catch (e2) { /* ignore */ }
+    return { ok: false, status: resp.status, error: 'HTTP ' + resp.status + (body ? '：' + body : '') };
+  }
+  let data;
+  try { data = await resp.json(); } catch (e) {
+    return { ok: false, error: '响应不是 JSON：' + (e && e.message || e) };
+  }
+  const raw = Array.isArray(data && data.data) ? data.data : (Array.isArray(data) ? data : []);
+  const models = raw.map((m) => ({
+    id: String((m && (m.id || m.name || m.model)) || '').trim(),
+    created: Number((m && m.created)) || 0,
+    object: String((m && m.object) || '')
+  })).filter((m) => m.id);
+  return { ok: true, count: models.length, models };
+});
+
+ipcMain.handle('pi:test-connection', async (_e, p) => {
+  const baseUrl = normalizeOpenAIBase((p && p.baseUrl) || '');
+  const apiKey = String((p && p.apiKey) || '').trim();
+  const modelId = String((p && p.modelId) || '').trim();
+  if (!baseUrl) return { ok: false, error: '接入地址不能为空' };
+  if (!apiKey) return { ok: false, error: 'API Key 不能为空' };
+  if (!modelId) return { ok: false, error: '模型 ID 不能为空' };
+  const url = baseUrl + '/chat/completions';
+  const payload = {
+    model: modelId,
+    messages: [{ role: 'user', content: 'ping' }],
+    max_tokens: 1,
+    stream: false
+  };
+  const t0 = Date.now();
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000)
+    });
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t0, error: '请求失败：' + (e && e.message || e) };
+  }
+  const ms = Date.now() - t0;
+  if (!resp.ok) {
+    let body = '';
+    try { body = (await resp.text()).slice(0, 400); } catch (e2) { /* ignore */ }
+    return { ok: false, ms, status: resp.status, error: 'HTTP ' + resp.status + (body ? '：' + body : '') };
+  }
+  let data;
+  try { data = await resp.json(); } catch (e) {
+    return { ok: false, ms, error: '响应不是 JSON：' + (e && e.message || e) };
+  }
+  const choice = data && Array.isArray(data.choices) && data.choices[0];
+  const text = String((choice && choice.message && choice.message.content) || '').slice(0, 200);
+  const usage = (data && data.usage) || null;
+  return {
+    ok: true,
+    ms,
+    text: text || '(空回复，但请求成功了)',
+    model: String((data && data.model) || modelId),
+    finishReason: String((choice && choice.finish_reason) || ''),
+    inputTokens: (usage && (usage.prompt_tokens || usage.input)) || 0,
+    outputTokens: (usage && (usage.completion_tokens || usage.output)) || 0,
+    totalTokens: (usage && (usage.total_tokens || usage.totalTokens)) || 0
+  };
+});
+
 ipcMain.handle('pi:model-test', async (_e, sel) => {
   const p = String((sel && sel.provider) || '');
   const m = String((sel && sel.model) || '');

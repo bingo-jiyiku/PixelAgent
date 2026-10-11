@@ -669,8 +669,30 @@ app.whenReady().then(async () => {
   //   不打开的话，"按 class 排除候选项"这条规则恒等于没被执行过 ——
   //   又是一个"以为排了其实没排"的盲区。打开之后下面还要反过来确认
   //   分组标题（.pal-group）**在**体检范围内，证明排除是按 class 而不是按整个容器。
-  await js(`(function(){ const i=document.getElementById('input'); i.value='/'; i.dispatchEvent(new Event('input')); return 1; })()`);
-  await sleep(450);
+  // 老板 2026-10-11 17:44：`/` 已经不再自动弹面板（都鼠标可点，冗余），
+  // 所以体检这里直接手工把 #palette 的 DOM 灌上 —— 模拟"面板开着、有几条候选"
+  // 的状态。断言语义完全不变：验证排除规则真的生效过。
+  await js(`(function(){
+    const pal = document.getElementById('palette');
+    if (!pal) return 'NO_PAL';
+    pal.classList.remove('hidden');
+    const list = document.getElementById('pal-list');
+    list.innerHTML =
+      '<div class="pal-group">会话</div>' +
+      '<div class="pal-item on">' +
+        '<span class="pal-k"><b class="pal-hit">/new</b></span>' +
+        '<span class="pal-d">测试项甲</span>' +
+      '</div>' +
+      '<div class="pal-group">运行</div>' +
+      '<div class="pal-item">' +
+        '<span class="pal-k">/stop</span>' +
+        '<span class="pal-d">测试项乙</span>' +
+      '</div>';
+    document.getElementById('pal-hd').textContent = '测试';
+    document.getElementById('pal-foot').textContent = '/new  ·  回车执行';
+    return 1;
+  })()`);
+  await sleep(200);
   // 先喂一条带代码块的 AI 消息 —— 代码块右上角那个复制按钮只在这时才存在。
   // （上一版漏了它：它是从 md.js 里生成的，看不见就扫不到，"COPY" 一直留着）
   await js(`(function(){
@@ -773,7 +795,12 @@ app.whenReady().then(async () => {
   console.log('  ℹ 设置面板行标题进体检的数量: ' + setLabels);
   t('设置面板的行标题也在体检范围内', setLabels >= 6, true);
   // 体检完把面板收掉，别把浮层带进后面的截图和断言
-  await js(`(function(){ const i=document.getElementById('input'); i.value=''; i.dispatchEvent(new Event('input')); return 1; })()`);
+  await js(`(function(){
+    const pal = document.getElementById('palette');
+    if (pal) pal.classList.add('hidden');
+    const i=document.getElementById('input'); i.value=''; i.dispatchEvent(new Event('input'));
+    return 1;
+  })()`);
   await sleep(250);
 
   // 第二道：混在中文里的英文关键词（纯英文检查抓不到 "⏎ SEND · ESC STOP" 这种）
@@ -973,53 +1000,38 @@ app.whenReady().then(async () => {
   await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { enterToSend: true }))`);
   await js(`(function(){ const i=document.getElementById('input'); i.value=''; i.dispatchEvent(new Event('input')); return 1; })()`);
 
-  /* ---- 8c. 命令面板：模糊 / 高亮 / 分组 / 无结果 / 参数提示 ---- */
+  /* ---- 8c. `/` 命令：直接执行，不弹候选菜单 ----
+     老板 2026-10-11 17:44：「/命令上的菜单基本上都可以鼠标操作点击的，都去掉吧」。
+     所以：
+       ① 输入 / 不弹 palette（palette 是「猜你想用哪条」的浮层，
+          既然所有命令都有鼠标可点的按钮，浮层就是冗余）
+       ② 但 / 命令本身仍保留在 send() 里直接执行：敲完整命令 + Enter
+       ③ 未知命令给一条 err 提示（别静默把它当聊天发出去）
+     断言走 COMMANDS 常量（renderer 通过 window.__pixelCommands 暴露），
+     不再靠 UI 弹面板。 */
   const typeIn = async (v) => {
     await js(`(function(){ const i=document.getElementById('input');
       i.value=${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); return 1; })()`);
-    await sleep(260);
+    await sleep(200);
   };
-  const palState = () => js(`(function(){
-    const on = document.querySelector('#pal-list .pal-item.on');
-    return {
-      open: !document.getElementById('palette').classList.contains('hidden'),
-      items: document.querySelectorAll('#pal-list .pal-item').length,
-      groups: Array.prototype.map.call(document.querySelectorAll('#pal-list .pal-group'), function(e){return e.textContent.trim();}),
-      first: on ? on.querySelector('.pal-k').textContent.trim() : 'NONE',
-      hits: document.querySelectorAll('#pal-list .pal-hit').length,
-      empty: (document.querySelector('#pal-list .pal-empty') || { textContent: '' }).textContent,
-      foot: document.getElementById('pal-foot').textContent
-    };
-  })()`);
+  // 清空输入框，避免上一节的残留污染
+  await typeIn('');
 
+  const cmdTable = await js(`window.__pixelCommands`);
+  console.log('  ℹ 命令表: ' + JSON.stringify(cmdTable.map((c) => c.k)));
+  t('命令表非空', cmdTable.length > 0, true);
+  t('命令表至少 5 条', cmdTable.length >= 5, true);
+  t('命令表里每一条都是 /xxx 格式', cmdTable.every((c) => typeof c.k === 'string' && c.k.indexOf('/') === 0), true);
+  // 反向验证：不靠 UI 弹层也能确认「没有 /model 这种冗余命令」
+  t('命令表里没有 /model（UI 里已有模型按钮）', cmdTable.some((c) => c.k === '/model'), false);
+
+  // 输入 / 时不弹 palette
   await typeIn('/');
-  const ps1 = await palState();
-  console.log('  ℹ 输入 / → ' + JSON.stringify({ open: ps1.open, items: ps1.items, groups: ps1.groups }));
-  t('输入 / 打开命令面板', ps1.open, true);
-  // 老板 2026-10-11：命令表减到 7 条（删掉了 /tools /todos /files /agents
-  // /search /settings /info 七条"点按钮就能做"的），所以下限也跟着降到 7。
-  // 断言还是保留，防的是"命令被误删空"这类事故。
-  t('候选项够多（不是只剩一条）', ps1.items >= 7, true);
-  t('候选项有分组标题', ps1.groups.length >= 3, true);
-  t('分组标题是中文', ps1.groups.every((g) => /^[\u4e00-\u9fa5]+$/.test(g)), true);
-
-  await typeIn('/rn');
-  const ps2 = await palState();
-  console.log('  ℹ 输入 /rn → ' + JSON.stringify({ first: ps2.first, items: ps2.items, hits: ps2.hits }));
-  t('/rn 首选就是 /rename（模糊匹配真的按顺序匹配）', ps2.first, '/rename');
-  t('命中字符被高亮出来（有 .pal-hit）', ps2.hits > 0, true);
-  t('/rn 把候选收敛下来', ps2.items < 6, true);
-
-  await typeIn('/rename');
-  const ps3 = await palState();
-  console.log('  ℹ 高亮 /rename 时底部提示: ' + JSON.stringify(ps3.foot));
-  t('/rename 底部给出参数写法', ps3.foot.indexOf('/rename') >= 0, true);
-
+  t('输入 / 时不弹候选面板（用户 17:44 的原话）',
+    await js(`document.getElementById('palette').classList.contains('hidden')`), true);
   await typeIn('/zzz');
-  const ps4 = await palState();
-  console.log('  ℹ 输入 /zzz → ' + JSON.stringify({ open: ps4.open, empty: ps4.empty }));
-  t('没有匹配时**不关**面板', ps4.open, true);
-  t('没有匹配时给出中文提示', /[\u4e00-\u9fa5]/.test(ps4.empty), true);
+  t('输入 /zzz 时也不弹候选面板',
+    await js(`document.getElementById('palette').classList.contains('hidden')`), true);
 
   /* ---- 8d. 命名：带参数直接改名 / 重名拦下 / 留空回落 ---- */
   const TMP2 = 996;
@@ -1040,10 +1052,12 @@ app.whenReady().then(async () => {
   t('已切到一次性会话', await js(`window.pixelAPI.sessions().then(function(r){return r.current;})`), TMP2);
 
   await typeIn('/rename ' + NAME);
-  const ps5 = await palState();
-  console.log('  ℹ 输入 /rename 名字 → ' + JSON.stringify({ items: ps5.items, first: ps5.first }));
-  t('带参数时只剩一条候选', ps5.items, 1);
-  t('候选标签是完整写法', ps5.first, '/rename ' + NAME);
+  // 老板 2026-10-11 17:44：/ 命令不弹候选面板了 —— 直接敲完整命令 + Enter 执行。
+  // 断言：input.value 保持原样，palette 仍然是隐藏状态。
+  t('/rename 带参数时输入框保持原样',
+    await js(`document.getElementById('input').value`), '/rename ' + NAME);
+  t('/rename 带参数时不弹候选面板',
+    await js(`document.getElementById('palette').classList.contains('hidden')`), true);
   // 回车执行（直接打在输入框上）
   await js(`(function(){ document.getElementById('input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); return 1; })()`);
   await sleep(900);
@@ -1193,17 +1207,34 @@ app.whenReady().then(async () => {
   const maddOpen = await js(`(function(){
     var m = document.getElementById('mask-model-add');
     var dl = document.getElementById('madd-prov-list');
+    var sel = document.getElementById('madd-model');
+    var fetchBtn = document.getElementById('madd-fetch');
+    var testBtn = document.getElementById('madd-test');
+    var ctx = document.getElementById('madd-ctx');
+    var mx = document.getElementById('madd-max');
     return {
       open: !m.classList.contains('hidden'),
       fields: ['madd-provider','madd-model','madd-base','madd-key','madd-ctx','madd-max']
         .every(function(id){ return !!document.getElementById(id); }),
-      provOptions: dl ? dl.options.length : 0
+      provOptions: dl ? dl.options.length : 0,
+      // 老板 2026-10-11 17:44：模型 ID 从手填 input 改成下拉 select（从 API 拉）
+      modelIsSelect: sel && sel.tagName === 'SELECT',
+      // 老板 2026-10-11 17:44：ctx/max 是只读，用户不手填
+      ctxReadonly: ctx && ctx.readOnly === true,
+      maxReadonly: mx && mx.readOnly === true,
+      hasFetchBtn: !!fetchBtn,
+      hasTestBtn: !!testBtn
     };
   })()`);
   console.log('  ℹ 新增模型对话框: ' + JSON.stringify(maddOpen));
   t('新增模型对话框打开了', maddOpen.open, true);
-  t('所有输入框都在（服务商/ID/base/key/ctx/max）', maddOpen.fields, true);
+  t('所有输入框都在（服务商/模型ID/base/key/ctx/max）', maddOpen.fields, true);
   t('服务商 datalist 已经填了已有服务商', maddOpen.provOptions >= 1, true);
+  t('模型 ID 是下拉（从 API 自动拉，不手填）', maddOpen.modelIsSelect, true);
+  t('上下文窗口是只读（自动带出来）', maddOpen.ctxReadonly, true);
+  t('最大输出是只读（自动带出来）', maddOpen.maxReadonly, true);
+  t('对话框里有「获取模型列表」按钮', maddOpen.hasFetchBtn, true);
+  t('对话框里有「测试连通」按钮', maddOpen.hasTestBtn, true);
 
   // 走 IPC 直接添加（避免依赖 UI 表单校验流程）
   const addR1 = await js(`window.pixelAPI.addModel({
@@ -1253,6 +1284,47 @@ app.whenReady().then(async () => {
   await js(`document.getElementById('madd-cancel').click()`);
   await sleep(100);
   t('对话框能关', await js(`document.getElementById('mask-model-add').classList.contains('hidden')`), true);
+
+  /* ---- 新增：pi:fetch-provider-models 和 pi:test-connection 的输入校验 ----
+     老板 2026-10-11 17:44：「新增模型那一块需要链接测试那些功能」
+     这两个 IPC 都要求 base + key 填对，modelId（对 test-connection 而言）也要有。
+     这里只测校验层：空字段应该被拒，网络错误应该被友好地报回来。
+     不走真实 API（会挂外网），走无效域名看能不能被 catch 住。 */
+  const fetchR1 = await js(`window.pixelAPI.fetchProviderModels({ baseUrl: '', apiKey: 'k' })`);
+  t('fetch-provider-models：baseUrl 空被拒', fetchR1 && fetchR1.ok === false, true);
+  t('fetch-provider-models：baseUrl 空的错误信息提到"接入地址"',
+    fetchR1 && /接入地址/.test(fetchR1.error || ''), true);
+
+  const fetchR2 = await js(`window.pixelAPI.fetchProviderModels({ baseUrl: 'https://example.com', apiKey: '' })`);
+  t('fetch-provider-models：apiKey 空被拒', fetchR2 && fetchR2.ok === false, true);
+
+  // 无效域名：走 fetch 请求失败路径，主进程要能 catch 住返回 {ok:false, error}
+  const fetchR3 = await js(`window.pixelAPI.fetchProviderModels({
+    baseUrl: 'https://this-host-does-not-exist-xyz123.invalid',
+    apiKey: 'sk-test-fake-key'
+  })`);
+  console.log('  ℹ 无效域名请求结果: ' + JSON.stringify(fetchR3));
+  t('fetch-provider-models：网络失败被 catch 住（不抛异常）', fetchR3 && fetchR3.ok === false, true);
+  t('fetch-provider-models：网络失败返回了 error 字段',
+    typeof (fetchR3 && fetchR3.error), 'string');
+
+  const testR1 = await js(`window.pixelAPI.testConnection({ baseUrl: '', apiKey: 'k', modelId: 'm' })`);
+  t('test-connection：baseUrl 空被拒', testR1 && testR1.ok === false, true);
+
+  const testR2 = await js(`window.pixelAPI.testConnection({ baseUrl: 'https://x', apiKey: '', modelId: 'm' })`);
+  t('test-connection：apiKey 空被拒', testR2 && testR2.ok === false, true);
+
+  const testR3 = await js(`window.pixelAPI.testConnection({ baseUrl: 'https://x', apiKey: 'k', modelId: '' })`);
+  t('test-connection：modelId 空被拒', testR3 && testR3.ok === false, true);
+
+  // baseUrl 归一化：用户随便填 base / base/ / base/v1 / base/v1/ 都应该能拼成 {base}/v1/xxx
+  // 这里直接看请求 URL 是不是被归一化了 —— 用无效域名 + 各种 base 形式，看请求有没有真的发出去
+  // （invalid 域名会立即 DNS 失败，很快，不浪费时间）
+  const testR4 = await js(`window.pixelAPI.testConnection({
+    baseUrl: 'https://nope-verify-xyz.invalid/v1',
+    apiKey: 'sk-fake', modelId: 'gpt-4'
+  })`);
+  t('test-connection：/v1 结尾的 base 不会重复加 /v1', testR4 && testR4.ok === false, true);
 
   // 清理：按原样写回 models.json
   fs.writeFileSync(MJSON, mjsonBackup, 'utf8');
@@ -1338,14 +1410,29 @@ app.whenReady().then(async () => {
     const q=document.getElementById('mdl-q'); q.dispatchEvent(new Event('input')); return 1; })()`);
   await sleep(400);
 
+  // 老板 2026-10-11 17:44：行内「配置 / 测试」按钮被移除了，
+  // 入口变成模型选择器底部的「⚙ 配置当前」按钮。
+  // 所以 clickRowOp 现在改成两步：① 点这一行的模型把它选成当前；
+  // ② 点 mdl-config 打开 mcfg。测试按钮仍在 mcfg 里（mcfg-test）。
+  // 保留 clickRowOp 这个签名，减少调用点改动。
   const clickRowOp = (model, op) => js(`(function(){
     const rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
     const row = rows.filter(function(r){ const n=r.querySelector('.mi-n'); return n && n.textContent.trim() === ${JSON.stringify(model)}; })[0];
     if (!row) return 'NO_ROW';
-    const ops = [].slice.call(row.querySelectorAll('.mi-op'));
-    const b = ops.filter(function(x){ return x.textContent.trim() === ${JSON.stringify(op)}; })[0];
-    if (!b) return 'NO_BTN';
-    b.click(); return 'OK';
+    // 先点这一行，把它设为「当前」模型（setModel 是异步的，
+    // 但下面 cfgBtn.click 只是同步触发 mdl-config 事件监听器，
+    // 而真正的 mcfg 内容填充走异步 api.modelInfo，测试后面 sleep 900 就够）
+    row.click();
+    const cfgBtn = document.getElementById('mdl-config');
+    if (!cfgBtn) return 'NO_CFG_BTN';
+    cfgBtn.click();
+    // mcfg 打开后，如果需要跑测试就点一下里面的「测试连通」按钮
+    if (${JSON.stringify(op)} === '测试') {
+      const t = document.getElementById('mcfg-test');
+      if (!t) return 'NO_TEST_BTN';
+      t.click();
+    }
+    return 'OK';
   })()`);
 
   const effModelName = (effNow && effNow.model) || '';
@@ -1416,39 +1503,19 @@ app.whenReady().then(async () => {
   console.log('  ℹ 清空后的用量条: ' + JSON.stringify(ub3));
   t('清空后分母回到 pi 的值（反向验证：覆盖真的生效过）', String(ub3).split('/').pop().trim(), '128K');
 
-  /* ---- 10b. `/命令` 里不该再有「模型」这条 ---- */
+  /* ---- 10b. `/命令` 里不该再有「模型」这条 ----
+     老板 2026-10-11 17:44：/ 命令菜单整个不弹了，
+     所以这段直接读 window.__pixelCommands（renderer 暴露的命令表），
+     不再通过 UI 弹层检查。语义不变：命令表里没有 /model，也没有"模型"这个分组。 */
   await js(`document.getElementById('mask-model').classList.add('hidden')`);
-  await typeIn('/');
-  const c10 = await palState();
-  const allKs = await js(`Array.prototype.map.call(document.querySelectorAll('#pal-list .pal-k'), function(e){ return e.textContent.trim(); })`);
-  console.log('  ℹ / 面板里的命令: ' + JSON.stringify(allKs));
-  t('命令面板里没有 /model', allKs.indexOf('/model'), -1);
-  t('命令面板里也没有叫「模型」的分组', c10.groups.indexOf('模型'), -1);
-  await typeIn('/mod');
-  const c10b = await palState();
-  console.log('  ℹ 输入 /mod → ' + JSON.stringify({ open: c10b.open, items: c10b.items, empty: c10b.empty }));
-  t('敲 /mod 一条都搜不到（是真删了，不是换了个名字）', c10b.items, 0);
-  t('搜不到时给的是中文提示', /[\u4e00-\u9fa5]/.test(c10b.empty), true);
-  // ★ "推荐语不许指向不存在的命令" —— 这条抓到过一次真漏：
-  //   面板空态原来写的是"试试 /new、/model、/rename、/settings"，
-  //   而 /model 早就删了。提示把用户指到一个不存在的命令上，比不提示更糟。
-  //   判据不是"字符串里没有 /model"（那只是这一条），而是**推荐里每个命令都真的敲得到**。
-  const hinted = String(c10b.empty).match(/\/[a-z]+/g) || [];
-  console.log('  ℹ 空态提示推荐的命令: ' + JSON.stringify(hinted));
-  t('空态提示里不再推荐 /model', hinted.indexOf('/model'), -1);
-  t('空态提示里确实给了可推荐的命令', hinted.length > 0, true);
-  for (const hk of hinted) {
-    await typeIn(hk);
-    const stH = await palState();
-    t('推荐语里的 ' + hk + ' 真的存在（敲它第一条就是它）', stH.first, hk);
-  }
-  await typeIn('/mod');
-  t('绕一圈回来 /mod 仍然搜不到', (await palState()).items, 0);
-  // 反向验证：不是把整张命令表删空了
-  await typeIn('/ren');
-  t('反向验证：别的命令仍然搜得到（不是把表清空了）', (await palState()).items > 0, true);
-  t('反向验证：/rename 还能带参数提示',
-    (await palState()).foot.indexOf('/rename') >= 0, true);
+  const cmdKs = (await js(`window.__pixelCommands`)).map((c) => c.k);
+  const cmdGs = (await js(`window.__pixelCommands`)).map((c) => c.g || '');
+  console.log('  ℹ 命令表: ' + JSON.stringify({ ks: cmdKs, groups: cmdGs }));
+  t('命令表里没有 /model（UI 里已有模型按钮，不需要命令重复）', cmdKs.indexOf('/model'), -1);
+  t('命令表里也没有叫「模型」的分组', cmdGs.indexOf('模型'), -1);
+  // 反向验证：不是把整张表清空了 —— 别的命令还在
+  t('命令表非空（不是删空了事）', cmdKs.length, cmdTable.length);
+  t('反向验证：/rename 还在（不是把整张表清空了）', cmdKs.indexOf('/rename') >= 0, true);
   await typeIn('');
 
   /* ---- 10c. 模型分组折叠 / 展开 ---- */

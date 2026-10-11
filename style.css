@@ -467,31 +467,32 @@ body {
 }
 .pal-foot:empty { display: none; }
 .pal-foot:not(:empty) { padding: 6px 10px; }
-.promptbar .ps { font-family: var(--f-px); font-size: 16px; color: var(--lav-deep); flex: 0 0 auto; }
+/* 老板 2026-10-11 17:44：「输入框就正常就好，不仿终端」
+   改动：
+     ① 去掉 .ps 的 `>` 前缀（index.html 里 span 也删了）
+     ② 去掉 #mirror / .cursor —— 之前用隐藏 span 造假光标，
+        现在直接用浏览器原生 caret（caret-color 从 transparent 改回来）
+     ③ 字体从像素风 var(--f-tx) 换成通用中文字体，字号 22 → 18
+     ④ 边框从 3px 硬描边改成 1.5px，去掉内阴影
+   按钮还是 95 像素风（老板说的是"输入框"，不是"按钮"），
+   状态栏、顶栏这些 95 风格的视觉语言保持。 */
 .inputwrap {
   flex: 1 1 auto; position: relative;
   display: flex; align-items: center;
-  border: 3px solid var(--ink); background: var(--panel);
-  box-shadow: inset 3px 3px 0 rgba(25, 21, 16, .12);
-  padding: 6px 8px 6px 16px;
+  border: 1.5px solid var(--ink); border-radius: 0;
+  background: var(--panel);
+  padding: 8px 12px;
   min-width: 0;
 }
+.inputwrap:focus-within { border-color: var(--lav-deep); }
 #input {
   width: 100%; border: none; outline: none; background: transparent;
-  font-family: var(--f-tx); font-size: 22px; color: var(--ink);
-  caret-color: transparent;
+  font-family: 'Microsoft YaHei', 'SimHei', var(--f-tx);
+  font-size: 18px; color: var(--ink);
+  line-height: 1.5;
   -webkit-user-select: text; user-select: text;
 }
-#input::placeholder { color: var(--muted); }
-#mirror {
-  position: absolute; left: 16px; top: 6px; visibility: hidden;
-  white-space: pre; font-family: var(--f-tx); font-size: 22px;
-}
-.cursor {
-  position: absolute; top: 6px; left: 16px; width: 11px; height: 22px;
-  background: var(--muted); pointer-events: none;
-  animation: blink 1s steps(1) infinite;
-}
+#input::placeholder { color: var(--muted); font-family: inherit; font-size: inherit; }
 
 /* ---------- 通用像素按钮 ---------- */
 .px-btn {
@@ -850,6 +851,16 @@ select.set-in { cursor: pointer; }
 .set-foot-gap { flex: 1 1 auto; }
 .set-note { margin: 0; padding: 10px 14px 14px; font-size: 18px; color: var(--muted); min-height: 22px; }
 .set-note.bad { color: var(--err); }
+
+/* 新增模型对话框里的两个动作按钮（获取模型列表 / 测试连通）
+   贴在模型下拉下面，左边留一段空白对齐 set-lb 的宽度 */
+.madd-act-row select.set-in { flex: 1 1 auto; }
+.madd-tools {
+  display: flex; gap: 10px; align-items: center;
+  padding: 10px 14px; border-bottom: 2px dotted var(--panel-3);
+}
+.madd-tools .px-btn { flex: 1 1 0; text-align: center; }
+.madd-tools .px-btn[disabled] { opacity: .55; cursor: wait; }
 
 /* 分段按钮（Enter 键行为 / 导出格式 / 主题色） */
 .seg { display: inline-flex; }

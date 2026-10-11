@@ -177,11 +177,11 @@
       <div class="pal-foot" id="pal-foot"></div>
     </div>
 
-    <span class="ps">›</span>
+    <!-- 老板 2026-10-11 17:44：「输入框就正常就好，不仿终端」
+         去掉了 `>` 前缀、像素字体、自定义 cursor/mirror（浏览器原生光标足够）。
+         输入框现在就是个常规 input，边框稍细、留一点内边距，不再像终端提示符。 -->
     <div class="inputwrap">
       <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件   图片可直接粘贴" />
-      <span id="mirror" aria-hidden="true"></span>
-      <span class="cursor" id="cursor"></span>
     </div>
     <button class="px-btn att" id="btn-att" title="添加图片（也可以直接粘贴 / 拖进来）">+ 图片</button>
     <button class="px-btn primary" id="btn-send">发送</button>
@@ -360,8 +360,9 @@
     <div class="mdl-list" id="mdl-list"></div>
     <div class="mdl-foot">
       <span id="mdl-count">—</span>
-      <span class="mdl-hint" id="mdl-hint">点分组建名可折叠 · 行内可配置 / 测试</span>
+      <span class="mdl-hint" id="mdl-hint">点分组建名可折叠 · 当前选中模型可配置</span>
       <span class="sb-spacer"></span>
+      <button class="px-btn" id="mdl-config" type="button" title="打开当前选中模型的配置（上下文窗口 / 最大输出 / 设为默认 / 测试连通）">⚙ 配置当前</button>
       <button class="px-btn" id="mdl-add" type="button">+ 新增模型</button>
       <button class="px-btn" id="mdl-collapse" type="button">全部收起</button>
       <button class="px-btn" id="mdl-default" type="button">恢复默认</button>
@@ -418,9 +419,14 @@
 </div>
 
 <!-- ═══════════════ 新增自定义模型 ═══════════════ -->
-<!-- 老板 2026-10-11：模型菜单里要有「新增自定义模型」入口。
-     走主进程 IPC pi:add-model 直接写 .pi-agent/models.json，
-     写完主进程会清缓存，下次 pi --list-models 就能看到它。 -->
+<!-- 老板 2026-10-11 17:44：「我们只需要填写API 和key还有服务商就好，
+     模型ID在配置好获取模型就会自动读取它里面所有可用的模型」
+     「上下文窗口和读写输出那些配置模型的时候要自动读取它原本的」
+
+     表单就三件事：填 base + key，点「获取模型列表」拉出来，选一条，
+     想试试通不通就点「测试连通」，然后「添加」。
+     ctx / max 不再让用户手填 —— 从 provider 返回的模型元数据里带出来，
+     实在没有就走 pi 兜底。 -->
 <div class="mask hidden" id="mask-model-add">
   <div class="win dialog dialog-madd">
     <div class="win-bar">
@@ -432,49 +438,56 @@
       </span>
     </div>
     <div class="dlg-body">
-      <div class="set-sec">这个新模型放在哪个服务商下</div>
+      <div class="set-sec">① 服务商 + 接入信息</div>
       <div class="set-row">
-        <label class="set-lb" for="madd-provider">服务商</label>
+        <label class="set-lb" for="madd-provider">服务商名</label>
         <input class="set-in" id="madd-provider" type="text" list="madd-prov-list"
                placeholder="已有服务商名或新建" autocomplete="off" spellcheck="false" />
         <datalist id="madd-prov-list"></datalist>
       </div>
       <div class="set-row">
-        <label class="set-lb" for="madd-model">模型 ID</label>
-        <input class="set-in" id="madd-model" type="text"
-               placeholder="例如 gpt-4o" autocomplete="off" spellcheck="false" />
-      </div>
-      <div class="set-row">
         <label class="set-lb" for="madd-base">接入地址</label>
         <input class="set-in" id="madd-base" type="text"
-               placeholder="https://...（新服务商必填，已有服务商留空保留原来的）"
+               placeholder="https://api.openai.com  或  https://xxx/v1"
                autocomplete="off" spellcheck="false" />
       </div>
       <div class="set-row">
         <label class="set-lb" for="madd-key">API Key</label>
         <input class="set-in" id="madd-key" type="password"
-               placeholder="新服务商必填，已有服务商留空保留原来的"
+               placeholder="sk-...（留空则复用同服务商下已有的 key）"
                autocomplete="off" spellcheck="false" />
       </div>
 
-      <div class="set-sec">这个模型本身（可选）</div>
+      <div class="set-sec">② 从这个服务商拉模型（填完 key 点一下「获取模型列表」）</div>
+      <div class="set-row madd-act-row">
+        <label class="set-lb" for="madd-model">模型 ID</label>
+        <select class="set-in" id="madd-model" size="1">
+          <option value="">— 先点右边「获取模型列表」 —</option>
+        </select>
+      </div>
+      <div class="madd-tools">
+        <button class="px-btn" id="madd-fetch" type="button">获取模型列表</button>
+        <button class="px-btn" id="madd-test" type="button">测试连通</button>
+      </div>
+      <p class="set-note" id="madd-note"></p>
+
+      <div class="set-sec">③ 自动读取到的参数（不需要你填）</div>
       <div class="set-row">
         <label class="set-lb" for="madd-ctx">上下文窗口</label>
-        <input class="set-in" id="madd-ctx" type="number" min="0" step="1024"
-               placeholder="不填走 pi 兜底 128000" />
+        <input class="set-in" id="madd-ctx" type="text" readonly
+               placeholder="从 API 返回里带出来；没有就走 pi 兜底 128000" />
         <span class="set-unit">词元</span>
       </div>
       <div class="set-row">
         <label class="set-lb" for="madd-max">最大输出</label>
-        <input class="set-in" id="madd-max" type="number" min="0" step="1024"
-               placeholder="不填走 pi 默认" />
+        <input class="set-in" id="madd-max" type="text" readonly
+               placeholder="从 API 返回里带出来；没有就走 pi 默认" />
         <span class="set-unit">词元</span>
       </div>
       <p class="dlg-tip">
         新服务商会默认用 <code>openai-completions</code> 协议（pi 里最通用的）。
-        已有服务商留空的服务商会<b>保留原有配置</b>（不会把 key 擦掉）。
+        同名 provider 保留原有 baseUrl/apiKey —— 空着不动它们。
       </p>
-      <p class="set-note" id="madd-note"></p>
     </div>
     <div class="dlg-foot mcfg-foot">
       <span class="sb-spacer"></span>

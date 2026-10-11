@@ -77,14 +77,15 @@ app.whenReady().then(async () => {
   })()`);
   console.log('目标模型 = ' + JSON.stringify(TARGET));
 
-  console.log('[2] 点该行的「配置」');
+  console.log('[2] 点该行的「配置」（老板 2026-10-11 17:44：改成行点击 + mdl-config 底部按钮）');
   const clicked = await js(`(function(){
     var rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
     var row = rows.filter(function(r){ var n = r.querySelector('.mi-n');
       return n && n.textContent.trim() === ${JSON.stringify(String(TARGET.model))}; })[0];
     if (!row) return 'NO_ROW';
-    var b = [].slice.call(row.querySelectorAll('.mi-op')).filter(function(x){ return x.textContent.trim() === '配置'; })[0];
-    if (!b) return 'NO_BTN';
+    row.click();
+    var b = document.getElementById('mdl-config');
+    if (!b) return 'NO_CFG_BTN';
     b.click(); return 'OK'; })()`);
   console.log('  点击结果 = ' + clicked);
   await sleep(1500);

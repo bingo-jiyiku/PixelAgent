@@ -15,8 +15,10 @@ const $ = (id) => document.getElementById(id);
 const log = $('log');
 const welcome = $('welcome');
 const input = $('input');
-const mirror = $('mirror');
-const cursor = $('cursor');
+// 老板 2026-10-11 17:44：「输入框就正常就好，不仿终端」
+// 之前这里有 mirror（假光标位置测量）和 cursor（假光标元素）—— 现在都删了，
+// 直接用浏览器原生光标。syncCursor() 变成 no-op 保留签名，因为下面十几处
+// 调用点都是清完 input.value 后想同步光标位置，保留一个空函数最少改代码。
 const btnSend = $('btn-send');
 const btnStop = $('btn-stop');
 const mask = $('mask');
@@ -366,15 +368,14 @@ function startTimer() {
 }
 function stopTimer() { clearInterval(S.timer); S.timer = null; }
 
-/* ---------- 输入行方块光标 ---------- */
-function syncCursor() {
-  mirror.textContent = input.value;
-  const w = Math.min(mirror.offsetWidth, input.clientWidth - 12);
-  cursor.style.left = (16 + w) + 'px';
-}
-input.addEventListener('input', () => { syncCursor(); updatePalette(); });
-input.addEventListener('focus', () => { cursor.style.background = '#d17590'; }); // 主色深一档（跟 --lav-deep 一致，见 style.css）
-input.addEventListener('blur', () => { cursor.style.background = '#5c5348'; });
+/* ---------- 输入行光标 ---------- */
+// 老板 2026-10-11 17:44：「输入框就正常就好，不仿终端」
+// 之前 syncCursor 里用 #mirror 量宽度、再挪 #cursor 方块光标的位置。
+// 现在直接用浏览器原生 caret（caret-color 已改成默认色，见 style.css）。
+// syncCursor() 保留成 no-op，因为下面十几处调用点（清 input.value 后触发光标同步）
+// 都是这个语义；留着 no-op 比改十几处少出错。
+function syncCursor() { /* no-op：现在靠浏览器原生光标，不用手动同步 */ }
+input.addEventListener('input', () => { updatePalette(); });
 
 /* ---------- 打字机尾部光标 ---------- */
 function addCaret() {
@@ -752,6 +753,37 @@ function send() {
     return;
   }
 
+  // 老板 2026-10-11 17:44：`/` 命令不再弹候选菜单（都鼠标可点，冗余），
+  // 但保留"能直接敲 /new /rename foo"的能力 —— 输入完整命令 + Enter 直接执行。
+  // 未知命令给一条 err 提示，别静默把它当聊天发出去。
+  if (text.startsWith('/') && !nAtt) {
+    const sp = text.indexOf(' ');
+    const k = sp === -1 ? text : text.slice(0, sp);
+    const arg = sp === -1 ? '' : text.slice(sp + 1).trim();
+    const c = COMMANDS.find((x) => x.k === k);
+    if (!c) {
+      input.value = '';
+      syncCursor();
+      closePalette();
+      addMsg('err', 'ERR', '没有这个命令：' + esc(text) + '。可用的命令：' + COMMANDS.map((x) => x.k).join('、'));
+      return;
+    }
+    input.value = '';
+    syncCursor();
+    closePalette();
+    addMsg('user', 'YOU', esc(text));
+    pushRecent(c.k);
+    try {
+      const r = arg ? c.run(arg) : c.run();
+      if (r && typeof r.then === 'function') {
+        r.catch((e) => addMsg('err', 'ERR', (e && e.message) || String(e)));
+      }
+    } catch (e) {
+      addMsg('err', 'ERR', (e && e.message) || String(e));
+    }
+    return;
+  }
+
   if (!text && !nAtt) return;
   if (S.busy) { addMsg('err', 'ERR', '上一轮还没结束，先按 ESC 停掉它。'); return; }
 
@@ -1111,6 +1143,10 @@ window.__pixelAddMsg = (k, t, h) => addMsg(k, t, h);
 // ① 值没进输入框；② 值进了但 MCFG.sel 已经被清掉（对话框被谁关了）。只看配置文件
 // 是分不出这两种的，而它们的修法完全相反。
 window.__pixelMcfg = () => ({ sel: MCFG.sel, testing: MCFG.testing, hasInfo: !!MCFG.info });
+// 老板 2026-10-11 17:44：/ 命令面板不弹了，验收要能直接读命令表；
+// 不然"是否真的没有 /model"只能靠 UI 弹面板去看 —— 而面板现在根本不弹。
+// 注意：COMMANDS 在文件后面才声明（`const COMMANDS = [...]`），
+// 这里不能访问 —— 暴露点被挪到 COMMANDS 定义之后。
 // 「中断了几次」—— 只有可观测才验得动。
 // 起因：设置面板开着时按 Esc，原来会掉进 doAbort() 把正在跑的这轮**中断掉**，
 // 而面板还不关。doAbort 里有 `if (!S.busy) return`，测试时没在跑就什么都看不出来，
@@ -1735,19 +1771,10 @@ function renderModelList(q) {
         (m.images ? ' · 支持看图' : ' · 不支持看图') +
         (ctxOv && ctxOv.contextTokens ? '\n（带 * = 你在配置里覆盖成了 ' + ctxOv.contextTokens + ' 词元）' : '');
 
-      // 行内动作：配置 / 测试。悬停才显示（当前模型一直显示），
-      // 不然 130 行每行挂两个按钮，列表会变成一排按钮墙。
-      const ops = el('span', 'mi-ops');
-      const mk = (label, tip, fn) => {
-        const b = el('button', 'mi-op', label);
-        b.type = 'button';
-        b.title = tip;
-        b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });   // 别让点击冒泡成"选用"
-        return b;
-      };
-      ops.appendChild(mk('配置', '改上下文窗口 / 最大输出 / 设为默认模型', () => openModelConfig(m, false)));
-      ops.appendChild(mk('测试', '真发一次最小请求，看这个模型通不通', () => openModelConfig(m, true)));
-      d.appendChild(ops);
+      // 老板 2026-10-11 17:44：「模型菜单上的已经配置好了的模型不需要有测试配置」
+      // 每一行的「配置 / 测试」按钮都去掉。这两个功能只保留在「新增自定义模型」
+      // 那一条链路上（新模型加完需要测连、也常要调整窗口/输出）。
+      // 已有的 mi-ops CSS 规则暂时留着不动 —— 不渲染按钮，class 空转而已。
 
       d.addEventListener('click', async () => {
         if (api) {
@@ -1976,6 +2003,7 @@ function maddNote(text, bad) {
   if (!n) return;
   n.textContent = text || '';
   n.style.color = bad ? 'var(--warn)' : '';
+  if (bad) n.classList.add('bad'); else n.classList.remove('bad');
 }
 
 function fillMaddProviders() {
@@ -1993,16 +2021,102 @@ function fillMaddProviders() {
   });
 }
 
+function fillMaddModels(models) {
+  // 把 fetch-provider-models 拉回来的模型列表塞进 <select>，
+  // 保留第一条空 option 作为"未选择"提示。
+  const sel = $('madd-model');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = models && models.length
+    ? '— 从下面 ' + models.length + ' 个里选一个 —'
+    : '— 服务商返回了 0 个模型 —';
+  sel.appendChild(ph);
+  (models || []).forEach((m) => {
+    const o = document.createElement('option');
+    o.value = m.id;
+    o.textContent = m.id;
+    sel.appendChild(o);
+  });
+}
+
+// 拉 provider 的模型列表：填 base + key，点一下
+async function fetchMaddModels() {
+  const base = $('madd-base').value.trim();
+  const key = $('madd-key').value.trim();
+  const btn = $('madd-fetch');
+  if (!base) { maddNote('先填接入地址', true); return; }
+  if (!key) { maddNote('先填 API Key', true); return; }
+  btn.disabled = true;
+  btn.textContent = '正在获取…';
+  maddNote('正在从服务商拉模型列表…');
+  let r = null;
+  try {
+    r = await api.fetchProviderModels({ baseUrl: base, apiKey: key });
+  } catch (e) {
+    maddNote('请求出错：' + ((e && e.message) || e), true);
+  }
+  btn.disabled = false;
+  btn.textContent = '获取模型列表';
+  if (!r || r.ok === false) {
+    maddNote('获取失败：' + ((r && r.error) || '未知原因'), true);
+    fillMaddModels([]);
+    return;
+  }
+  // 缓存下来：saveModelAdd 时如果模型元数据里没有 ctx/max，
+  // 就再从这份缓存里找一遍
+  S.maddFetchedModels = (r.models || []).map((m) => ({
+    id: m.id,
+    contextWindow: Number(m.contextWindow) || 0,
+    maxTokens: Number(m.maxTokens) || 0
+  }));
+  fillMaddModels(S.maddFetchedModels);
+  maddNote('拿到 ' + (r.models || []).length + ' 个模型，选一个然后点「添加」。');
+}
+
+// 测试连通：填 base + key + 模型 ID，发一次 max_tokens=1 的最小请求
+async function runMaddTest() {
+  const base = $('madd-base').value.trim();
+  const key = $('madd-key').value.trim();
+  const modelId = $('madd-model').value;
+  const btn = $('madd-test');
+  if (!base) { maddNote('先填接入地址', true); return; }
+  if (!key) { maddNote('先填 API Key', true); return; }
+  if (!modelId) { maddNote('先从下拉里选一个模型 ID', true); return; }
+  btn.disabled = true;
+  btn.textContent = '正在测试…';
+  maddNote('正在发一次最小请求（max_tokens=1）…');
+  let r = null;
+  try {
+    r = await api.testConnection({ baseUrl: base, apiKey: key, modelId });
+  } catch (e) {
+    maddNote('请求出错：' + ((e && e.message) || e), true);
+  }
+  btn.disabled = false;
+  btn.textContent = '测试连通';
+  if (!r || r.ok === false) {
+    maddNote('❌ 没通：' + ((r && r.error) || '未知原因'), true);
+    return;
+  }
+  maddNote('✅ 通了（' + r.ms + 'ms，回复「' + (r.text || '').slice(0, 30) + '」）');
+}
+
 function openModelAdd() {
   if (!api) return;
   $('madd-provider').value = '';
-  $('madd-model').value = '';
   $('madd-base').value = '';
   $('madd-key').value = '';
   $('madd-ctx').value = '';
   $('madd-max').value = '';
+  fillMaddModels([]);
+  S.maddFetchedModels = [];
   maddNote('');
   fillMaddProviders();
+  $('madd-fetch').disabled = false;
+  $('madd-fetch').textContent = '获取模型列表';
+  $('madd-test').disabled = false;
+  $('madd-test').textContent = '测试连通';
   $('mask-model-add').classList.remove('hidden');
   setTimeout(() => $('madd-provider').focus(), 50);
 }
@@ -2012,13 +2126,17 @@ function closeModelAdd() { $('mask-model-add').classList.add('hidden'); }
 async function saveModelAdd() {
   if (!api) return;
   const provider = $('madd-provider').value.trim();
-  const modelId = $('madd-model').value.trim();
+  const modelId = $('madd-model').value;
   const baseUrl = $('madd-base').value.trim();
   const apiKey = $('madd-key').value.trim();
-  const ctx = $('madd-ctx').value ? Number($('madd-ctx').value) : 0;
-  const max = $('madd-max').value ? Number($('madd-max').value) : 0;
+  // ctx / max 从「拉回来的模型元数据」里带，用户不手填
+  const hit = ((S.maddFetchedModels || []).find((m) => m.id === modelId)) || null;
+  const ctx = (hit && hit.contextWindow) || 0;
+  const max = (hit && hit.maxTokens) || 0;
   if (!provider) { maddNote('服务商必填', true); return; }
-  if (!modelId) { maddNote('模型 ID 必填', true); return; }
+  if (!modelId) { maddNote('先从下拉里选一个模型 ID（点右边「获取模型列表」）', true); return; }
+  if (!baseUrl) { maddNote('接入地址必填', true); return; }
+  if (!apiKey) { maddNote('API Key 必填（新服务商）', true); return; }
   const r = await api.addModel({ provider, modelId, baseUrl, apiKey, contextWindow: ctx, maxTokens: max });
   if (!r || r.ok === false) {
     maddNote('添加失败：' + ((r && r.error) || '未知原因'), true);
@@ -2027,7 +2145,6 @@ async function saveModelAdd() {
   // 清本地缓存，逼下一次 pi:models 重跑
   S.models = [];
   S.modelsLoaded = false;
-  // 也清一下模型菜单当前显示，然后重画
   maddNote('已添加：' + provider + '/' + modelId);
   setTimeout(async () => {
     closeModelAdd();
@@ -2127,6 +2244,11 @@ const COMMANDS = [
   { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() }
 ];
 
+// 老板 2026-10-11 17:44：/ 命令面板不弹了，验收要能直接读命令表；
+// 不然"是否真的没有 /model"只能靠 UI 弹面板去看 —— 而面板现在根本不弹。
+// 声明在 COMMANDS 常量之后（`const` 有 TDZ，早了会抛错把下面所有代码一起断掉）。
+window.__pixelCommands = COMMANDS.map((c) => ({ k: c.k, g: c.g, d: c.d, argTip: c.argTip || '' }));
+
 const pal = { open: false, mode: '', items: [], idx: 0, empty: '' };
 
 /* ---------- 最近使用（localStorage；这是使用痕迹，不是设置，不占配置文件） ---------- */
@@ -2222,23 +2344,9 @@ function cmdItems(v) {
 function updatePalette() {
   const v = input.value;
 
-  if (v.startsWith('/')) {
-    pal.items = cmdItems(v);
-    // 推荐语**从命令表现取**，不再手写一份。
-    // 手写的那份已经留下过一句"试试 /model"—— 而 /model 早被删了（老板原话：
-    // "UI 界面上已经有了"），于是提示把用户指向一个不存在的命令。
-    // 现取的话，命令一删，推荐语自动跟着消失。
-    // 老板 2026-10-11：命令表减到 7 条后，把 SUGGEST 里已经删掉的 /settings 也换掉。
-    // 换成 /export —— 是"没对应按钮、且用户会用到"的一个。
-    const SUGGEST = ['/new', '/rename', '/export', '/img'];
-    const have = SUGGEST.filter((k) => COMMANDS.some((c) => c.k === k));
-    pal.empty = '没有这个命令。试试 ' + have.join('、');
-    if (!pal.open || pal.mode !== 'cmd') pal.idx = 0;   // 重新开始输入时回到第一条
-    if (pal.idx >= pal.items.length) pal.idx = 0;
-    openPalette('cmd', '命令');
-    renderPalette();
-    return;
-  }
+  // 老板 2026-10-11 17:44：`/` 命令菜单整个不弹了 —— 都鼠标可点，冗余。
+  // 但 `/` 命令本身保留（在 send() 里直接执行），用户可以敲 /new、/rename foo 直接跑。
+  if (v.startsWith('/')) { closePalette(); return; }
 
   // `!` 开头：直接执行，不进候选
   if (v.startsWith('!')) { closePalette(); return; }
@@ -2397,9 +2505,36 @@ $('mcfg-default').addEventListener('click', setAsDefaultModel);
 
 // 新增自定义模型
 $('mdl-add').addEventListener('click', openModelAdd);
+
+// 老板 2026-10-11 17:44：现有模型行不再挂「配置 / 测试」按钮，
+// 入口移到模型选择器底部：点「⚙ 配置当前」打开当前选中模型的 mcfg 对话框。
+// 测试按钮保留在 mcfg 里面（mcfg-test），行为不变。
+$('mdl-config').addEventListener('click', () => {
+  const em = effModel();
+  if (!em || !em.model) {
+    addMsg('err', 'ERR', '当前还没有选中模型。先从模型菜单里选一个，再点「配置当前」。');
+    return;
+  }
+  const hit = S.models.find((m) => m.model === em.model && (!em.provider || m.provider === em.provider))
+            || S.models.find((m) => m.model === em.model);
+  if (!hit) {
+    addMsg('err', 'ERR', '模型清单里找不到 ' + em.provider + '/' + em.model + '，刷新一下模型列表再试。');
+    return;
+  }
+  openModelConfig(hit, false);
+});
 $('madd-x').addEventListener('click', closeModelAdd);
 $('madd-cancel').addEventListener('click', closeModelAdd);
 $('madd-save').addEventListener('click', saveModelAdd);
+$('madd-fetch').addEventListener('click', fetchMaddModels);
+$('madd-test').addEventListener('click', runMaddTest);
+// 选了模型后自动把 ctx / max 从缓存里带出来（用户不手填）
+$('madd-model').addEventListener('change', () => {
+  const sel = $('madd-model').value;
+  const hit = ((S.maddFetchedModels || []).find((m) => m.id === sel)) || null;
+  $('madd-ctx').value = (hit && hit.contextWindow) ? String(hit.contextWindow) : '';
+  $('madd-max').value = (hit && hit.maxTokens) ? String(hit.maxTokens) : '';
+});
 $('mask-model-add').addEventListener('click', (e) => { if (e.target === $('mask-model-add')) closeModelAdd(); });
 
 /* ---------- 点用量条 → 看上下文明细（把"这个数字从哪来"说清楚） ---------- */
