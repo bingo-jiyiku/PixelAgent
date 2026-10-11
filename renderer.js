@@ -42,6 +42,17 @@ const S = {
   models: [],         // 模型目录（真跑 pi --list-models 拿到）
   curModel: null,     // {provider, model} | null = 用 pi 默认
   curThinking: null,  // off..max | null = 用 pi 默认
+  // pi 自己配置里的默认模型（读 .pi-agent/settings.json）。
+  // 用途：没手动切过模型时 pi 报的 current.model 是 null，
+  // 这时靠它把用量条的分母和"看图能力"补上，不然永远是 `— / —` 与 `图 ?`。
+  piDefault: null,    // {provider, model} | null
+  // 「实际跑出来的模型」—— pi 的 turn_end 事件里带回来的那个。
+  // 和 piDefault 的区别：piDefault 是**配置里写的**，这个是**真跑了的**。
+  // 没手动切过模型时两者可能不一样（比如配置写 auto、实际落到了别处），
+  // 显示时以"真跑了的"为准，因为它才是用户该关心的那个。
+  observedModel: null,
+  observedProvider: null,
+  collapsedProvs: null,  // 模型列表里被收起服务商（Set，持久化在 localStorage）
   modelsLoaded: false,
   pendingTool: {},    // toolCallId -> {name, args}：args 只在 start 事件里有
   attachments: [],    // 待发送的图片附件
@@ -70,16 +81,25 @@ function el(tag, cls, html) {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
+// 字节数 —— 这个**故意**和下面的 fmtTokens 不是一个进制：文件大小按 1024 天经地义，
+// 而 token 数要跟 pi 的模型表（÷1000）对齐，否则同一个模型会冒出两个数。
 function fmtBytes(n) {
   if (!n) return '';
   if (n < 1024) return n + 'B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'K';
   return (n / 1024 / 1024).toFixed(1) + 'M';
 }
+// 1.0M → 1M、262.1K 原样（跟 pi 模型表里的写法对齐，少一位视觉噪音）
+function trimZero(s) { return s.indexOf('.') < 0 ? s : s.replace(/\.?0+$/, ''); }
+// ★ 进制必须和 main.js 的 parseSize、以及 **pi 自己**一致：都按 1000。
+//   pi 的 formatTokenCount 是 ÷1000，所以表里的 `128K` 就是 128000。
+//   历史上这里和 parseSize 都按 1024，结果是同一个模型出现两个数：
+//   pi 表写 `128K`、用量条写 `131.1K`、配置框写 `131072 词元` ——
+//   三个数看着像三件事，而"上下文到底是多少"就成了没法回答的问题。
 function fmtTokens(n) {
   if (!n) return '0';
-  if (n >= 1048576) return (n / 1048576).toFixed(2) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  if (n >= 1000000) return trimZero((n / 1000000).toFixed(2)) + 'M';
+  if (n >= 1000) return trimZero((n / 1000).toFixed(1)) + 'K';
   return String(n);
 }
 function fmtClock(ms) {
@@ -152,6 +172,17 @@ function bindMdCopy(root) {
    消息时间线
    ============================================================ */
 function showTimeline() { if (welcome) welcome.classList.add('hidden'); }
+// 瞬时提示条。**不能**用 addMsg 代替：addMsg 会 showTimeline()，
+// 而"回主页 + 提示删掉了"这两件事在时间线里是互斥的（见 applyDeleteResult）。
+let toastTimer = null;
+function toast(text, kind) {
+  const box = $('toast');
+  if (!box || !text) return;
+  box.textContent = text;
+  box.className = 'toast' + (kind ? ' ' + kind : '');   // 去掉 hidden
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { box.classList.add('hidden'); }, 2600);
+}
 // 自动滚到底：受设置「新消息自动到底」控制（关掉后由用户自己滚，不再抢滚动条）
 function scrollEnd() { if (!CFG || CFG.autoScroll !== false) log.scrollTop = log.scrollHeight; }
 
@@ -305,11 +336,56 @@ function toggleThink(row) {
 
 /* ============================================================
    上下文用量条 + 当前模型的看图能力
+   ------------------------------------------------------------
+   ★ 关于那个分母（老板问过"上下文怎么只有十万，是你定的还是模型定的"）：
+   答案是**第三种** —— 它不是模型说的、也不是我们定的，而是 **pi 的模型表第 3 列**。
+   实测 `pi --list-models` 的 130 行里，第 3 列只出现过
+     1M / 1.0M / 1.1M / 524.3K / 512K / 500K / 400K / 272K / 262.1K / 256K / 204.8K / 200K / 128K
+   —— **根本没有 10 万**。而默认模型 `ark-code-latest` 在 `.pi-agent/models.json`
+   里只有 `{"id":"ark-code-latest"}`，**一个 contextWindow 都没声明**，
+   所以 pi 退回了自己的兜底常量（在 pi 的 bundle 里能翻到 `contextWindow??128e3`）。
+   两件事因此落地：
+     ① 用量条能**点开看来源**（下面 showUsageDetail），别让人再猜；
+     ② 模型配置框里可以**覆盖**这个值（`modelOverrides`），并且会标出来源。
    ============================================================ */
+// 当前**生效**的模型：pi 报的当前模型；没报就用 pi 自己配置的默认模型。
+// 为什么要有后半句：实测没手动切过模型时 pi 返回 `current.model = null`，
+// 于是分母查不到，用量条永远是 `— / —`，用户会以为这功能没做。
+function effModel() {
+  if (S.curModel && S.curModel.model) return { provider: S.curModel.provider, model: S.curModel.model };
+  if (S.piDefault && S.piDefault.model) return { provider: S.piDefault.provider, model: S.piDefault.model };
+  return null;
+}
+function overrideOfUI(provider, model) {
+  const map = (CFG && CFG.modelOverrides) || {};
+  return map[String(provider || '') + '/' + String(model || '')] || null;
+}
+// 分母从哪来：override（我们覆盖的）> pi（模型表给的）> unknown
+// `text` 是**表里的原话**（"1.0M" 就存 "1.0M"），显示时优先用它 ——
+// 这样"pi 表里那个数"和"用量条上那个数"永远对得上，不会差一位小数。
+function ctxInfoOf(provider, model) {
+  if (!model) return { tokens: 0, source: 'unknown', text: '' };
+  const ov = overrideOfUI(provider, model);
+  if (ov && ov.contextTokens) return { tokens: ov.contextTokens, source: 'override', text: '' };
+  const hit = S.models.find((m) => m.model === model && (!provider || m.provider === provider));
+  if (hit && hit.contextTokens) return { tokens: hit.contextTokens, source: 'pi', text: hit.context || '' };
+  return { tokens: 0, source: 'unknown', text: '' };
+}
+// 分母的**显示文案**：有表里的原话就用原话，否则自己格式化。
+function ctxLabel(ci) {
+  if (!ci || !ci.tokens) return '—';
+  return ci.text || fmtTokens(ci.tokens);
+}
 function contextOf(modelName) {
   if (!modelName) return 0;
+  const em = effModel();
   const hit = S.models.find((m) => m.model === modelName);
-  return hit ? hit.contextTokens : 0;
+  return ctxInfoOf(em && em.provider, modelName).tokens || (hit ? hit.contextTokens : 0);
+}
+function ctxSourceZh(src) {
+  if (src === 'override') return '来自你在「模型配置」里填的覆盖值';
+  if (src === 'pi') return '来自 pi 的模型表（pi --list-models 第 3 列）';
+  return '未知：模型目录还没读到，或这个模型不在目录里';
 }
 
 // null = 不知道（模型目录还没到），true/false = 明确
@@ -319,7 +395,8 @@ function visionOf(modelName) {
   return hit ? !!hit.images : null;
 }
 function activeModelName() {
-  return S.curModel ? S.curModel.model : $('kv-model').textContent;
+  const em = effModel();
+  return em ? em.model : $('kv-model').textContent;
 }
 function updateVision() {
   const box = $('sb-vis');
@@ -336,20 +413,60 @@ function updateVision() {
       : '未知（模型目录还没读到）';
 }
 
+// 没有用量数据时，用量条该显示什么 —— 把"分母是多少、从哪来"摆出来。
+// 抽出来是因为现在有三条路会走到这个状态（换模型 / 恢复默认 / 改覆盖值后重算），
+// 三处各写一遍迟早会分叉。
+function paintCtxIdle() {
+  const em = effModel();
+  const ci = ctxInfoOf(em && em.provider, em && em.model);
+  $('ub-fill').style.width = '0%';
+  $('ub-fill').className = '';
+  $('ub-text').textContent = '— / ' + ctxLabel(ci);
+  $('sb-usage').title = ci.tokens
+    ? ('上下文总窗口 ' + ci.tokens + ' 词元\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）')
+    : ('上下文窗口未知\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）');
+}
+
+// 点用量条 → 把这几个数**分别**说清楚（已用 / 分母 / 占比 / 来源），
+// 顺便给一条"哪儿能改"的指路。含糊的总数只会引出下一个问题。
+function showUsageDetail() {
+  const em = effModel();
+  const ci = ctxInfoOf(em && em.provider, em && em.model);
+  const used = (S.lastUsage && S.lastUsage.totalTokens) || 0;
+  const pct = ci.tokens ? Math.min(100, Math.round((used / ci.tokens) * 100)) : 0;
+  const hit = em ? S.models.find((m) => m.model === em.model && (!em.provider || m.provider === em.provider)) : null;
+  const lines = [
+    '当前模型：' + (em ? ((em.provider ? em.provider + '/' : '') + em.model) : '（还不知道）'),
+    '本轮已用：' + fmtTokens(used) + ' 词元' + (S.lastUsage ? ('（输入 ' + fmtTokens(S.lastUsage.input || 0) +
+      ' · 输出 ' + fmtTokens(S.lastUsage.output || 0) + ' · 缓存读 ' + fmtTokens(S.lastUsage.cacheRead || 0) + '）') : ''),
+    '上下文窗口：' + (ci.tokens ? (ctxLabel(ci) + '（' + ci.tokens + ' 词元）') : '未知'),
+    '占用比例：' + (ci.tokens ? pct + '%' : '—'),
+    '',
+    '分母来源：' + ctxSourceZh(ci.source),
+    hit ? ('pi 表里写的是 ' + hit.context + '，最大输出 ' + hit.maxOut) : 'pi 表里没有这个模型',
+    '',
+    '要改这个分母：打开模型选择器 → 找到这一行 → 「配置」→ 填「上下文窗口」。',
+    '（只是让百分比算得对，不改变 pi 实际能收多少上下文。）'
+  ];
+  return confirmBox('上下文用量', lines.join('\n'));
+}
+
 function setUsage(usage, modelName) {
   if (!usage) return;
   S.lastUsage = usage;            // 存下来：模型目录晚到时好补算分母
   S.lastUsageModel = modelName;
   const used = usage.totalTokens || 0;
-  const ctx = contextOf(modelName);
-  $('ub-text').textContent = fmtTokens(used) + ' / ' + (ctx ? fmtTokens(ctx) : '—');
+  const em = effModel();
+  const ci = ctxInfoOf(em && em.provider, em && em.model);
+  const ctx = ci.tokens;
+  $('ub-text').textContent = fmtTokens(used) + ' / ' + ctxLabel(ci);
   const pct = ctx ? Math.min(100, Math.round((used / ctx) * 100)) : 0;
   const fill = $('ub-fill');
   fill.style.width = (ctx ? Math.max(2, pct) : 0) + '%';
   fill.className = pct >= 85 ? 'hot' : (pct >= 60 ? 'warn' : '');
   $('sb-usage').title = ctx
-    ? `上下文占用 ${pct}%（${used} / ${ctx} tokens）`
-    : `已用 ${used} tokens（该模型上下文窗口未知）`;
+    ? ('上下文占用 ' + pct + '%（' + used + ' / ' + ctx + ' 词元）\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）')
+    : ('已用 ' + used + ' 词元（上下文窗口未知：' + ctxSourceZh(ci.source) + '）\n（点一下看明细）');
 }
 
 /* ============================================================
@@ -663,7 +780,9 @@ function todosFromToolResult(ev) {
 // 标记种类 -> 给用户看的解释
 const IMG_OMIT_WHY = {
   resize: 'pi 没能把这张图处理进请求（图本身解不开 / 尺寸或体积超过内联上限）。换一张能正常打开的图再试。',
-  nomodel: '当前模型不看图，图被丢掉了。用 /model 换一个在列表里带「图」标记的模型。'
+  // 指路要指到**真的存在**的入口上：/model 这条命令已经删了，
+  // 模型入口只剩状态栏那个「模型」按钮（老板原话："UI 界面上已经有了"）。
+  nomodel: '当前模型不看图，图被丢掉了。点状态栏的「模型」按钮，换一个列表里带「看图」标记的模型。'
 };
 
 // 从一条 user 消息里抽出：有几个 image 块 + 有没有丢图标记
@@ -846,9 +965,10 @@ function onMsg(msg) {
   if (ev.type === 'turn_end' && ev.message) {
     if (ev.message.model) {
       $('kv-model').textContent = ev.message.model;
-      if (!S.curModel) $('kv-model2').textContent = ev.message.model;
+      // 没手动切过时，把"真跑出来的模型"记下来 —— 状态条要显示它而不是干巴巴的"默认"
+      if (!S.curModel) { S.observedModel = ev.message.model; S.observedProvider = ev.message.provider || null; }
       $('set-curmodel').textContent = (ev.message.provider || '') + '/' + ev.message.model;
-      updateVision();
+      paintModelBar();     // 里面会 updateVision()，别在外面再调一遍
     }
     setUsage(ev.message.usage, ev.message.model);
     return;
@@ -919,6 +1039,13 @@ window.__pixelApplyCfg = (c) => applyCfg(c);                     // 验收脚本
 // 否则 S.seq 不会跟着变，后面 `/rename` 之类依赖"当前会话"的功能就测歪了。
 window.__pixelOpenSession = (seq) => openSession(seq);
 window.__pixelApplyDelete = (seq, res) => applyDeleteResult(seq, res);
+// 反向验证用：把「往时间线塞一条消息」这条**老路**暴露出来，
+// 好让验收能证明"它确实会把主页藏掉" —— 不然 toast 方案只是碰巧通过。
+window.__pixelAddMsg = (k, t, h) => addMsg(k, t, h);
+// 模型配置框的内部状态。为什么要暴露：验收时"点保存没生效"有两种完全不同的原因 ——
+// ① 值没进输入框；② 值进了但 MCFG.sel 已经被清掉（对话框被谁关了）。只看配置文件
+// 是分不出这两种的，而它们的修法完全相反。
+window.__pixelMcfg = () => ({ sel: MCFG.sel, testing: MCFG.testing, hasInfo: !!MCFG.info });
 // 「中断了几次」—— 只有可观测才验得动。
 // 起因：设置面板开着时按 Esc，原来会掉进 doAbort() 把正在跑的这轮**中断掉**，
 // 而面板还不关。doAbort 里有 `if (!S.busy) return`，测试时没在跑就什么都看不出来，
@@ -1024,6 +1151,10 @@ async function openSession(seq) {
   S.tools = [];
   S.todos = [];
   S.subs = [];
+  // 换会话了，上一个会话"实际跑出来的模型"不能留着 —— 不然后面 openSession 到
+  // 一个没有 model 记录的会话时，状态条会继续显示上一个会话的模型（串味）。
+  S.observedModel = null;
+  S.observedProvider = null;
   renderTools(); renderTodos(); renderSubs();
   log.innerHTML = '';
   const h = await api.history(seq);
@@ -1044,8 +1175,10 @@ async function openSession(seq) {
     if (h.todos && h.todos.length) { S.todos = h.todos; renderTodos(); }
     if (h.model) {
       $('kv-model').textContent = h.model;
-      if (!S.curModel) $('kv-model2').textContent = h.model;
-      updateVision();
+      if (!S.curModel) { S.observedModel = h.model; S.observedProvider = h.provider || null; }
+      paintModelBar();     // 里面会 updateVision()
+    } else if (!S.curModel) {
+      paintModelBar();     // 这个会话没有模型记录 → 回落到 pi 默认，别留着上一个的
     }
     addMsg('step', 'SYS', '&gt; 已切到会话 #' + seq + '（上下文延续）');
   }
@@ -1070,11 +1203,16 @@ function doNewSessionLocal() {
   log.innerHTML = '';
   S.round = 0;
   S.lastUser = '';
+  S.lastUsage = null;          // 新会话：上一轮的用量不能跟着过来
+  S.lastUsageModel = null;
+  S.observedModel = null;      // 同理，模型也重新观察
+  S.observedProvider = null;
   $('kv-round').textContent = '0';
   $('kv-model').textContent = '—';
-  if (!S.curModel) $('kv-model2').textContent = '默认';
-  $('ub-text').textContent = '— / —';
-  $('ub-fill').style.width = '0%';
+  // 走统一入口：没手动切过模型时这里要显示 pi 的真实默认模型名，
+  // 分母也要跟着摆出来。直写"默认"和"— / —"会跟 piDefault 逻辑打架。
+  paintModelBar();
+  paintCtxIdle();
   setState('IDLE');
   updateVision();
   if (welcome) welcome.classList.remove('hidden');
@@ -1127,33 +1265,55 @@ async function deleteSession(r) {
     '把会话 #' + r.seq + ' 删掉？\n\n「' + r.title + '」\n\n会进系统回收站（可恢复），不会直接抹掉。'
   );
   if (!ok) return;
-  applyDeleteResult(r.seq, await api.deleteSession(r.seq));
+  await applyDeleteResult(r.seq, await api.deleteSession(r.seq));
 }
 
 // 把「删除结果」翻译成界面动作。
 // 单独抽出来是为了可测：deleteSession 里那一步会先弹确认框，
 // 自动化验收点不了它 —— 逻辑留在一个点不动的地方，就只能靠肉眼看了。
-function applyDeleteResult(seq, res) {
+//
+// ★ 两个坑都在这一个函数里：
+//   ① 回主页不能靠 `welcome.classList.remove('hidden')` 然后**继续 addMsg** ——
+//      addMsg 走的是 showTimeline()，会把刚显示出来的主页**又藏回去**。
+//      现象就是老板说的"删完所有会话没有返回主页"，只能看到一条「已移入回收站」。
+//      ⇒ 真话得挂在时间线之外的 **toast** 上。
+//   ② 删掉当前会话但还剩别的会话时，只把 S.seq 改成新序号是**假的切换**：
+//      时间线还是空的，用户对着一个"有内容的会话"发呆。
+//      ⇒ 真去 openSession(res.current) 把历史读出来。
+//   ★ 所以这个函数是 async 的：openSession 里第一件事就是 `log.innerHTML = ''`，
+//     要是在它 resolve 之前就往时间线里 addMsg，那条消息会被**清掉**（白说一句）。
+//     验收脚本 `await window.__pixelApplyDelete(...)` 也靠这个 promise 等历史加载完。
+async function applyDeleteResult(seq, res) {
   if (!res || res.ok === false) {
     addMsg('err', 'ERR', '删除失败：' + reasonZh(res && res.reason));
     return false;
   }
   if (res.sessions) renderSessions(res.sessions);
+  const left = (res.sessions || []).length;
   // 回收站那一步报了异常、但文件确实已移出：说实话，别假装一切正常，
   // 也别谎报失败 —— 用户需要知道的是"可恢复性没确认"。
-  if (res.trashNote) {
-    addMsg('step', 'SYS', '&gt; 会话 #' + seq + ' 已从列表移除，但回收站操作报了异常（' +
-      esc(res.trashNote) + '）—— 可恢复性未能确认。');
-  }
+  const note = res.trashNote
+    ? '会话 #' + seq + ' 已从列表移除，但回收站操作报了异常（' + res.trashNote + '）—— 可恢复性未能确认。'
+    : '会话 #' + seq + ' 已移入回收站（可恢复）';
+
   if (res.removedCurrent) {
     S.tools = []; S.todos = []; S.subs = [];
     renderTools(); renderTodos(); renderSubs();
-    log.innerHTML = '';
     S.seq = res.current;
     updateCur(S.seq);
-    if (welcome) welcome.classList.remove('hidden');
+    // 删的是当前会话：时间线马上要被清空／重填，所以这句提示一律走 toast（时间线之外）
+    toast(note, res.trashNote ? 'warn' : 'ok');
+    if (!left) {
+      // 一条都不剩 → 真正回主页（清时间线 + 显示欢迎区）
+      doNewSessionLocal();
+      return true;
+    }
+    // 还有别的会话：把它的历史真的加载出来（等它加载完再返回）
+    await openSession(res.current);
+    return true;
   }
-  addMsg('step', 'SYS', '&gt; 会话 #' + seq + ' 已移入回收站');
+  // 删的不是当前会话：时间线保持原样，说一句没问题
+  addMsg('step', 'SYS', '&gt; ' + esc(note));
   return true;
 }
 
@@ -1394,13 +1554,30 @@ const TH_LEVELS = ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
 // 档位显示成中文；传回 pi 的仍是上面的英文内部值（--thinking <lv>）
 const TH_ZH = { off: '关闭', minimal: '极少', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' };
 
+function clampLabel(s) {
+  return s && s.length > 24 ? s.slice(0, 23) + '…' : s;
+}
 function modelLabel() {
-  if (!S.curModel) return '默认';
-  return S.curModel.model.length > 24 ? S.curModel.model.slice(0, 23) + '…' : S.curModel.model;
+  if (S.curModel && S.curModel.model) return clampLabel(S.curModel.model);
+  // 没手动切过：优先显示"真跑出来的模型"，其次 pi 配置里写的默认。
+  // （只说"默认"等于没说 —— 用户真正想知道的就是"现在到底在用哪个模型"。）
+  const obs = S.observedModel || (S.piDefault && S.piDefault.model);
+  return obs ? clampLabel(obs) : '默认';
+}
+function modelTitle() {
+  if (S.curModel && S.curModel.model) return (S.curModel.provider + '/' + S.curModel.model);
+  if (S.observedModel) {
+    return '正在用 ' + (S.observedProvider ? S.observedProvider + '/' : '') + S.observedModel +
+      '（没手动切过，跟随 pi 的默认配置）';
+  }
+  if (S.piDefault && S.piDefault.model) {
+    return 'pi 配置里的默认模型 ' + (S.piDefault.provider ? S.piDefault.provider + '/' : '') + S.piDefault.model;
+  }
+  return '用 pi 自己的默认配置';
 }
 function paintModelBar() {
   $('kv-model2').textContent = modelLabel();
-  $('kv-model2').title = S.curModel ? S.curModel.provider + '/' + S.curModel.model : '用 pi 自己的默认配置';
+  $('kv-model2').title = modelTitle();
   $('kv-think').textContent = S.curThinking ? (TH_ZH[S.curThinking] || S.curThinking) : '默认';
   updateVision();
   renderAtt();     // 换了模型，附件条的「看不懂图」警告要跟着重算
@@ -1424,45 +1601,266 @@ function renderThinkBtns() {
   });
 }
 
+/* ---------- 服务商分组的折叠状态（记住，下次打开还是这样） ---------- */
+const COLLAPSE_KEY = 'pixelagent.collapsedProvs';
+function loadCollapsed() {
+  try {
+    const j = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]');
+    return new Set(Array.isArray(j) ? j.map(String) : []);
+  } catch (e) { return new Set(); }
+}
+function saveCollapsed() {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(S.collapsedProvs))); } catch (e) { /* 存不下就算了 */ }
+}
+S.collapsedProvs = loadCollapsed();   // 注意：S 在上面已经建好，这里只是挂一个集合
+
 function renderModelList(q) {
   const box = $('mdl-list');
   box.innerHTML = '';
+  if (!S.collapsedProvs) { S.collapsedProvs = loadCollapsed(); }
   const query = String(q || '').toLowerCase();
   const rows = S.models.filter((m) => !query || (m.provider + '/' + m.model).toLowerCase().includes(query));
-  $('mdl-count').textContent = rows.length + ' 个模型';
+
+  // 分组（保持 pi 给的顺序）
+  const provs = [];
+  const byProv = {};
+  rows.forEach((m) => {
+    if (!byProv[m.provider]) { byProv[m.provider] = []; provs.push(m.provider); }
+    byProv[m.provider].push(m);
+  });
+  const collapsed = provs.filter((p) => S.collapsedProvs.has(p));
+  const shown = rows.length - collapsed.reduce((a, p) => a + byProv[p].length, 0);
+
+  $('mdl-count').textContent = collapsed.length
+    ? (rows.length + ' 个模型 · 收起 ' + collapsed.length + ' 组，正在显示 ' + shown + ' 个')
+    : (rows.length + ' 个模型');
   // 标题带上条数（原来写死 `模型()`，一对空括号看着像坏了）。
-  // 顺带把"一共多少 / 筛完剩多少"顶到标题栏 —— 列表要滚动时这是最省事的提示。
   $('mdl-title').textContent = '模型(' + rows.length + ')';
   if (!rows.length) { box.appendChild(el('div', 'empty', '没有匹配的模型')); return; }
 
-  let curProv = null;
-  rows.forEach((m) => {
-    if (m.provider !== curProv) {
-      curProv = m.provider;
-      const n = rows.filter((x) => x.provider === m.provider).length;
-      box.appendChild(el('div', 'mdl-prov', esc(m.provider) + '  ·  ' + n));
-    }
-    const on = S.curModel && S.curModel.provider === m.provider && S.curModel.model === m.model;
-    const tags = [m.context, m.thinking ? '思考' : '', m.images ? '看图' : ''].filter(Boolean).join(' · ');
-    const d = el('div', 'mdl-item' + (on ? ' on' : ''));
-    d.innerHTML = '<span class="mi-n">' + esc(m.model) + '</span><span class="mi-tag">' + esc(tags) + '</span>';
-    d.title = m.provider + '/' + m.model + ' · 上下文 ' + m.context + ' · 最大输出 ' + m.maxOut +
-      (m.images ? ' · 支持看图' : ' · 不支持看图');
-    d.addEventListener('click', async () => {
-      if (api) {
-        const r = await api.setModel({ provider: m.provider, model: m.model });
-        if (r && r.current) S.curModel = r.current.model;
-      } else S.curModel = { provider: m.provider, model: m.model };
-      paintModelBar();
+  provs.forEach((p) => {
+    const isCol = S.collapsedProvs.has(p);
+    // 分组标题做成真按钮：可点、可 Tab 到、Enter/Space 能开合
+    const h = el('button', 'mdl-prov');
+    h.type = 'button';
+    h.setAttribute('aria-expanded', isCol ? 'false' : 'true');
+    h.title = isCol ? '展开这一组' : '收起这一组';
+    h.innerHTML = '<span class="mp-caret">' + (isCol ? '▸' : '▾') + '</span>' +
+      '<span class="mp-name">' + esc(p) + '</span>' +
+      '<span class="mp-n">' + byProv[p].length + '</span>';
+    h.addEventListener('click', () => {
+      if (S.collapsedProvs.has(p)) S.collapsedProvs.delete(p); else S.collapsedProvs.add(p);
+      saveCollapsed();
       renderModelList($('mdl-q').value);
-      // 换了模型，上下文窗口（用量条的分母）跟着换
-      const ctx = contextOf(m.model);
-      $('ub-fill').style.width = '0%';
-      $('ub-fill').className = '';
-      $('ub-text').textContent = '— / ' + (ctx ? fmtTokens(ctx) : '—');
     });
-    box.appendChild(d);
+    box.appendChild(h);
+    if (isCol) return;   // 收起 = 不渲染行（不是用 CSS 藏：藏了还在 DOM 里，"数行数"的断言会算进去）
+
+    byProv[p].forEach((m) => {
+      const on = S.curModel && S.curModel.provider === m.provider && S.curModel.model === m.model;
+      const ctxOv = overrideOfUI(m.provider, m.model);
+      const tags = [
+        ctxOv && ctxOv.contextTokens ? (fmtTokens(ctxOv.contextTokens) + '*') : m.context,
+        m.thinking ? '思考' : '', m.images ? '看图' : ''
+      ].filter(Boolean).join(' · ');
+      const d = el('div', 'mdl-item' + (on ? ' on' : ''));
+      d.innerHTML = '<span class="mi-n">' + esc(m.model) + '</span>' +
+        '<span class="mi-tag">' + esc(tags) + '</span>';
+      d.title = m.provider + '/' + m.model + ' · 上下文 ' + m.context + ' · 最大输出 ' + m.maxOut +
+        (m.images ? ' · 支持看图' : ' · 不支持看图') +
+        (ctxOv && ctxOv.contextTokens ? '\n（带 * = 你在配置里覆盖成了 ' + ctxOv.contextTokens + ' 词元）' : '');
+
+      // 行内动作：配置 / 测试。悬停才显示（当前模型一直显示），
+      // 不然 130 行每行挂两个按钮，列表会变成一排按钮墙。
+      const ops = el('span', 'mi-ops');
+      const mk = (label, tip, fn) => {
+        const b = el('button', 'mi-op', label);
+        b.type = 'button';
+        b.title = tip;
+        b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });   // 别让点击冒泡成"选用"
+        return b;
+      };
+      ops.appendChild(mk('配置', '改上下文窗口 / 最大输出 / 设为默认模型', () => openModelConfig(m, false)));
+      ops.appendChild(mk('测试', '真发一次最小请求，看这个模型通不通', () => openModelConfig(m, true)));
+      d.appendChild(ops);
+
+      d.addEventListener('click', async () => {
+        if (api) {
+          const r = await api.setModel({ provider: m.provider, model: m.model });
+          if (r && r.current) S.curModel = r.current.model;
+        } else S.curModel = { provider: m.provider, model: m.model };
+        paintModelBar();
+        renderModelList($('mdl-q').value);
+        // 换了模型，上下文窗口（用量条的分母）跟着换
+        const ci = ctxInfoOf(m.provider, m.model);
+        $('ub-fill').style.width = '0%';
+        $('ub-fill').className = '';
+        $('ub-text').textContent = '— / ' + ctxLabel(ci);
+        $('sb-usage').title = '上下文总窗口 ' + (ci.tokens || '未知') + '\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）';
+      });
+      box.appendChild(d);
+    });
   });
+  syncCollapseBtn();
+}
+
+/* ============================================================
+   单个模型的「配置 / 测试」
+   ------------------------------------------------------------
+   老板原话："点开模型要有配置测试等功能"。
+   配置框要回答的第一个问题就是**那个数字从哪来** —— 所以只读区把
+   「模型自己声明的」和「pi 报出来的」分两行摆着，不是合成一个数。
+   ============================================================ */
+const MCFG = { sel: null, info: null, testing: false };
+
+function mcfgOut(text, kind) {
+  const o = $('mcfg-out');
+  if (!o) return;
+  if (!text) { o.className = 'mcfg-out hidden'; o.textContent = ''; return; }
+  o.className = 'mcfg-out' + (kind ? ' ' + kind : '');
+  o.textContent = text;
+}
+function mcfgNote(text, bad) {
+  const n = $('mcfg-note');
+  if (!n) return;
+  n.textContent = text || '';
+  n.classList.toggle('bad', !!bad);
+}
+
+async function openModelConfig(m, runTest) {
+  const sel = { provider: m.provider, model: m.model };
+  MCFG.sel = sel; MCFG.info = null;
+  $('mcfg-title').textContent = '模型配置(' + m.model + ')';
+  $('mcfg-id').textContent = m.model;
+  $('mcfg-prov').textContent = m.provider;
+  $('mcfg-base').textContent = '读取中…';
+  $('mcfg-reported').textContent = '—';
+  $('mcfg-cap').textContent = '—';
+  $('mcfg-auth').textContent = '—';
+  $('mcfg-ctx').value = '';
+  $('mcfg-max').value = '';
+  $('mcfg-ctx').placeholder = m.context || '—';
+  $('mcfg-max').placeholder = m.maxOut || '—';
+  mcfgNote('');
+  mcfgOut('');
+  $('mcfg-default').disabled = false;
+  $('mask-mcfg').classList.remove('hidden');
+
+  if (!api) {
+    $('mcfg-base').textContent = '（演示模式没有主进程）';
+    return;
+  }
+  const info = await api.modelInfo(sel);
+  if (!info || info.ok === false) {
+    $('mcfg-base').textContent = '读取失败：' + ((info && info.error) || '未知原因');
+    return;
+  }
+  MCFG.info = info;
+  $('mcfg-base').textContent = info.baseUrl
+    ? (info.baseUrl + (info.api ? '（' + info.api + '）' : ''))
+    : '没在 pi 的 models.json 里声明';
+
+  // ★ 这个数字到底是"模型自己说的"还是"pi 补的"，在这里分开说清楚
+  const rep = info.reported;
+  const dec = info.declared;
+  const src = dec && dec.contextWindow ? '模型自己声明的' : '模型没声明 → pi 的兜底值';
+  $('mcfg-reported').textContent = rep
+    ? (rep.context + '（' + rep.contextTokens + ' 词元）· 最大输出 ' + rep.maxOut + '  ← ' + src)
+    : 'pi 的表里没有这个模型';
+
+  const caps = [];
+  if (rep) {
+    caps.push(rep.thinking ? '可开思考' : '不支持思考');
+    caps.push(rep.images ? '能看图' : '不能看图');
+  }
+  if (dec && dec.input && dec.input.length) caps.push('声明输入：' + dec.input.join('+'));
+  $('mcfg-cap').textContent = caps.length ? caps.join(' · ') : '—';
+  $('mcfg-auth').textContent = info.hasKey
+    ? 'pi 的 models.json 里有 key（内容不回显）'
+    : '没在 models.json 里找到 key';
+
+  if (info.override) {
+    if (info.override.contextTokens) $('mcfg-ctx').value = String(info.override.contextTokens);
+    if (info.override.maxOut) $('mcfg-max').value = String(info.override.maxOut);
+  }
+  if (info.isDefault) {
+    $('mcfg-note').textContent = '这是 pi 配置里的默认模型。';
+    $('mcfg-default').disabled = true;
+  }
+  if (runTest) runModelTest();
+}
+
+function closeModelConfig() {
+  $('mask-mcfg').classList.add('hidden');
+  MCFG.sel = null;
+}
+
+async function runModelTest() {
+  if (!api || !MCFG.sel || MCFG.testing) return;
+  MCFG.testing = true;
+  $('mcfg-test').disabled = true;
+  mcfgOut('正在真发一次最小请求…（会让这个模型回一句 OK，耐心等）', 'busy');
+  const t0 = Date.now();
+  let r = null;
+  try { r = await api.modelTest(MCFG.sel); } catch (e) { r = { ok: false, error: String(e && e.message) }; }
+  MCFG.testing = false;
+  $('mcfg-test').disabled = false;
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  if (!r) { mcfgOut('测试没有返回结果（用时 ' + secs + ' 秒）', 'bad'); return; }
+  if (!r.ok) {
+    mcfgOut('❌ 不通（用时 ' + secs + ' 秒）\n' + (r.error || '未知原因') +
+      (r.raw ? '\n\n原始输出尾部：\n' + r.raw : ''), 'bad');
+    return;
+  }
+  mcfgOut('✅ 通了\n' +
+    '模型回话：' + JSON.stringify(r.text) + '\n' +
+    '服务商实际用的模型：' + (r.responseModel || '未报告') + '\n' +
+    'pi 报告耗时：' + (r.durationMs || 0) + ' ms（我这里量到 ' + secs + ' 秒，含 pi 启动）\n' +
+    '这一轮的 token：总 ' + (r.totalTokens || 0) + '（入 ' + (r.inputTokens || 0) +
+    ' / 出 ' + (r.outputTokens || 0) + '）\n' +
+    '结束原因：' + (r.stopReason || '未报告'), 'ok');
+}
+
+async function saveModelConfig() {
+  if (!api || !MCFG.sel) return;
+  const cRaw = $('mcfg-ctx').value.trim();
+  const xRaw = $('mcfg-max').value.trim();
+  const ctx = cRaw === '' ? 0 : Math.round(Number(cRaw));
+  const max = xRaw === '' ? 0 : Math.round(Number(xRaw));
+  if (cRaw !== '' && (!Number.isFinite(ctx) || ctx <= 0)) { mcfgNote('上下文窗口要填正整数（或留空用 pi 的值）', true); return; }
+  if (xRaw !== '' && (!Number.isFinite(max) || max <= 0)) { mcfgNote('最大输出要填正整数（或留空用 pi 的值）', true); return; }
+  // 覆盖值那张表由**主进程**持有并落盘（它是唯一写盘的一方），
+  // 这里只把"这一次要改成什么"发过去。之前这里还自己拼了一份 `patch` 却从不发送 ——
+  // 看着像在改配置、其实一行都没用上，这种"看着有用其实没用"的死代码比没有更危险。
+  const r = await api.setModelConfig(Object.assign({}, MCFG.sel, { contextTokens: ctx, maxOut: max, clear: (!ctx && !max) }));
+  const dropped = (r && r.droppedKeys) || [];
+  // 这条**必须**留着：它是唯一能拦住"保存了但没落盘"的哨兵。
+  // 上一轮真出过事 —— 主进程把 modelOverrides 整张表当配置补丁收，
+  // 白名单一个顶层键都匹配不上，值全丢；界面只看到"没报错"。
+  if (dropped.length) { mcfgNote('主进程不认识的键：' + dropped.join(', '), true); return; }
+  if (r && r.ok === false) { mcfgNote('保存失败：' + ((r && r.error) || '未知原因'), true); return; }
+  if (r && r.cfg) applyCfg(r.cfg, null);
+  mcfgNote((!ctx && !max) ? '已清掉这个模型的覆盖值，回到 pi 报的值。' : '已保存：用量条的分母按你填的值算。');
+  // 立刻把用量条按新分母重算，不用等下一轮
+  if (S.lastUsage) setUsage(S.lastUsage, S.lastUsageModel);
+  else paintCtxIdle();
+  renderModelList($('mdl-q').value);
+  setTimeout(() => { if (!$('mask-mcfg').classList.contains('hidden')) closeModelConfig(); }, 700);
+}
+
+async function setAsDefaultModel() {
+  if (!api || !MCFG.sel) return;
+  const full = MCFG.sel.provider + '/' + MCFG.sel.model;
+  const r = await api.setCfg({ defaultModel: full });
+  if (r && r.ok) {
+    mcfgNote('已设为默认模型：' + full + '（下次启动用它；当前这一轮也切过去了）');
+    $('mcfg-default').disabled = true;
+    if (r.cfg) applyCfg(r.cfg, null);
+    const mm = await api.models();
+    if (mm && mm.current) { S.curModel = mm.current.model; S.piDefault = mm.current.piDefault || S.piDefault; }
+    paintModelBar();
+    renderModelList($('mdl-q').value);
+  } else mcfgNote('设为默认失败', true);
 }
 
 async function openModelPicker() {
@@ -1476,7 +1874,11 @@ async function openModelPicker() {
     if (r && r.ok && r.models && r.models.length) {
       S.models = r.models;
       S.modelsLoaded = true;
-      if (r.current) { S.curModel = r.current.model; S.curThinking = r.current.thinking; }
+      if (r.current) {
+        S.curModel = r.current.model;
+        S.curThinking = r.current.thinking;
+        S.piDefault = r.current.piDefault || S.piDefault;
+      }
     } else {
       $('mdl-count').textContent = '读取失败：' + ((r && r.error) || '未知原因');
       $('mdl-title').textContent = '模型(读取失败)';
@@ -1566,7 +1968,8 @@ const COMMANDS = [
   { k: '/rename', g: '会话', d: '给当前会话改名', arg: '名字',   run: (a) => renameCurrent(a) },
   { k: '/export', g: '会话', d: '导出当前会话（格式见设置）',   run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
   { k: '/clear',  g: '会话', d: '清空当前视图（不动会话文件）', run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
-  { k: '/model',  g: '模型', d: '切换模型 / 思考档位',          run: () => openModelPicker() },
+  // 这里**故意没有 /model** —— 状态栏那个「模型」按钮就是入口，
+  // 命令面板里再摆一条只是多一个会走偏的路（老板原话：UI 上已经有了）。
   { k: '/stop',   g: '运行', d: '停止当前这一轮',                run: () => doAbort() },
   { k: '/img',    g: '输入', d: '添加图片（也可直接粘贴/拖拽）', run: () => filePicker.click() },
   { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() },
@@ -1676,7 +2079,13 @@ function updatePalette() {
 
   if (v.startsWith('/')) {
     pal.items = cmdItems(v);
-    pal.empty = '没有这个命令。试试 /new、/model、/rename、/settings';
+    // 推荐语**从命令表现取**，不再手写一份。
+    // 手写的那份已经留下过一句"试试 /model"—— 而 /model 早被删了（老板原话：
+    // "UI 界面上已经有了"），于是提示把用户指向一个不存在的命令。
+    // 现取的话，命令一删，推荐语自动跟着消失。
+    const SUGGEST = ['/new', '/rename', '/settings', '/img'];
+    const have = SUGGEST.filter((k) => COMMANDS.some((c) => c.k === k));
+    pal.empty = '没有这个命令。试试 ' + have.join('、');
     if (!pal.open || pal.mode !== 'cmd') pal.idx = 0;   // 重新开始输入时回到第一条
     if (pal.idx >= pal.items.length) pal.idx = 0;
     openPalette('cmd', '命令');
@@ -1751,12 +2160,28 @@ input.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!$('mask-input').classList.contains('hidden')) { closeInput(false); return; }
-    if (!$('mask-model').classList.contains('hidden')) { closeModelPicker(); return; }
-    // ★ 设置面板这一支原来**漏了**：面板开着按 Esc 会一路掉到下面的 doAbort()，
-    //   结果"想关掉设置"变成"把正在跑的这轮中断掉"，而且面板还开着。
-    //   浮层谁开着就该谁吃掉 Esc —— 这里少写一行，代价是一个静默的误中断。
-    if (!mask.classList.contains('hidden')) { closeSettings(true); return; }
+    // 浮层谁开着就该谁吃掉 Esc —— 否则会掉到下面的 doAbort()，
+    // 把"想关掉浮层"变成"把正在跑的这轮中断掉"（README 坑 19）。
+    // ★★ 但"谁该吃"必须是**盖在最上面的那一个**，手写判断顺序会漂：
+    //    这一轮就是活例子 —— mask-mcfg 这支排在 mask-model **后面**，
+    //    于是"模型框 + 配置框"双层开着时按 Esc，关掉的是**下面**那个模型框，
+    //    最上面的配置框纹丝不动（用户按了 Esc 却像没反应）。
+    //    ⇒ 别手写顺序，直接从 DOM 里挑：同层浮层 z-index 一样，
+    //      DOM 里越靠后越在上面（"两张截图字节数完全相同"就是因为这个）。
+    const top = ['mask-input', 'mask', 'mask-model', 'mask-mcfg']
+      .map((id) => $(id))
+      .filter((m) => m && !m.classList.contains('hidden'))
+      // 降序：DOM 里越靠后越在上面（z-index 相同），所以 [0] 就是最上面那一层。
+      // ⚠ 第一次写成 `? -1 : 1` 得到的是 ascending ⇒ [0] 是 DOM 里最**前**的
+      //   （也就是最下面那层），于是双层时又关错了目标 —— 同一条 bug 换个写法重犯。
+      .sort((a, b) => ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1))[0];
+    if (top) {
+      if (top.id === 'mask-input') closeInput(false);
+      else if (top.id === 'mask-model') closeModelPicker();
+      else if (top.id === 'mask-mcfg') closeModelConfig();
+      else closeSettings(true);
+      return;
+    }
     if (document.activeElement !== input) doAbort();
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newSession(); }
@@ -1781,10 +2206,52 @@ $('mdl-default').addEventListener('click', async () => {
   else S.curModel = null;
   paintModelBar();
   renderModelList($('mdl-q').value);
+  const em = effModel();
+  const ci = ctxInfoOf(em && em.provider, em && em.model);
   $('ub-fill').style.width = '0%';
   $('ub-fill').className = '';
-  $('ub-text').textContent = '— / —';
+  $('ub-text').textContent = '— / ' + ctxLabel(ci);
 });
+
+/* ---------- 模型列表：全部展开 / 全部收起 ---------- */
+function allProvs(q) {
+  const query = String(q == null ? $('mdl-q').value : q).toLowerCase();
+  return Array.from(new Set(S.models
+    .filter((m) => !query || (m.provider + '/' + m.model).toLowerCase().includes(query))
+    .map((m) => m.provider)));
+}
+function syncCollapseBtn() {
+  const btn = $('mdl-collapse');
+  if (!btn) return;
+  const all = allProvs('');
+  const coll = all.filter((p) => S.collapsedProvs.has(p)).length;
+  btn.textContent = (all.length && coll === all.length) ? '全部展开' : '全部收起';
+  btn.title = (all.length && coll === all.length)
+    ? '把所有服务商分组都展开'
+    : '把所有服务商分组都收起（收起状态会记住）';
+}
+$('mdl-collapse').addEventListener('click', () => {
+  const all = allProvs('');
+  const coll = all.filter((p) => S.collapsedProvs.has(p)).length;
+  if (all.length && coll === all.length) S.collapsedProvs.clear();
+  else all.forEach((p) => S.collapsedProvs.add(p));
+  saveCollapsed();
+  renderModelList($('mdl-q').value);
+});
+
+/* ---------- 模型配置 / 测试对话框 ---------- */
+$('mcfg-x').addEventListener('click', closeModelConfig);
+$('mcfg-cancel').addEventListener('click', closeModelConfig);
+$('mask-mcfg').addEventListener('click', (e) => { if (e.target === $('mask-mcfg')) closeModelConfig(); });
+$('mcfg-save').addEventListener('click', saveModelConfig);
+$('mcfg-test').addEventListener('click', runModelTest);
+$('mcfg-default').addEventListener('click', setAsDefaultModel);
+
+/* ---------- 点用量条 → 看上下文明细（把"这个数字从哪来"说清楚） ---------- */
+if ($('sb-usage')) {
+  $('sb-usage').addEventListener('click', showUsageDetail);
+  $('sb-usage').style.cursor = 'pointer';
+}
 
 /* ============================================================
    设置：真能改（界面 → .pixelagent.json → 重启还在）
@@ -1951,9 +2418,13 @@ async function fillRunInfo() {
   $('set-auth').textContent = st.ready
     ? ('就绪' + (st.copied && st.copied.length ? '（首次已抄入 ' + st.copied.join('/') + '）' : ''))
     : ('未就绪：' + (st.error || '未知'));
+  // 没手动切过模型时 pi 报的是 null —— 这时把 pi 配置里的默认模型写出来，
+  // 否则这一行只会说"（用 pi 默认）"，用户不知道到底用的是哪个。
+  const pd = i.current && i.current.piDefault;
   $('set-curmodel').textContent = i.current && i.current.model
     ? (i.current.model.provider + '/' + i.current.model.model)
-    : (i.cli === null ? 'pi 未安装' : '（用 pi 默认）');
+    : (i.cli === null ? 'pi 未安装'
+      : (pd ? (pd.model + '（pi 配置里的默认' + (pd.provider ? '，来自 ' + pd.provider : '') + '）') : '（用 pi 默认）'));
   $('kv-cwd').textContent = i.cwd || '—';
   $('kv-cwd').title = i.cwd || '';
 }
@@ -2098,15 +2569,21 @@ if (api) {
     if (r && r.ok && r.models && r.models.length) {
       S.models = r.models;
       S.modelsLoaded = true;
-      if (r.current) { S.curModel = r.current.model; S.curThinking = r.current.thinking; }
+      if (r.current) {
+        S.curModel = r.current.model;
+        S.curThinking = r.current.thinking;
+        // pi 自己配置的默认模型：没手动切过时 current.model 是 null，
+        // 靠它才能把用量条的分母填上（否则永远是 `— / —`）。
+        S.piDefault = r.current.piDefault || null;
+      }
       paintModelBar();
-      const cur = S.curModel ? S.curModel.model : $('kv-model').textContent;
-      const ctx = contextOf(cur);
+      const em = effModel();
+      const ci = ctxInfoOf(em && em.provider, em && em.model);
       if (S.lastUsage) {
-        setUsage(S.lastUsage, S.lastUsageModel || cur);   // 目录刚到，补算分母
-      } else if (ctx) {
-        $('ub-text').textContent = '— / ' + fmtTokens(ctx);
-        $('sb-usage').title = '上下文总窗口 ' + ctx + ' tokens';
+        setUsage(S.lastUsage, S.lastUsageModel);   // 目录刚到，补算分母
+      } else if (ci.tokens) {
+        $('ub-text').textContent = '— / ' + ctxLabel(ci);
+        $('sb-usage').title = '上下文总窗口 ' + ci.tokens + ' tokens\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）';
       }
       updateVision();
       // 模型目录到了 → 设置面板的"默认模型"下拉才有真数据，重建一次

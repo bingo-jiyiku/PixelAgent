@@ -17,6 +17,7 @@
     "shot": "electron test/screenshot.js",
     "shot:extra": "electron test/shot-extra.js",
     "shot:settings": "electron test/shot-settings.js",
+    "shot:model": "electron test/shot-model.js",
     "shot:girl": "electron test/shot-girl.js",
     "zoom:parts": "electron test/zoom-parts.js",
     "zoom:scene": "electron test/zoom-scene.js",
@@ -24,7 +25,10 @@
     "profile:girl": "node tools/girl-profile.js",
     "verify:tools": "electron test/verify-tools.js",
     "verify:features": "electron test/verify-features.js",
-    "probe:trash": "electron test/probe-trash.js"
+    "probe:trash": "electron test/probe-trash.js",
+    "probe:usage": "electron test/probe-usage.js",
+    "probe:mcfg": "electron test/probe-mcfg.js",
+    "probe:esc": "electron test/probe-esc.js"
   },
   "license": "MIT",
   "devDependencies": {

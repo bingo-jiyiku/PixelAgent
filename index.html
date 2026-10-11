@@ -153,6 +153,11 @@
 
 <!-- ═══════════════ 底部：输入行 + 状态栏 ═══════════════ -->
 <footer class="dock">
+  <!-- 瞬时提示条（toast）。
+       存在的理由：有些话**不能**写进消息时间线 —— addMsg 会调 showTimeline()
+       把欢迎区藏掉。删掉最后一条会话要"回主页 + 告诉用户删掉了"，
+       这两件事在时间线里是互斥的，所以提示得挂在时间线之外。 -->
+  <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
   <!-- 附件预览条：粘贴/拖拽/选择进来的图片先在这里排队，再随消息一起发 -->
   <div class="attbar hidden" id="attbar"></div>
 
@@ -347,7 +352,58 @@
     <div class="mdl-list" id="mdl-list"></div>
     <div class="mdl-foot">
       <span id="mdl-count">—</span>
+      <span class="mdl-hint" id="mdl-hint">点分组建名可折叠 · 行内可配置 / 测试</span>
+      <span class="sb-spacer"></span>
+      <button class="px-btn" id="mdl-collapse" type="button">全部收起</button>
       <button class="px-btn" id="mdl-default" type="button">恢复默认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 单个模型的配置 / 测试 ═══════════════ -->
+<div class="mask hidden" id="mask-mcfg">
+  <div class="win dialog dialog-mcfg">
+    <div class="win-bar">
+      <span class="win-ico" aria-hidden="true"></span>
+      <span class="win-name" id="mcfg-title">模型配置</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="mcfg-x" type="button" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="dlg-body">
+      <div class="set-sec">这个模型是什么（只读，都来自真数据）</div>
+      <div class="kv"><span>模型</span><b id="mcfg-id">—</b></div>
+      <div class="kv"><span>服务商</span><b id="mcfg-prov">—</b></div>
+      <div class="kv"><span>接入地址</span><b id="mcfg-base">—</b></div>
+      <div class="kv"><span>pi 报的窗口</span><b id="mcfg-reported">—</b></div>
+      <div class="kv"><span>能力</span><b id="mcfg-cap">—</b></div>
+      <div class="kv"><span>凭据</span><b id="mcfg-auth">—</b></div>
+
+      <div class="set-sec">可以改的</div>
+      <div class="set-row">
+        <label class="set-lb" for="mcfg-ctx">上下文窗口</label>
+        <input class="set-in" id="mcfg-ctx" type="number" min="0" step="1024" />
+        <span class="set-unit">词元</span>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="mcfg-max">最大输出</label>
+        <input class="set-in" id="mcfg-max" type="number" min="0" step="1024" />
+        <span class="set-unit">词元</span>
+      </div>
+      <p class="dlg-tip">
+        留空 = 用 pi 报的值。改这里只是为了在 pi 报得不准（或模型没声明窗口、走了 pi 的兜底值）时，
+        让用量条的分母按你知道的真实值算 —— 它**不会**改变 pi 实际能收多少上下文。
+      </p>
+      <p class="set-note" id="mcfg-note"></p>
+      <div class="mcfg-out hidden" id="mcfg-out"></div>
+    </div>
+    <div class="dlg-foot mcfg-foot">
+      <button class="px-btn" id="mcfg-default" type="button">设为默认模型</button>
+      <button class="px-btn" id="mcfg-test" type="button">测试连通</button>
+      <span class="sb-spacer"></span>
+      <button class="px-btn" id="mcfg-cancel" type="button">取消</button>
+      <button class="px-btn primary" id="mcfg-save" type="button">保存</button>
     </div>
   </div>
 </div>

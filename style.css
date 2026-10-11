@@ -412,6 +412,16 @@ body {
    ============================================================ */
 .dock { flex: 0 0 auto; background: var(--panel-2); position: relative; z-index: 30; }
 
+/* 瞬时提示条：贴在输入行正上方，2.6 秒后自己消失。
+   96px 的下限是为了长句子能折行 —— 中文提示经常一句就 30+ 字。 */
+.toast {
+  max-width: min(720px, 92vw); margin: 0 auto 6px;
+  background: var(--ink); color: var(--panel);
+  border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--panel-3);
+  font-size: 18px; line-height: 1.35; padding: 7px 12px;
+}
+.toast.warn { background: var(--warn); color: var(--ink); }
+
 .promptbar {
   position: relative;
   display: flex; align-items: center; gap: 10px;
@@ -985,12 +995,31 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 .th-btn:hover { background: var(--lav); }
 .th-btn.on { background: var(--ink); color: var(--panel); }
 .mdl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* 服务商分组标题：**可点折叠**。用 <button> 语义（键盘也能开），但要长得像标题条。 */
 .mdl-prov {
   position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
   font-family: var(--f-px); font-size: 9px; letter-spacing: 1px;
   padding: 5px 8px; background: var(--lav); color: var(--ink);
-  border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
+  border: none; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
+  border-radius: 0; cursor: pointer;
 }
+.mdl-prov:hover { background: var(--lav-deep); color: var(--panel); }
+.mdl-prov:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
+.mdl-prov .mp-caret { flex: 0 0 auto; font-family: var(--f-tx); font-size: 15px; }
+.mdl-prov .mp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdl-prov .mp-n { flex: 0 0 auto; }
+/* 收起的组：整组行都不渲染（不是用 CSS 藏 —— 藏了还在 DOM 里，
+   后面的"数一数有几行"类断言就会把隐形的也算进去） */
+.mdl-item .mi-ops { display: none; flex: 0 0 auto; gap: 4px; align-self: center; }
+.mdl-item:hover .mi-ops, .mdl-item:focus-within .mi-ops, .mdl-item.on .mi-ops { display: flex; }
+.mi-op {
+  font-family: var(--f-px); font-size: 8px; letter-spacing: 1px; cursor: pointer;
+  border: 2px solid var(--ink); border-radius: 0; background: var(--panel); color: var(--ink);
+  padding: 3px 5px;
+}
+.mi-op:hover { background: var(--lav); }
+.mdl-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mdl-item {
   display: flex; align-items: baseline; gap: 8px; cursor: pointer;
   padding: 5px 10px; border-bottom: 2px solid var(--panel-3); font-size: 18px; color: var(--ink);
@@ -1005,6 +1034,18 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   gap: 8px; padding: 8px; border-top: 3px solid var(--ink); background: var(--panel-2);
 }
 .mdl-foot span { font-family: var(--f-tx); font-size: 17px; color: var(--muted); }
+
+/* ---------- 单个模型的配置 / 测试对话框 ---------- */
+.dialog-mcfg { width: min(660px, 94vw); max-height: 86vh; }
+.mcfg-foot { padding: 10px 14px 14px; border-top: 3px solid var(--ink); background: var(--panel-2); display: flex; gap: 8px; align-items: center; }
+/* 测试结果：成功/失败一眼能分（颜色 + 文案都变，不只靠颜色） */
+.mcfg-out {
+  margin: 0 14px 12px; padding: 8px 10px; font-size: 18px; line-height: 1.4;
+  border: 3px solid var(--ink); background: var(--panel-2); color: var(--ink); white-space: pre-wrap;
+}
+.mcfg-out.ok { background: #e6f2e2; }
+.mcfg-out.bad { background: #f7e4e1; color: var(--err); }
+.mcfg-out.busy { background: var(--panel-3); color: var(--muted); }
 
 /* ============================================================
    窄屏收缩

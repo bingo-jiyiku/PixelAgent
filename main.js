@@ -55,7 +55,12 @@ const CFG_DEFAULTS = {
   autoScroll: true,         // 新消息自动滚到底
   exportFormat: 'html',     // 导出默认格式
   defaultModel: '',         // '' = 用 pi 默认
-  defaultThinking: ''       // '' = 用 pi 默认
+  defaultThinking: '',      // '' = 用 pi 默认
+  // 单个模型的覆盖值：{ "provider/model": { contextTokens, maxOut } }。
+  // 只影响**界面上的分母**（用量条），不改变 pi 实际能收多少上下文 ——
+  // 存在的理由是 pi 对没声明 contextWindow 的模型会退回兜底值，
+  // 用户看到的是那个兜底值却无从得知，也无从改。
+  modelOverrides: {}
 };
 // 主题色：两档（主色 / 硬阴影色）成对给，改一个变量就能整体换皮
 const ACCENTS = {
@@ -85,6 +90,23 @@ function normalizeCfg(patch) {
   if ('defaultThinking' in p) {
     out.defaultThinking = THINKING_LEVELS.includes(p.defaultThinking) ? p.defaultThinking : '';
   }
+  // 模型覆盖值：键和值都要过滤。整数、>0、有上限，
+  // 免得界面把一个负数或 1e30 写进配置文件，用量条当场变成 0% 或永远 100%。
+  if ('modelOverrides' in p) {
+    const src = (p.modelOverrides && typeof p.modelOverrides === 'object') ? p.modelOverrides : {};
+    const clean = {};
+    for (const k of Object.keys(src).slice(0, 300)) {
+      const v = src[k];
+      if (!v || typeof v !== 'object') continue;
+      const ent = {};
+      const c = Math.round(Number(v.contextTokens));
+      const x = Math.round(Number(v.maxOut));
+      if (Number.isFinite(c) && c > 0) ent.contextTokens = Math.min(c, 100000000);
+      if (Number.isFinite(x) && x > 0) ent.maxOut = Math.min(x, 100000000);
+      if (Object.keys(ent).length) clean[String(k).slice(0, 160)] = ent;
+    }
+    out.modelOverrides = clean;
+  }
   return out;
 }
 
@@ -109,6 +131,18 @@ function saveCfg() {
 function cfgForUi() {
   const { names, ...rest } = cfg;
   return { ...rest, renameCount: Object.keys(names || {}).length };
+}
+// 写设置只有这一条路：白名单校验 → 落盘 → 回执。
+// 抽成函数是因为「模型配置」也要走同一条路 —— 两处各写一份迟早会分叉。
+function applyCfgPatch(patch) {
+  const applied = normalizeCfg(patch);
+  // 白名单外的键要**报出来**而不是默默吞掉：界面笔误（比如把 mascotAnim 写成 mascot）
+  // 会表现成"点了保存但没生效"，没有这个回执就只能靠猜。
+  const dropped = Object.keys(patch || {}).filter((k) => !(k in applied));
+  Object.assign(cfg, applied);
+  saveCfg();
+  if ('defaultModel' in applied || 'defaultThinking' in applied) applyModelDefaults();
+  return { ok: true, cfg: cfgForUi(), applied, droppedKeys: dropped };
 }
 loadCfg();
 
@@ -325,11 +359,16 @@ function applyModelDefaults() {
 }
 applyModelDefaults();
 
+// 「128K」到底是多少？**必须跟 pi 自己一个算法**。
+// pi 的 dist/cli/list-models.js 里 `formatTokenCount` 是 ÷1000（1_000 → "1K"，
+// 1_000_000 → "1M"），所以 pi 说的 `128K` 就是 128000，不是 131072。
+// 我一开始按 1024 算，于是同一个模型在界面上出现两个数：
+// pi 表写 `128K`，我们把它翻成 `131072 词元` —— 这正是"这数哪来的"的诱因之一。
 function parseSize(s) {
   const m = /^([\d.]+)\s*([KM]?)$/.exec(String(s || ''));
   if (!m) return 0;
   const n = parseFloat(m[1]);
-  return Math.round(n * (m[2] === 'M' ? 1048576 : m[2] === 'K' ? 1024 : 1));
+  return Math.round(n * (m[2] === 'M' ? 1000000 : m[2] === 'K' ? 1000 : 1));
 }
 
 // 解析 `pi --list-models` 的表格：provider / model / context / max-out / thinking / images
@@ -408,7 +447,151 @@ async function runPiQuery(args, timeoutMs, agentDir) {
   return next;
 }
 
-function modelState() { return { model: curModel, thinking: curThinking }; }
+function modelState() { return { model: curModel, thinking: curThinking, piDefault: piDefaultModel() }; }
+
+/* ============================================================
+   单个模型的「配置 / 测试」
+   ------------------------------------------------------------
+   起因：老板问"上下文怎么只有十万，是你定的还是模型定的"。
+   查下来是**第三种情况**：pi 的模型表里有些模型根本没声明 contextWindow
+   （实测 agent-plan/provider 下的 ark-code-latest 在 models.json 里
+   只有一个 {"id":"..."}），pi 只能退到自己的兜底常量 128e3。
+   所以那个数字既不是模型说的、也不是我们定的 —— 是 pi 的补位值。
+   用户既看不到这层，也没法改。这里把三件事补上：
+     ① `pi:model-info`  把"这个数字从哪来"摊开（声明值 / 报的值 / 我们的覆盖）；
+     ② `pi:model-set-config` 允许覆盖（**只影响界面上的分母**，不改 pi 的接收能力）；
+     ③ `pi:model-test` 真发一次最小请求，验证这个模型到底通不通。
+   ------------------------------------------------------------
+   注意：models.json 里有 apiKey，**绝不能**整份回给渲染层。
+   下面只回 baseUrl 和"有没有 key"，连掩码都不回。
+   ============================================================ */
+function readPiJson(name) {
+  try { return JSON.parse(fs.readFileSync(path.join(AGENT_DIR, name), 'utf8')) || {}; }
+  catch (e) { return {}; }
+}
+function piDefaultModel() {
+  const s = readPiJson('settings.json');
+  if (!s.defaultModel) return null;
+  return { provider: s.defaultProvider || null, model: String(s.defaultModel) };
+}
+function modelKey(p, m) { return String(p || '') + '/' + String(m || ''); }
+function overrideOf(p, m) {
+  const map = (cfg.modelOverrides && typeof cfg.modelOverrides === 'object') ? cfg.modelOverrides : {};
+  const o = map[modelKey(p, m)];
+  return (o && typeof o === 'object') ? o : null;
+}
+
+ipcMain.handle('pi:model-info', (_e, sel) => {
+  const p = String((sel && sel.provider) || '');
+  const m = String((sel && sel.model) || '');
+  if (!m) return { ok: false, error: '没有指定模型' };
+
+  const provs = readPiJson('models.json').providers || {};
+  const prov = provs[p] || null;
+  const declared = (prov && Array.isArray(prov.models))
+    ? (prov.models.find((x) => x && x.id === m) || null)
+    : null;
+
+  const hit = (modelsCache || []).find((x) => x.model === m && (!p || x.provider === p)) || null;
+
+  return {
+    ok: true,
+    provider: p, model: m,
+    baseUrl: prov ? (prov.baseUrl || '') : '',
+    api: prov ? (prov.api || '') : '',
+    // 只说有没有，不回内容
+    hasKey: !!(prov && prov.apiKey),
+    // ① 模型自己在 models.json 里声明的（最权威，但经常没有）
+    declared: declared ? {
+      contextWindow: declared.contextWindow || 0,
+      maxTokens: declared.maxTokens || 0,
+      input: Array.isArray(declared.input) ? declared.input : []
+    } : null,
+    // ② pi --list-models 报出来的（带兜底，所以可能不是模型的原话）
+    reported: hit ? { context: hit.context, maxOut: hit.maxOut, contextTokens: hit.contextTokens,
+                      maxOutTokens: hit.maxOutTokens, thinking: hit.thinking, images: hit.images } : null,
+    // ③ 我们自己的覆盖
+    override: overrideOf(p, m),
+    isDefault: (() => {
+      const d = piDefaultModel();
+      return !!(d && d.model === m && (!d.provider || d.provider === p));
+    })()
+  };
+});
+
+ipcMain.handle('pi:model-set-config', (_e, sel) => {
+  const p = String((sel && sel.provider) || '');
+  const m = String((sel && sel.model) || '');
+  if (!m) return { ok: false, error: '没有指定模型' };
+  const map = Object.assign({}, cfg.modelOverrides || {});
+  const k = modelKey(p, m);
+  if (sel && sel.clear) delete map[k];
+  else map[k] = Object.assign({}, map[k], {
+    contextTokens: Number(sel.contextTokens) || 0,
+    maxOut: Number(sel.maxOut) || 0
+  });
+  // ★★ 这里必须**包一层** `{ modelOverrides: map }`。
+  //   applyCfgPatch 收的是**配置补丁**（顶层键：enterToSend / modelOverrides / …），
+  //   直接把这整张"provider/model → 值"的表当补丁传进去，白名单里一个顶层键都找不到，
+  //   于是 `Object.assign(cfg, applied)` 等于什么都没写，而且 droppedKeys 还会被算成
+  //   `['agent-plan/ark-code-latest']` —— 报错文案看着像"键名写错了"，实际是**层级错了**。
+  //   现象：模型行点「配置」→ 填值 → 保存，不报任何错、还提示了一句，
+  //   但覆盖值永远不落盘（`modelOverrides` 一直是 `{}`）。上一轮这个功能是坏的。
+  const r = applyCfgPatch({ modelOverrides: map });
+  return { ok: !!(r && r.ok), applied: r && r.applied, droppedKeys: r && r.droppedKeys, cfg: r && r.cfg };
+});
+
+ipcMain.handle('pi:model-test', async (_e, sel) => {
+  const p = String((sel && sel.provider) || '');
+  const m = String((sel && sel.model) || '');
+  if (!m) return { ok: false, error: '没有指定模型' };
+  const t0 = Date.now();
+  const r = await runPiQuery([
+    '-p', '--mode', 'json', '--no-session', '-nt',
+    '--provider', p, '--model', m,
+    '只回复 OK 两个字母，不要解释，不要调用任何工具'
+  ], 90000, AGENT_DIR);
+  const ms = Date.now() - t0;
+  const out = String(r.out || '');
+  const err = String(r.err || '');
+
+  // 从真事件流里挑证据：最后一条 assistant 文本 + usage + durationMs + responseModel
+  let text = '', usage = null, durationMs = 0, responseModel = '', stopReason = '';
+  for (const line of out.split('\n')) {
+    const s = line.trim();
+    if (!s || s[0] !== '{') continue;
+    let ev;
+    try { ev = JSON.parse(s); } catch (e2) { continue; }
+    const msg = ev && (ev.message || (ev.assistantMessageEvent && ev.assistantMessageEvent.message));
+    if (ev && ev.type === 'message_update' && ev.assistantMessageEvent &&
+        ev.assistantMessageEvent.type === 'text_delta') text += ev.assistantMessageEvent.delta || '';
+    if (msg && msg.role === 'assistant') {
+      if (msg.usage) usage = msg.usage;
+      if (msg.durationMs) durationMs = msg.durationMs;
+      if (msg.responseModel) responseModel = msg.responseModel;
+      if (msg.stopReason) stopReason = msg.stopReason;
+      if (Array.isArray(msg.content)) {
+        const t = msg.content.find((c) => c && c.type === 'text');
+        if (t && t.text) text = t.text;
+      }
+    }
+  }
+  if (!text && err) {
+    // 失败时别把整个 stderr 甩上去：挑最像原因的那一行
+    const line = err.split('\n').filter((x) => /error|Error|API key|not found|Unknown|denied|401|403|404/.test(x))[0]
+      || err.split('\n').filter((x) => x.trim())[0] || '';
+    return { ok: false, ms, totalMs: ms, error: line.trim().slice(0, 400), raw: err.slice(-600) };
+  }
+  return {
+    ok: !!text, ms, totalMs: ms, durationMs,
+    text: text.slice(0, 200),
+    responseModel: responseModel || '',
+    stopReason: stopReason || '',
+    totalTokens: (usage && usage.totalTokens) || 0,
+    inputTokens: (usage && usage.input) || 0,
+    outputTokens: (usage && usage.output) || 0
+  };
+});
 
 // 发问前把配置目录上的查询排空。
 // ------------------------------------------------------------
@@ -903,16 +1086,7 @@ ipcMain.handle('pi:cfg', () => ({
   thinkingLevels: THINKING_LEVELS, exportFormats: EXPORT_FORMATS
 }));
 
-ipcMain.handle('pi:cfg-set', (_e, patch) => {
-  const applied = normalizeCfg(patch);
-  // 白名单外的键要**报出来**而不是默默吞掉：界面笔误（比如把 mascotAnim 写成 mascot）
-  // 会表现成"点了保存但没生效"，没有这个回执就只能靠猜。
-  const dropped = Object.keys(patch || {}).filter((k) => !(k in applied));
-  Object.assign(cfg, applied);
-  saveCfg();
-  if ('defaultModel' in applied || 'defaultThinking' in applied) applyModelDefaults();
-  return { ok: true, cfg: cfgForUi(), applied, droppedKeys: dropped };
-});
+ipcMain.handle('pi:cfg-set', (_e, patch) => applyCfgPatch(patch));
 
 ipcMain.handle('pi:cfg-reset', () => {
   const names = cfg.names;                       // 会话改名记录不是设置，不清

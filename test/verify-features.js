@@ -123,16 +123,29 @@ app.whenReady().then(async () => {
   //   · 能力未知 → 中性提示（不能默认成"没问题"）
   //   · 明确不支持 → 强警告
   // 一条都不出的话，用户就会以为发出去的图 AI 看得见。
+  // ★ 前提写全了没有？第一版这里只清 `curModel` 就以为是"未知"了 ——
+  //   但上一轮给 activeModelName 加了 `piDefault` 回退（没手动切过模型时用 pi 配置
+  //   里的默认模型），于是"只清 curModel"其实**还是知道**的：它会落到
+  //   agent-plan/ark-code-latest，而 pi 的模型表说这个模型 `images: no`
+  //   ⇒ 走的是"明确不支持"那一支，中性提示当然断言不到。
+  //   要造真正的"未知"，curModel 和 piDefault 都得清掉（同时用不到 models 目录）。
   const hintUnknown = await js(`(function(){
-    window.__pixel.curModel = null;
+    const S = window.__pixel;
+    S.__bakPiDefault = S.piDefault;   // 存起来，下面要用回来
+    S.curModel = null;
+    S.piDefault = null;
     document.getElementById('kv-model').textContent = '—';
     renderAtt();
     const w = document.querySelector('#attbar .att-warn');
-    return w ? w.className : 'NONE';
+    return { cls: w ? w.className : 'NONE', eff: S.curModel || S.piDefault || null };
   })()`);
-  t('能力未知时给出中性提示', hintUnknown.indexOf('note') >= 0, true);
+  console.log('  ℹ 未知态: ' + JSON.stringify(hintUnknown));
+  t('造出了真正"模型能力未知"的前提（effModel 为空）', hintUnknown.eff, null);
+  t('能力未知时给出中性提示', hintUnknown.cls.indexOf('note') >= 0, true);
 
   const hintNo = await js(`(function(){
+    const S = window.__pixel;
+    S.piDefault = S.__bakPiDefault;   // 恢复 pi 默认，"未知"和"知道但不支持"必须区分开
     window.__pixel.curModel = { provider: 'p', model: '__不存在的不看图的模型__' };
     window.__pixel.models = [{ provider: 'p', model: '__不存在的不看图的模型__', images: false }];
     renderAtt();
@@ -143,8 +156,12 @@ app.whenReady().then(async () => {
   t('明确不支持看图时给强警告', hintNo.strong, true);
 
   // 收尾：把模型状态清回去，免得影响后面几段
-  await js(`(function(){ window.__pixel.curModel = null; window.__pixel.models = [];` +
-    ` document.getElementById('kv-model').textContent = '—'; renderAtt(); return true; })()`);
+  await js(`(function(){ const S = window.__pixel;
+    S.curModel = null;
+    if (S.__bakPiDefault) S.piDefault = S.__bakPiDefault;
+    delete S.__bakPiDefault;
+    window.__pixel.models = [];
+    document.getElementById('kv-model').textContent = '—'; renderAtt(); return true; })()`);
   const visMark = await js(`document.getElementById('kv-vis').textContent`);
   console.log('  ℹ 状态栏视觉能力标记: ' + visMark);
 
@@ -177,7 +194,16 @@ app.whenReady().then(async () => {
   // 切一个支持看图的模型再发。
   // 默认模型看不懂图，会退化成自己跑一堆 OCR / 像素采样工具 ——
   // 又慢又费 token，而且跟「图有没有传进去」这个待验证的事毫无关系。
-  const visionModel = { provider: 'agent-plan', model: 'doubao-seed-2-1-pro-260915' };
+  //
+  // ★ 用 sensenova / sensenova-6.8-flash-lite（老板指定）。三点好处：
+  //   ① pi 表里 `images = yes`、`input: ["text","image"]`，确认能看图；
+  //   ② 它是 flash-lite，跑一次端到端比原来那个 doubao-seed-2-1-pro（1.0M/256K）快得多；
+  //   ③ 它的 contextWindow = 262144 是**模型自己声明的**（models.json 里写死了），
+  //      跟默认模型 ark-code-latest「没声明 → 走 pi 的 128000 兜底」正好是一对对照 ——
+  //      第 [10] 段的分母来源断言因此有了"声明值 / 兜底值"两种真样本。
+  // ★ 判「能不能看图」一律看 pi 表的 `images` 列，**不靠模型名猜**（名字里没有
+  //   vision/vl 的也可能是视觉模型，见知识库 2026-10-08 那条）。
+  const visionModel = { provider: 'sensenova', model: 'sensenova-6.8-flash-lite' };
   await js(`window.pixelAPI.setModel(${JSON.stringify(visionModel)})`);
   await js(`(function(){ window.__pixel.curModel = ${JSON.stringify(visionModel)}; if (window.paintModelBar) paintModelBar(); return true; })()`);
 
@@ -827,20 +853,43 @@ app.whenReady().then(async () => {
           → 验收计数放在 busy 判断之前（window.__pixelAborts）；
        ② 中断分支要求焦点**不在**聊天输入框，而输入框启动时自动聚焦
           → 先把焦点移进面板，否则走不到那一支。 */
+  // ★ 这条断言必须**自己报告**当时哪几个浮层是开着的。
+  //   否则它红了只能说"没关上"，而"没关上"的一种原因是**被前面某一支接住了**
+  //   （文档级 handler 的顺序是 mask-input → mask-model → mask-mcfg → mask → doAbort）。
+  //   我第一版只读 #mask 一个，红了之后无从下手 —— 这跟"我没找到 / 它不存在
+  //   必须是两句不同的话"是同一类毛病：把"哪一支接住了"这个关键信息丢掉了。
   const escPre = await js(`(function(){
     document.getElementById('set-cwd').focus();
+    var probe = function(id){ var e=document.getElementById(id);
+      if (!e) return 'NOT_FOUND';
+      return getComputedStyle(e).display === 'none' ? 'hidden' : 'VISIBLE'; };
+    var masks = {};
+    // 按**文档级 handler 里的判断顺序**摆：谁是第一个 VISIBLE 的，谁就接住了这次 Esc
+    ['mask-input','mask-model','mask-mcfg','mask'].forEach(function(id){ masks[id] = probe(id); });
+    var firstHit = Object.keys(masks).filter(function(k){ return masks[k] === 'VISIBLE'; });
     return { notChatInput: document.activeElement !== document.getElementById('input'),
-             aborts: window.__pixelAborts }; })()`);
+             aborts: window.__pixelAborts, masks: masks, visibleMasks: firstHit,
+             winner: firstHit[0] || 'NONE' }; })()`);
   await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
   await sleep(350);
   const escPost = await js(`(function(){
     return { hidden: document.getElementById('mask').classList.contains('hidden'),
              aborts: window.__pixelAborts }; })()`);
+  console.log('  ℹ Esc 前各浮层: ' + JSON.stringify(escPre.masks) +
+    ' · 接住 Esc 的是: ' + escPre.winner);
   console.log('  ℹ Esc：焦点在面板内=' + escPre.notChatInput +
     ' → 关面板=' + escPost.hidden + ' 中断计数 ' + escPre.aborts + '→' + escPost.aborts);
   t('前提成立：焦点在面板内（否则下面两条是空转）', escPre.notChatInput, true);
+  t('前提成立：此刻只有设置面板是开着的（别的浮层开着就会先接住 Esc）',
+    escPre.visibleMasks.join(',') || 'NONE', 'mask');
   t('设置面板开着时 Esc 能关掉面板', escPost.hidden, true);
   t('Esc 关面板没有顺手中断正在跑的这轮', escPost.aborts, escPre.aborts);
+  // 注意：本文件的 t() 是**严格相等**，不是 shot-settings.js 里的 JSON 比较 ——
+  // 所以断言值一律取标量（这里用 'NONE' 当空数组的哨兵），别拿数组去比。
+  t('关完之后没有浮层残留', await js(`(function(){
+    var left = ['mask','mask-model','mask-input','mask-mcfg'].filter(function(id){
+      var e = document.getElementById(id); return e && getComputedStyle(e).display !== 'none'; });
+    return left.length ? left.join(',') : 'NONE'; })()`), 'NONE');
   await js(`document.getElementById('btn-settings').click()`);   // 后面 8a 还要改设置
   await sleep(1200);
 
@@ -1045,6 +1094,369 @@ app.whenReady().then(async () => {
   t('当前会话已切回原来那条',
     await js(`window.pixelAPI.sessions().then(function(r){return r.current;})`), origSeq);
   await typeIn('');
+
+  /* ================= 10. 本轮四件事 =================
+     老板这轮的原话：
+       「上下文怎么只有10万？上下文显示的是模型自己决定的还是你弄成十万的，
+        还有当删除完所有会话时，没有主动返回主页，
+        /命令不需要有模型命令，UI界面上已经有了，
+        点开模型要有配置测试等功能，模型菜单要有折叠展开」
+     对应四段：10a 分母从哪来 / 10b 删空回主页 / 10c 命令表去掉 /model /
+              10d 模型行的「配置·测试」+ 分组折叠。
+     每条都要能**反向验证**：把实现劣化回去，断言必须变红。 */
+  console.log('\n[10] 上下文来源 / 删空回主页 / 去 /model / 模型配置与折叠');
+
+  /* ---- 10a. 「这个分母是谁定的」—— 用真数据把来源链钉住 ----
+     结论（三条独立证据，都在本机可取）：
+       ① 界面显示的上下文 = pi `--list-models` 第 3 列（dist/cli/list-models.js 里
+          `context: formatTokenCount(m.contextWindow)`）；
+       ② `agent-plan/ark-code-latest` 在 `.pi-agent/models.json` 里**只有** `{"id":...}`，
+          没声明 contextWindow；
+       ③ pi 在 dist/core/provider-composer.js:109 写死 `contextWindow ?? 128000` ——
+          所以它报 128K（128000，formatTokenCount 用 ÷1000）。
+     ⇒ "10 万"不是我们写死的，是 pi 对"模型自己没声明"的兜底值 128000。
+       代码里也没有任何 100000 硬编码（`grep 100000` 只剩配置上限 100000000）。 */
+  await js(`window.pixelAPI.setModel(null)`);
+  await js(`(function(){ window.__pixel.curModel = null; paintModelBar(); paintCtxIdle(); return 1; })()`);
+  await sleep(400);
+
+  const effNow = await js(`(function(){ const p=window.__pixel; return p.curModel || p.piDefault || null; })()`);
+  console.log('  ℹ 生效模型（curModel 为 null 时跟随 pi 默认）: ' + JSON.stringify(effNow));
+  t('没手动切过模型时，分母取的是 pi 配置里的默认模型', !!(effNow && effNow.model), true);
+
+  const srcRow = await js(`(function(){
+    const p = window.__pixel, em = p.piDefault || {};
+    const hit = p.models.filter(function(m){ return m.model === em.model && (!em.provider || m.provider === em.provider); })[0];
+    return hit ? { context: hit.context, maxOut: hit.maxOut, provider: hit.provider, model: hit.model } : null;
+  })()`);
+  console.log('  ℹ pi 模型表里那一行: ' + JSON.stringify(srcRow));
+  t('pi 的模型表里确实有这个默认模型', !!srcRow, true);
+  t('分母就是 pi 表里的第 3 列（不是我们另算的）', srcRow && srcRow.context, '128K');
+
+  const ub1 = await js(`document.getElementById('ub-text').textContent`);
+  console.log('  ℹ 用量条: ' + JSON.stringify(ub1));
+  t('用量条的分母跟着 pi 表走（128K）', String(ub1).split('/').pop().trim(), '128K');
+  t('用量条上说明了分母来源（hover 可见）',
+    await js(`document.getElementById('sb-usage').title.indexOf('分母来源') >= 0`), true);
+  // 点一下能看明细 —— 老板问"是模型自己决定的还是你弄的"，这里就该有答案
+  await js(`document.getElementById('sb-usage').click()`);
+  await sleep(400);
+  const detailTxt = await js(`(function(){ const m=document.getElementById('mask-input'); return m ? m.textContent : ''; })()`);
+  console.log('  ℹ 用量明细弹框（截断）: ' + JSON.stringify(String(detailTxt).slice(0, 160)));
+  t('点用量条能打开明细弹框', await js(`!document.getElementById('mask-input').classList.contains('hidden')`), true);
+  t('明细里写清了「分母来源」', String(detailTxt).indexOf('分母来源') >= 0, true);
+  // 这条要**指名道姓**地断言，不能只断言"提到了 pi 表" ——
+  // 那句话在"表里没有这个模型"时也会出现，恒真的断言等于没写。
+  t('明细里点名 pi 表写的就是 128K', String(detailTxt).indexOf('pi 表里写的是 128K') >= 0, true);
+  await js(`(function(){ const b=document.getElementById('inp-cancel'); if(b) b.click(); return 1; })()`);
+  await sleep(300);
+
+  /* ---- 10a-2. 分母可以被用户改，且改了立刻生效（自我清理） ---- */
+  await js(`document.getElementById('btn-model').click()`);
+  await sleep(1500);                    // 里面会真跑 pi --list-models
+  t('模型框打开了', await js(`!document.getElementById('mask-model').classList.contains('hidden')`), true);
+  // `#mdl-q` 可能被上一段留下过滤词 —— 清空，否则行不存在，"配置"按钮当然也找不到
+  await js(`(function(){ const q=document.getElementById('mdl-q'); q.value=''; q.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(400);
+  // 折叠状态是**持久化**的（localStorage），上一次跑留下的状态会让断言飘 —— 先清干净
+  await js(`(function(){ try{ localStorage.removeItem('pixelagent.collapsedProvs'); }catch(e){}
+    window.__pixel.collapsedProvs = new Set();
+    const q=document.getElementById('mdl-q'); q.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(400);
+
+  const clickRowOp = (model, op) => js(`(function(){
+    const rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
+    const row = rows.filter(function(r){ const n=r.querySelector('.mi-n'); return n && n.textContent.trim() === ${JSON.stringify(model)}; })[0];
+    if (!row) return 'NO_ROW';
+    const ops = [].slice.call(row.querySelectorAll('.mi-op'));
+    const b = ops.filter(function(x){ return x.textContent.trim() === ${JSON.stringify(op)}; })[0];
+    if (!b) return 'NO_BTN';
+    b.click(); return 'OK';
+  })()`);
+
+  const effModelName = (effNow && effNow.model) || '';
+  const ovKey = ((effNow && effNow.provider) || '') + '/' + effModelName;
+  const clickRes = await clickRowOp(effModelName, '配置');
+  await sleep(900);
+  console.log('  ℹ 点「配置」: ' + clickRes + ' → 弹框 open=' +
+    await js(`!document.getElementById('mask-mcfg').classList.contains('hidden')`));
+  t('模型行点「配置」能找到并打开弹框', clickRes, 'OK');
+  t('配置弹框真的打开了', await js(`!document.getElementById('mask-mcfg').classList.contains('hidden')`), true);
+  t('弹框标题带模型名', await js(`document.getElementById('mcfg-title').textContent.indexOf(${JSON.stringify(effModelName)}) >= 0`), true);
+  t('只读区填了服务商', await js(`document.getElementById('mcfg-prov').textContent`), (effNow && effNow.provider) || '');
+  // ★ 核心一条：把"模型自己声明的"和"pi 补的"分开说 —— 这就是老板那个问题的答案
+  const repTxt = await js(`document.getElementById('mcfg-reported').textContent`);
+  console.log('  ℹ mcfg-reported: ' + JSON.stringify(repTxt));
+  t('配置框里指明了 pi 报的值', String(repTxt).indexOf('128K') >= 0, true);
+  t('配置框里明说这是「模型没声明 → pi 的兜底值」', String(repTxt).indexOf('兜底') >= 0, true);
+  t('上下文输入框的 placeholder 就是 pi 报的值',
+    await js(`document.getElementById('mcfg-ctx').placeholder`), '128K');
+  t('只读区告诉用户 pi 里有没有 key（但不回显内容）',
+    /(有|没在)/.test(await js(`document.getElementById('mcfg-auth').textContent`)), true);
+
+  // 改成 300K（300000 词元）→ 落盘 + 分母立刻跟着变
+  // ★ 这一条上一轮是**红的**，而且是真 bug：
+  //   主进程把 `modelOverrides` 这张表当"配置补丁"收，白名单一个顶层键都匹配不上
+  //   ⇒ 值全丢、`modelOverrides` 一直是 `{}`，而界面只显示一句不痛不痒的提示。
+  //   排错靠的是 test/probe-mcfg.js：把「值进没进输入框 / MCFG.sel 还在不在 /
+  //   主进程说什么 / 磁盘上有没有」四个量同时打出来，而不是猜。
+  await js(`(function(){ const i=document.getElementById('mcfg-ctx'); i.value='300000'; return 1; })()`);
+  await js(`document.getElementById('mcfg-save').click()`);
+  await sleep(1200);
+  const saveNote = await js(`document.getElementById('mcfg-note').textContent`);
+  console.log('  ℹ 保存后的提示语: ' + JSON.stringify(saveNote));
+  t('保存没报「主进程不认识的键」（这条哨兵抓到过一次真 bug）',
+    String(saveNote).indexOf('不认识'), -1);
+  const ovSaved = ((readFileCfg().modelOverrides) || {})[ovKey] || null;
+  console.log('  ℹ 落盘的覆盖值 ' + ovKey + ' = ' + JSON.stringify(ovSaved));
+  t('覆盖值写进了配置文件', ovSaved && ovSaved.contextTokens, 300000);
+  const ovUi = await js(`((window.__pixelCfg() || {}).modelOverrides || {})[${JSON.stringify(ovKey)}] || null`);
+  t('渲染层也拿到了新配置（回执真的被应用了）', ovUi && ovUi.contextTokens, 300000);
+  const ub2 = await js(`document.getElementById('ub-text').textContent`);
+  console.log('  ℹ 改完分母后的用量条: ' + JSON.stringify(ub2));
+  t('用量条的分母立刻按覆盖值重算（300K）', String(ub2).split('/').pop().trim(), '300K');
+  t('列表里这一行也标了 *（表示被覆盖过）',
+    await js(`(function(){ const rows=[].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
+      const r=rows.filter(function(x){ const n=x.querySelector('.mi-n'); return n && n.textContent.trim()===${JSON.stringify(effModelName)}; })[0];
+      return r ? r.querySelector('.mi-tag').textContent.indexOf('*') >= 0 : false; })()`), true);
+  await js(`document.getElementById('sb-usage').click()`);
+  await sleep(400);
+  const det2 = await js(`document.getElementById('mask-input').textContent`);
+  console.log('  ℹ 覆盖后的明细（截断）: ' + JSON.stringify(String(det2).slice(0, 150)));
+  // 断言用**整句**，不用"含有'覆盖值'"这种松判据 —— 松判据在句子改一半时照样绿
+  t('用量明细里认得出这是「你填的覆盖值」（来源会跟着变）',
+    String(det2).indexOf('来自你在「模型配置」里填的覆盖值') >= 0, true);
+  await js(`(function(){ const b=document.getElementById('inp-cancel'); if(b) b.click(); return 1; })()`);
+  await sleep(300);
+
+  // 反向验证 + 自我清理：清空 → 覆盖值必须从配置里消失、分母回到 pi 的值
+  await sleep(500);   // 保存成功后弹框会自己关（700ms），等它关完再重开
+  await clickRowOp(effModelName, '配置');
+  await sleep(900);
+  await js(`(function(){ const i=document.getElementById('mcfg-ctx'); i.value=''; return 1; })()`);
+  await js(`document.getElementById('mcfg-save').click()`);
+  await sleep(1200);
+  t('清空后覆盖值从配置里删掉了',
+    (((readFileCfg().modelOverrides) || {})[ovKey] || null), null);
+  const ub3 = await js(`document.getElementById('ub-text').textContent`);
+  console.log('  ℹ 清空后的用量条: ' + JSON.stringify(ub3));
+  t('清空后分母回到 pi 的值（反向验证：覆盖真的生效过）', String(ub3).split('/').pop().trim(), '128K');
+
+  /* ---- 10b. `/命令` 里不该再有「模型」这条 ---- */
+  await js(`document.getElementById('mask-model').classList.add('hidden')`);
+  await typeIn('/');
+  const c10 = await palState();
+  const allKs = await js(`Array.prototype.map.call(document.querySelectorAll('#pal-list .pal-k'), function(e){ return e.textContent.trim(); })`);
+  console.log('  ℹ / 面板里的命令: ' + JSON.stringify(allKs));
+  t('命令面板里没有 /model', allKs.indexOf('/model'), -1);
+  t('命令面板里也没有叫「模型」的分组', c10.groups.indexOf('模型'), -1);
+  await typeIn('/mod');
+  const c10b = await palState();
+  console.log('  ℹ 输入 /mod → ' + JSON.stringify({ open: c10b.open, items: c10b.items, empty: c10b.empty }));
+  t('敲 /mod 一条都搜不到（是真删了，不是换了个名字）', c10b.items, 0);
+  t('搜不到时给的是中文提示', /[\u4e00-\u9fa5]/.test(c10b.empty), true);
+  // ★ "推荐语不许指向不存在的命令" —— 这条抓到过一次真漏：
+  //   面板空态原来写的是"试试 /new、/model、/rename、/settings"，
+  //   而 /model 早就删了。提示把用户指到一个不存在的命令上，比不提示更糟。
+  //   判据不是"字符串里没有 /model"（那只是这一条），而是**推荐里每个命令都真的敲得到**。
+  const hinted = String(c10b.empty).match(/\/[a-z]+/g) || [];
+  console.log('  ℹ 空态提示推荐的命令: ' + JSON.stringify(hinted));
+  t('空态提示里不再推荐 /model', hinted.indexOf('/model'), -1);
+  t('空态提示里确实给了可推荐的命令', hinted.length > 0, true);
+  for (const hk of hinted) {
+    await typeIn(hk);
+    const stH = await palState();
+    t('推荐语里的 ' + hk + ' 真的存在（敲它第一条就是它）', stH.first, hk);
+  }
+  await typeIn('/mod');
+  t('绕一圈回来 /mod 仍然搜不到', (await palState()).items, 0);
+  // 反向验证：不是把整张命令表删空了
+  await typeIn('/ren');
+  t('反向验证：别的命令仍然搜得到（不是把表清空了）', (await palState()).items > 0, true);
+  t('反向验证：/rename 还能带参数提示',
+    (await palState()).foot.indexOf('/rename') >= 0, true);
+  await typeIn('');
+
+  /* ---- 10c. 模型分组折叠 / 展开 ---- */
+  await js(`document.getElementById('btn-model').click()`);
+  await sleep(600);
+  await js(`(function(){ const q=document.getElementById('mdl-q'); q.value=''; q.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(400);
+  const listStat = () => js(`(function(){
+    const provs = [].slice.call(document.querySelectorAll('#mdl-list .mdl-prov'));
+    return {
+      provs: provs.length,
+      items: document.querySelectorAll('#mdl-list .mdl-item').length,
+      expanded: provs.filter(function(p){ return p.getAttribute('aria-expanded') === 'true'; }).length,
+      firstProv: provs[0] ? provs[0].querySelector('.mp-name').textContent.trim() : '',
+      firstN: provs[0] ? Number(provs[0].querySelector('.mp-n').textContent) : 0,
+      btn: document.getElementById('mdl-collapse').textContent.trim(),
+      stored: (function(){ try { return localStorage.getItem('pixelagent.collapsedProvs'); } catch(e){ return 'ERR'; } })()
+    };
+  })()`);
+  const base = await listStat();
+  console.log('  ℹ 折叠前: ' + JSON.stringify(base));
+  t('模型列表按服务商分组', base.provs >= 2, true);
+  t('分组标题是「真按钮」（可点可 Tab）',
+    await js(`document.querySelector('#mdl-list .mdl-prov').tagName`), 'BUTTON');
+  t('分组标题带 aria-expanded（无障碍/可断言）',
+    await js(`document.querySelector('#mdl-list .mdl-prov').getAttribute('aria-expanded')`), 'true');
+
+  // 收起第一组
+  await js(`document.querySelector('#mdl-list .mdl-prov').click()`);
+  await sleep(400);
+  const col1 = await listStat();
+  console.log('  ℹ 收起第一组后: ' + JSON.stringify({ items: col1.items, expanded: col1.expanded, stored: col1.stored }));
+  t('点分组标题 → aria-expanded 翻成 false', col1.expanded, base.expanded - 1);
+  t('收起后行被真的移出 DOM（不是 CSS 藏起来）', base.items - col1.items, base.firstN);
+  t('其余分组照常显示（收起是分组级的，不是整表清空）', col1.items > 0, true);
+  t('收起状态写进了 localStorage', String(col1.stored).indexOf(base.firstProv) >= 0, true);
+  t('按钮文案仍是「全部收起」（还有没收起的组，全收才是「全部展开」）', col1.btn, '全部收起');
+
+  // 反向验证：收起状态要能**撑过一次重渲染**，否则只是"点一下碰巧"
+  await js(`(function(){ const q=document.getElementById('mdl-q'); q.value='a'; q.dispatchEvent(new Event('input'));
+    q.value=''; q.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(400);
+  const col1b = await listStat();
+  t('反向验证：重渲染后收起状态仍然生效（是状态驱动的）', col1b.items, col1.items);
+
+  // 再点一次展开回去
+  await js(`document.querySelectorAll('#mdl-list .mdl-prov')[0].click()`);
+  await sleep(400);
+  const exp1 = await listStat();
+  t('再点一次展开回原样', exp1.items, base.items);
+  t('展开后 localStorage 也清干净了', JSON.parse(exp1.stored || '[]').length, 0);
+
+  // 一键全收 / 全展
+  await js(`document.getElementById('mdl-collapse').click()`);
+  await sleep(400);
+  const colAll = await listStat();
+  console.log('  ℹ 全部收起: ' + JSON.stringify({ items: colAll.items, provs: colAll.provs, btn: colAll.btn, stored: colAll.stored }));
+  t('一键全收：一行都不剩', colAll.items, 0);
+  t('一键全收：所有分组都标成收起', colAll.expanded, 0);
+  t('全部收起后按钮变「全部展开」', colAll.btn, '全部展开');
+  t('全部收起也落到了 localStorage', JSON.parse(colAll.stored || '[]').length, colAll.provs);
+
+  await js(`document.getElementById('mdl-collapse').click()`);
+  await sleep(400);
+  const expAll = await listStat();
+  t('再点一次恢复全部行数', expAll.items, base.items);
+  t('恢复后按钮回到「全部收起」', expAll.btn, '全部收起');
+  t('恢复后 localStorage 是空数组', expAll.stored, '[]');
+
+  /* ---- 10d. 模型「测试」真的发一次请求 ---- */
+  const testClick = await clickRowOp(effModelName, '测试');
+  console.log('  ℹ 点「测试」: ' + testClick);
+  t('模型行点「测试」能找到并打开弹框', testClick, 'OK');
+  let outSt = { cls: '', txt: '' };
+  for (let i = 0; i < 60; i++) {          // 最多等 30 秒
+    outSt = await js(`(function(){ const o=document.getElementById('mcfg-out'); return { cls:o.className, txt:o.textContent }; })()`);
+    if (outSt.txt && outSt.cls.indexOf('busy') < 0) break;
+    await sleep(500);
+  }
+  console.log('  ℹ 测试输出(class=' + outSt.cls + '): ' + JSON.stringify(String(outSt.txt).slice(0, 220)));
+  t('测试输出区不是空的（说明真发了请求，不是一个摆设按钮）', String(outSt.txt).length > 0, true);
+  t('测试给出结论（通了 / 不通）', /通了|不通/.test(String(outSt.txt)), true);
+  t('结论用的是 ✅/❌ 这种一眼能看懂的标记', /✅|❌/.test(String(outSt.txt)), true);
+  t('测试报告了耗时', /秒/.test(String(outSt.txt)), true);
+  t('✅确认：默认模型这条链路是通的（跑不通就是真出问题了）', String(outSt.txt).indexOf('✅ 通了'), 0);
+  await js(`document.getElementById('mcfg-cancel').click()`);
+  await sleep(300);
+  t('取消能关掉配置弹框', await js(`document.getElementById('mask-mcfg').classList.contains('hidden')`), true);
+
+  /* ---- 10d-2. 双层浮层时 Esc 必须关**最上面**那一层 ----
+     这条抓到过一个真 bug：文档级 keydown 里手写判断顺序时把 mask-mcfg 排在
+     mask-model 后面，于是"模型框 + 配置框"两层都开着时按 Esc，
+     关掉的是**下面**的模型框，最上面的配置框纹丝不动 —— 用户按 Esc 像没反应。
+     ⇒ 现在改成从 DOM 里排（同层 z-index 一样，越靠后越在上面），不再手写顺序。 */
+  await clickRowOp(effModelName, '配置');
+  await sleep(900);
+  // 注意：本文件的 t() 是**严格相等**，不是 JSON 比较 —— 所以这里返回的是标量，
+  // 别返回对象/数组去比（那样永远不等，我上一版就踩了）。
+  const twoLayer = await js(`(function(){
+    var pick = function(id){ var e=document.getElementById(id); return !!(e && !e.classList.contains('hidden')); };
+    return pick('mask-model') + '/' + pick('mask-mcfg'); })()`);
+  t('前提成立：此刻两层浮层都开着（ true/true 才测得到"关的是哪一层"）', twoLayer, 'true/true');
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  await sleep(400);
+  t('Esc 关掉的是最上面的配置框', await js(`document.getElementById('mask-mcfg').classList.contains('hidden')`), true);
+  t('Esc 没有连坐把下面的模型框也关了',
+    await js(`!document.getElementById('mask-model').classList.contains('hidden')`), true);
+  t('Esc 仍然没有误触中途中断', await js(`window.__pixelAborts`), 0);
+  await js(`document.getElementById('mask-mcfg').classList.add('hidden')`);
+  await js(`document.getElementById('mask-model').classList.add('hidden')`);
+
+  /* ---- 10e. 删光会话 → 主动回主页；删当前但还有别的 → 真加载历史 ---- */
+  const DEL_KEEP = 995, DEL_ALL = 994;
+  const fileOf = (n) => path.join(__dirname, '..', '.sessions', 'chat-' + n + '.json');
+  const writeSess = (n, title) => fs.writeFileSync(fileOf(n), [
+    { type: 'session', version: 3, id: 'verify-' + n, timestamp: new Date().toISOString(), cwd: path.join(__dirname, '..') },
+    { type: 'message', id: 'u' + n, parentId: null, timestamp: new Date().toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: title }], timestamp: Date.now() } }
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n', 'utf8');
+  writeSess(DEL_KEEP, '保留会话的历史消息');
+  writeSess(DEL_ALL, '待删除的会话');
+
+  const homeState = () => js(`(function(){
+    return {
+      welcomeHidden: document.getElementById('welcome').classList.contains('hidden'),
+      msgs: document.querySelectorAll('#log .m').length,
+      logText: document.getElementById('log').textContent,
+      toastHidden: document.getElementById('toast').classList.contains('hidden'),
+      toastText: document.getElementById('toast').textContent,
+      seq: window.__pixel.seq
+    };
+  })()`);
+
+  // ① 删光 → 回主页。res 里的 sessions:[] 就是"一条都不剩"的契约
+  await js(`window.__pixelApplyDelete(${DEL_ALL}, ${JSON.stringify({
+    ok: true, removedCurrent: true, current: DEL_ALL, sessions: []
+  })})`);
+  await sleep(500);
+  const h1 = await homeState();
+  console.log('  ℹ 删光后: ' + JSON.stringify({ welcomeHidden: h1.welcomeHidden, msgs: h1.msgs, toast: h1.toastHidden ? '(隐藏)' : h1.toastText }));
+  t('删光所有会话后，主页真的回来了（#welcome 不再 hidden）', h1.welcomeHidden, false);
+  t('删光后时间线是空的', h1.msgs, 0);
+  t('删光后提示走 toast（时间线之外，所以主页留得住）', h1.toastHidden, false);
+  t('toast 说的是「已移入回收站」', h1.toastText.indexOf('已移入回收站') >= 0, true);
+  t('这句提示**没有**被塞进时间线（塞了就会把主页顶掉）', h1.logText.indexOf('已移入回收站'), -1);
+
+  // 反向验证：把老路（addMsg）走一遍，证明它确实会把主页藏掉 ——
+  // 否则 toast 方案只是"碰巧通过"，而不是因为绕开了那个坑
+  await js(`(function(){ document.getElementById('welcome').classList.remove('hidden');
+    window.__pixelAddMsg('step','SYS','> 反向验证用的普通时间线消息'); return 1; })()`);
+  await sleep(200);
+  t('反向验证：走 addMsg 时主页确实又被藏掉了（正因如此提示才改走 toast）',
+    await js(`document.getElementById('welcome').classList.contains('hidden')`), true);
+  // 还原成主页状态，免得污染下面的断言
+  await js(`window.__pixelApplyDelete(${DEL_ALL}, ${JSON.stringify({
+    ok: true, removedCurrent: true, current: DEL_ALL, sessions: []
+  })})`);
+  await sleep(400);
+
+  // ② 删的是当前会话、但还剩别的 → 必须真把那条会话的历史读出来
+  //    （只改 S.seq 是"假切换"：时间线还是空的，用户对着一个空壳）
+  t('夹具会话文件已就位', fs.existsSync(fileOf(DEL_KEEP)), true);
+  const beforeSeq = await js(`window.pixelAPI.sessions().then(function(r){ return r.current; })`);
+  await js(`window.__pixelApplyDelete(${DEL_ALL}, ${JSON.stringify({
+    ok: true, removedCurrent: true, current: DEL_KEEP,
+    sessions: [{ seq: DEL_KEEP, title: '保留会话' }]
+  })})`);
+  await sleep(1600);                      // 里面要真读一次会话文件
+  const h2 = await homeState();
+  console.log('  ℹ 删当前但还剩别的: ' + JSON.stringify({ welcomeHidden: h2.welcomeHidden, msgs: h2.msgs, seq: h2.seq }));
+  t('界面切到了剩下的那条会话', h2.seq, DEL_KEEP);
+  t('真的把历史读出来了（时间线不是空的）', h2.msgs > 0, true);
+  t('时间线里就是那条会话的内容', h2.logText.indexOf('保留会话的历史消息') >= 0, true);
+  t('这种情况不显示主页（有内容就不该回欢迎页）', h2.welcomeHidden, true);
+
+  // 清理 + 把"当前会话"还回去
+  try { fs.rmSync(fileOf(DEL_KEEP), { force: true }); } catch (e) { /* ignore */ }
+  try { fs.rmSync(fileOf(DEL_ALL), { force: true }); } catch (e) { /* ignore */ }
+  t('一次性会话文件已清掉', fs.existsSync(fileOf(DEL_KEEP)) || fs.existsSync(fileOf(DEL_ALL)), false);
+  if (typeof beforeSeq === 'number') { await js(`window.__pixelOpenSession(${beforeSeq})`); await sleep(800); }
+  t('当前会话已还回原来那条',
+    await js(`window.pixelAPI.sessions().then(function(r){ return r.current; })`), beforeSeq);
 
   /* ================= 9. 收尾截图 ================= */
   await js(`document.querySelector('.rtab[data-tab="tools"]').click()`);

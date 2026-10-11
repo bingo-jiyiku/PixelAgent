@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   models: () => ipcRenderer.invoke('pi:models'),
   setModel: (sel) => ipcRenderer.invoke('pi:set-model', sel),
   setThinking: (level) => ipcRenderer.invoke('pi:set-thinking', level),
+  // 单个模型：查它是什么（声明值 / pi 报的值 / 我们的覆盖）、覆盖它、真跑一次测通
+  modelInfo: (sel) => ipcRenderer.invoke('pi:model-info', sel),
+  setModelConfig: (sel) => ipcRenderer.invoke('pi:model-set-config', sel),
+  modelTest: (sel) => ipcRenderer.invoke('pi:model-test', sel),
 
   // 扩展清单
   agents: () => ipcRenderer.invoke('pi:agents'),
