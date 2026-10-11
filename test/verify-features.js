@@ -1210,29 +1210,27 @@ app.whenReady().then(async () => {
     var sel = document.getElementById('madd-model');
     var fetchBtn = document.getElementById('madd-fetch');
     var testBtn = document.getElementById('madd-test');
-    var ctx = document.getElementById('madd-ctx');
-    var mx = document.getElementById('madd-max');
     return {
       open: !m.classList.contains('hidden'),
-      fields: ['madd-provider','madd-model','madd-base','madd-key','madd-ctx','madd-max']
+      fields: ['madd-provider','madd-model','madd-base','madd-key']
         .every(function(id){ return !!document.getElementById(id); }),
       provOptions: dl ? dl.options.length : 0,
-      // 老板 2026-10-11 17:44：模型 ID 从手填 input 改成下拉 select（从 API 拉）
+      // 模型 ID 从手填 input 改成下拉 select（从 API 拉）
       modelIsSelect: sel && sel.tagName === 'SELECT',
-      // 老板 2026-10-11 17:44：ctx/max 是只读，用户不手填
-      ctxReadonly: ctx && ctx.readOnly === true,
-      maxReadonly: mx && mx.readOnly === true,
+      // ctx/max 已移除 UI 输入框，保存时从缓存自动带
+      noCtxInput: !document.getElementById('madd-ctx'),
+      noMaxInput: !document.getElementById('madd-max'),
       hasFetchBtn: !!fetchBtn,
       hasTestBtn: !!testBtn
     };
   })()`);
   console.log('  ℹ 新增模型对话框: ' + JSON.stringify(maddOpen));
   t('新增模型对话框打开了', maddOpen.open, true);
-  t('所有输入框都在（服务商/模型ID/base/key/ctx/max）', maddOpen.fields, true);
+  t('输入框都在（服务商/模型ID/base/key）', maddOpen.fields, true);
   t('服务商 datalist 已经填了已有服务商', maddOpen.provOptions >= 1, true);
   t('模型 ID 是下拉（从 API 自动拉，不手填）', maddOpen.modelIsSelect, true);
-  t('上下文窗口是只读（自动带出来）', maddOpen.ctxReadonly, true);
-  t('最大输出是只读（自动带出来）', maddOpen.maxReadonly, true);
+  t('上下文窗口不再显示输入框（自动读取）', maddOpen.noCtxInput, true);
+  t('最大输出不再显示输入框（自动读取）', maddOpen.noMaxInput, true);
   t('对话框里有「获取模型列表」按钮', maddOpen.hasFetchBtn, true);
   t('对话框里有「测试连通」按钮', maddOpen.hasTestBtn, true);
 
@@ -1412,21 +1410,22 @@ app.whenReady().then(async () => {
 
   // 老板 2026-10-11 17:44：行内「配置 / 测试」按钮被移除了，
   // 入口变成模型选择器底部的「⚙ 配置当前」按钮。
-  // 所以 clickRowOp 现在改成两步：① 点这一行的模型把它选成当前；
-  // ② 点 mdl-config 打开 mcfg。测试按钮仍在 mcfg 里（mcfg-test）。
-  // 保留 clickRowOp 这个签名，减少调用点改动。
+  // 老板 2026-10-11 19:18：mdl-config 按钮已删，改用 window.__openModelConfig 直接打开。
+  // 流程：① 点行设为当前；② 通过 window.__openModelConfig 打开 mcfg。
   const clickRowOp = (model, op) => js(`(function(){
     const rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
     const row = rows.filter(function(r){ const n=r.querySelector('.mi-n'); return n && n.textContent.trim() === ${JSON.stringify(model)}; })[0];
     if (!row) return 'NO_ROW';
-    // 先点这一行，把它设为「当前」模型（setModel 是异步的，
-    // 但下面 cfgBtn.click 只是同步触发 mdl-config 事件监听器，
-    // 而真正的 mcfg 内容填充走异步 api.modelInfo，测试后面 sleep 900 就够）
     row.click();
-    const cfgBtn = document.getElementById('mdl-config');
-    if (!cfgBtn) return 'NO_CFG_BTN';
-    cfgBtn.click();
-    // mcfg 打开后，如果需要跑测试就点一下里面的「测试连通」按钮
+    // 通过暴露的函数打开 mcfg（UI 入口已移除）
+    if (!window.__openModelConfig) return 'NO_CFG_FN';
+    const em = window.__effModel ? window.__effModel() : null;
+    if (!em || !em.model) return 'NO_EFF_MODEL';
+    var models = window.__models ? window.__models() : [];
+    const hit = models.find(function(m){ return m.model === em.model && (!em.provider || m.provider === em.provider); })
+            || models.find(function(m){ return m.model === em.model; });
+    if (!hit) return 'NO_HIT';
+    window.__openModelConfig(hit, false);
     if (${JSON.stringify(op)} === '测试') {
       const t = document.getElementById('mcfg-test');
       if (!t) return 'NO_TEST_BTN';
@@ -1439,9 +1438,9 @@ app.whenReady().then(async () => {
   const ovKey = ((effNow && effNow.provider) || '') + '/' + effModelName;
   const clickRes = await clickRowOp(effModelName, '配置');
   await sleep(900);
-  console.log('  ℹ 点「配置」: ' + clickRes + ' → 弹框 open=' +
+  console.log('  ℹ 打开配置: ' + clickRes + ' → 弹框 open=' +
     await js(`!document.getElementById('mask-mcfg').classList.contains('hidden')`));
-  t('模型行点「配置」能找到并打开弹框', clickRes, 'OK');
+  t('能找到当前模型并打开配置弹框', clickRes, 'OK');
   t('配置弹框真的打开了', await js(`!document.getElementById('mask-mcfg').classList.contains('hidden')`), true);
   t('弹框标题带模型名', await js(`document.getElementById('mcfg-title').textContent.indexOf(${JSON.stringify(effModelName)}) >= 0`), true);
   t('只读区填了服务商', await js(`document.getElementById('mcfg-prov').textContent`), (effNow && effNow.provider) || '');

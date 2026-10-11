@@ -2175,8 +2175,6 @@ function openModelAdd() {
   $('madd-provider').value = '';
   $('madd-base').value = '';
   $('madd-key').value = '';
-  $('madd-ctx').value = '';
-  $('madd-max').value = '';
   fillMaddModels([]);
   S.maddFetchedModels = [];
   maddNote('');
@@ -2574,35 +2572,20 @@ $('mcfg-default').addEventListener('click', setAsDefaultModel);
 // 新增自定义模型
 $('mdl-add').addEventListener('click', openModelAdd);
 
-// 老板 2026-10-11 17:44：现有模型行不再挂「配置 / 测试」按钮，
-// 入口移到模型选择器底部：点「⚙ 配置当前」打开当前选中模型的 mcfg 对话框。
-// 测试按钮保留在 mcfg 里面（mcfg-test），行为不变。
-$('mdl-config').addEventListener('click', () => {
-  const em = effModel();
-  if (!em || !em.model) {
-    addMsg('err', 'ERR', '当前还没有选中模型。先从模型菜单里选一个，再点「配置当前」。');
-    return;
-  }
-  const hit = S.models.find((m) => m.model === em.model && (!em.provider || m.provider === em.provider))
-            || S.models.find((m) => m.model === em.model);
-  if (!hit) {
-    addMsg('err', 'ERR', '模型清单里找不到 ' + em.provider + '/' + em.model + '，刷新一下模型列表再试。');
-    return;
-  }
-  openModelConfig(hit, false);
-});
 $('madd-x').addEventListener('click', closeModelAdd);
 $('madd-cancel').addEventListener('click', closeModelAdd);
 $('madd-save').addEventListener('click', saveModelAdd);
 $('madd-fetch').addEventListener('click', fetchMaddModels);
 $('madd-test').addEventListener('click', runMaddTest);
-// 选了模型后自动把 ctx / max 从缓存里带出来（用户不手填）
+// 选了模型后自动从缓存带 ctx/max（用户不手填，保存时从 S.maddFetchedModels 读）
 $('madd-model').addEventListener('change', () => {
   const sel = $('madd-model').value;
-  const hit = ((S.maddFetchedModels || []).find((m) => m.id === sel)) || null;
-  $('madd-ctx').value = (hit && hit.contextWindow) ? String(hit.contextWindow) : '';
-  $('madd-max').value = (hit && hit.maxTokens) ? String(hit.maxTokens) : '';
+  S.maddSelectedHit = ((S.maddFetchedModels || []).find((m) => m.id === sel)) || null;
 });
+// 暴露给测试用（UI 入口已移除，测试直接调用打开 mcfg）
+window.__openModelConfig = openModelConfig;
+window.__effModel = effModel;
+window.__models = () => S.models;
 $('mask-model-add').addEventListener('click', (e) => { if (e.target === $('mask-model-add')) closeModelAdd(); });
 
 /* ---------- 点用量条 → 看上下文明细（把"这个数字从哪来"说清楚） ---------- */

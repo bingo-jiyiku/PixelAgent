@@ -77,16 +77,22 @@ app.whenReady().then(async () => {
   })()`);
   console.log('目标模型 = ' + JSON.stringify(TARGET));
 
-  console.log('[2] 点该行的「配置」（老板 2026-10-11 17:44：改成行点击 + mdl-config 底部按钮）');
+  console.log('[2] 打开该行的配置（mdl-config 按钮已删，用 window.__openModelConfig）');
   const clicked = await js(`(function(){
     var rows = [].slice.call(document.querySelectorAll('#mdl-list .mdl-item'));
     var row = rows.filter(function(r){ var n = r.querySelector('.mi-n');
       return n && n.textContent.trim() === ${JSON.stringify(String(TARGET.model))}; })[0];
     if (!row) return 'NO_ROW';
     row.click();
-    var b = document.getElementById('mdl-config');
-    if (!b) return 'NO_CFG_BTN';
-    b.click(); return 'OK'; })()`);
+    if (!window.__openModelConfig) return 'NO_CFG_FN';
+    var em = window.__effModel ? window.__effModel() : null;
+    if (!em || !em.model) return 'NO_EFF_MODEL';
+    var models = window.__models ? window.__models() : [];
+    var hit = models.find(function(m){ return m.model === em.model && (!em.provider || m.provider === em.provider); })
+            || models.find(function(m){ return m.model === em.model; });
+    if (!hit) return 'NO_HIT';
+    window.__openModelConfig(hit, false);
+    return 'OK'; })()`);
   console.log('  点击结果 = ' + clicked);
   await sleep(1500);
   await dump('打开配置框之后');
