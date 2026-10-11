@@ -678,7 +678,26 @@ function onMsg(msg) {
 
   if (msg.kind === 'exit') {
     if (msg.error) addMsg('err', 'ERR', esc(msg.error));
-    if (msg.stderr) addMsg('err', 'ERR', esc(msg.stderr.slice(0, 600)));
+    if (msg.stderr) {
+      // 按**退出码**分档，不靠猜关键词：
+      //   code === 0 → 这一轮是成功的，stderr 里多半是环境噪音
+      //     （本机最常见的就是 pi 清理自己的 settings.json.lock 时，
+      //      被安全策略拦下，于是它打一句 "Invalid settings file ..."）。
+      //     成功的一轮拿红色 ERR 去砸用户，只会让人以为出大事了 ——
+      //     这正是"用起来烧心"。降级成一条 SYS，全文留在 title 里可查。
+      //   code !== 0 → 失败了，stderr 很可能就是失败原因，照实红着显示。
+      const full = String(msg.stderr).trim();
+      const first = full.split('\n').filter(Boolean)[0] || '';
+      if (msg.code === 0) {
+        const m = addMsg('step', 'SYS',
+          '&gt; pi 本轮正常结束（退出码 0），但 stderr 有 ' +
+          full.split('\n').filter(Boolean).length + ' 行输出：' + esc(first.slice(0, 140)));
+        m.title = full.slice(0, 4000);   // 鼠标悬停可看全文，别丢信息
+      } else {
+        const m = addMsg('err', 'ERR', esc(full.slice(0, 600)));
+        m.title = full.slice(0, 4000);
+      }
+    }
     endTurn(msg.code);
     return;
   }

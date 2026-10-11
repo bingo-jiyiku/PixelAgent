@@ -385,6 +385,41 @@ app.whenReady().then(async () => {
   const codes = await js(`Array.prototype.map.call(document.querySelectorAll('.m.shell .sh-code'), function(e){ return e.textContent; })`);
   t('非零退出码被回显', codes.indexOf('EXIT 3') >= 0, true);
 
+  /* ================= 4b. stderr 分档：成功的那轮别拿红色砸人 ================= */
+  // 来自真机截图顶部那条：pi 清理自己的锁时撞上本机安全策略，
+  // 于是往 stderr 打了一句 "Invalid settings file …"，而这一轮其实是**成功**的
+  // （退出码 0、模型正常回答）。旧代码把任何 stderr 都渲染成红色 ERR，
+  // 看着像出大事了 —— 这正是"用起来烧心"。
+  // 规则按**退出码**分档（不猜关键词）：0 → SYS 提示；非 0 → 照实红着显示。
+  console.log('\n[4b] stderr 按退出码分档');
+  const countM = (sel) => js(`document.querySelectorAll('${sel}').length`);
+
+  const b1err = await countM('.m.err');
+  const b1sys = await countM('.m.step');
+  await js(`(function(){ window.__pixelFeed({kind:'exit', code:0,` +
+    ` stderr:'Warning: Invalid settings file E:/px/.pi-agent/settings.json: [safe-delete] 失败\\n第二行噪音'}); return true; })()`);
+  await sleep(250);
+  const a1err = await countM('.m.err');
+  const a1sys = await countM('.m.step');
+  t('退出码 0：stderr 不产生红色 ERR', a1err, b1err);
+  t('退出码 0：stderr 降级成 SYS 提示', a1sys > b1sys, true);
+
+  // 全文不能丢：要挂在 title 上可查
+  const titleTxt = await js(`(function(){
+    const ns = document.querySelectorAll('.m.step');
+    for (let i = ns.length - 1; i >= 0; i--) {
+      if ((ns[i].title || '').indexOf('Invalid settings file') >= 0) return ns[i].title;
+    }
+    return '';
+  })()`);
+  t('降级提示保留了 stderr 全文', titleTxt.indexOf('第二行噪音') >= 0, true);
+
+  const b2err = await countM('.m.err');
+  await js(`(function(){ window.__pixelFeed({kind:'exit', code:1, stderr:'boom: 真的失败了'}); return true; })()`);
+  await sleep(250);
+  const a2err = await countM('.m.err');
+  t('退出码非 0：stderr 照实红着显示', a2err > b2err, true);
+
   /* ================= 5. 会话重命名 + 跨会话搜索 ================= */
   console.log('\n[5] 会话操作与搜索');
   const sess = await js(`window.pixelAPI.sessions()`);

@@ -342,6 +342,18 @@ async function runPiQuery(args, timeoutMs, agentDir) {
 
 function modelState() { return { model: curModel, thinking: curThinking }; }
 
+// 发问前把配置目录上的查询排空。
+// ------------------------------------------------------------
+// runPiQuery 的队列只做了单向等待：查询会等对话（`if (job)`），
+// 但**对话不等查询**。于是实测到过这个场景：启动时的 --list-models
+// 还在跑，用户立刻发问 ⇒ 两个 pi 同时动 .pi-agent 下的 settings.json.lock
+// ⇒ pi 报 "Invalid settings file ... settings.json.lock" 并降级。
+// 这条警告会以 stderr 的形式出现在界面顶部，看着像出大事了。
+// 补上反向等待，让两边不再撞。
+async function drainPiQueries() {
+  try { await piQueryChain; } catch (e) { /* 链条自己吞了失败，这里只是等它落地 */ }
+}
+
 // 发问时要拼的参数（扩展 / 模型 / 思考档位）
 function modelArgs() {
   const a = [];
@@ -382,7 +394,7 @@ function createWindow() {
 module.exports = { getWindow, sessionFile };
 
 // ---------- 渲染层 -> 主进程：发一轮话 ----------
-ipcMain.handle('pi:ask', (_e, payload) => {
+ipcMain.handle('pi:ask', async (_e, payload) => {
   if (job) return { ok: false, reason: 'BUSY' };
 
   // 兼容两种调用：老式直接给字符串，新式给 {text, images}
@@ -405,6 +417,9 @@ ipcMain.handle('pi:ask', (_e, payload) => {
 
   const loc = bridge.locate();
   send({ kind: 'boot', node: loc.node, cli: loc.cli, session: sessionFile() });
+
+  // 先把还在跑的查询（--list-models / pi list …）等干净，再起对话 —— 见 drainPiQueries 的说明
+  await drainPiQueries();
 
   job = bridge.ask({
     prompt: text || '（看这张图）',
