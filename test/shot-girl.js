@@ -99,20 +99,25 @@ app.whenReady().then(async () => {
   }
 
   /* ---------- 2. 截图 + 像素自检 ---------- */
-  // 自检：办公场景最外圈是 3px 纯黑描边，所以场景顶边那一行应该**整行都是深色**。
-  // 被别的窗口盖住（例如模型对话框的白色列表）时这一行会花 → 直接判 ❌。
+  // 自检：办公场景顶边应该有墙面颜色（奶油色 #f5e6d3），
+  // 被别的窗口盖住时这一行会花（全白或全灰）→ 直接判 ❌。
+  // ★ 2026-10-11 18:54：office 从"3px 黑边框"改成"房间网格纹背景"，
+  //   边框行深色检查改成墙面浅色检查。
   function checkBorder(pngBuf) {
     try {
       const im = decodePng(pngBuf);
-      let dark = 0, tot = 0;
+      let wall = 0, tot = 0;
       // 裁剪图里场景顶边在 y≈9 CSS px 处；这里用比例定位，避免依赖固定像素
       const y = Math.round(im.h * 0.035);
       for (let x = Math.round(im.w * 0.06); x < im.w * 0.94; x++) {
         const i = (y * im.w + x) * 4;
         tot++;
-        if (im.data[i] < 90 && im.data[i + 1] < 90 && im.data[i + 2] < 90) dark++;
+        // 墙面颜色范围：R>200, G>180, B>160（奶油色）
+        // 排除纯白（别的窗口）：R>250 && G>250 && B>250
+        const r = im.data[i], g = im.data[i + 1], b = im.data[i + 2];
+        if (r > 200 && g > 180 && b > 160 && !(r > 250 && g > 250 && b > 250)) wall++;
       }
-      return { ratio: tot ? dark / tot : 0, w: im.w, h: im.h };
+      return { ratio: tot ? wall / tot : 0, w: im.w, h: im.h };
     } catch (e) { return { err: String(e.message) }; }
   }
 

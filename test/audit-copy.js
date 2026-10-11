@@ -36,7 +36,9 @@ const CJK = /[\u3000-\u9fff\uff00-\uffef]/;
 // 用户看得见、但有意保留的专有名词
 // API Key：技术术语，业界通用叫法（中文写「API 密钥」反而怪），留着
 // openai-completions：pi 里的协议名，界面在提示语里会显示（"新服务商默认用它"）
-const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'HTML', 'API Key', 'openai-completions']);
+const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'HTML', 'API Key', 'openai-completions',
+  // 老板 2026-10-11 18:54：吉祥物气泡里可能出现的快捷键
+  'Ctrl+C']);
 // 用户看不见的内部值：二进制魔数、mime、IPC/CLI 标识、路径片段、抽屉按钮的 props、事件键名
 const INTERNAL_KEEP = new Set([
   'Files', 'image/*', 'image/svg+xml',            // DataTransfer.types / mime
@@ -56,7 +58,9 @@ const INTERNAL_KEEP = new Set([
 const INTERNAL_TOKENS = new Set(('use strict,IDLE,THINKING,TOOL,DONE,CLICK,SYS,ERR,IMG,YOU,PI,STOP,SHELL,' +
   'BUSY,EMPTY,BAD_SEQ,NOT_FOUND,TRASH_FAILED,NO_WINDOW,CANCELED,EXPORT_FAILED,NOT_DIR,SPAWN_FAILED,' +
   'IMAGE_REJECTED,unknown,on,del,off,minimal,low,medium,high,xhigh,max,' +
-  'NAME_TAKEN,NAME_EMPTY,html,md,json').split(','));
+  'NAME_TAKEN,NAME_EMPTY,html,md,json,' +
+  // 老板 2026-10-11 18:54：吉祥物分区点击的 zone 标识（内部值，不显示给用户）
+  'GIRL,MONITOR,KEYBOARD,MUG').split(','));
 const KEEP = new Set([...PUBLIC_KEEP, ...INTERNAL_KEEP]);
 const keepLc = new Set([...KEEP].map((s) => s.toLowerCase()));
 const tokenLc = new Set([...INTERNAL_TOKENS].map((s) => s.toLowerCase()));

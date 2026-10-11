@@ -52,44 +52,66 @@
       <div class="kv"><span>输出</span><b>JSON</b></div>
       <div class="kv"><span>工作目录</span><b id="kv-cwd" title="">—</b></div>
     </div>
-    <!-- 老板 2026-10-11：「吉祥物放到左侧栏下方，常驻在那，原本那个去掉不显示」
-         搬家后不再受 #welcome.hidden 控制，四态/点击/气泡说话逻辑全保留（见 renderer.js） -->
+    <!-- 老板 2026-10-11 18:54：「红框内固定这一块作为吉祥物活动区，房间背景（或表格纹），
+         电脑桌在前、人在后，能看到敲打键盘 + 电脑显示敲代码动画，点击可交互」。
+         四态动画仍由 [data-state] 驱动：IDLE / THINKING / TOOL / DONE。
+         分区点击（renderer.js attachGirlClick 里判断 e.target）：
+           .of-girl     → 点头 + 招呼气泡
+           .of-monitor  → 切换代码片段
+           .of-keyboard → 打字爆发（短暂全键闪）
+           .of-mug      → ☕ 气泡
+           其余        → 通用招呼气泡（保留原行为） -->
     <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
-      <!-- 办公场景：人物是老板给的形象（assets/girl.png，只去了白底没重画），
-           桌椅/显示器/键盘都是 CSS 搭的；下半身被桌面挡住 → 读起来就是"坐着办公"。
-           四态动画由 [data-state] 驱动：IDLE / THINKING / TOOL / DONE。
-           ★ 搬进 rail 后 office 缩到 180×140（rail 宽 236 - 左右内边距），
-             原来的马克杯 / 书本 / 书架删掉了 —— 挤进 180px 里读不出细节。 -->
       <div class="office" id="pixel-girl" data-state="IDLE">
+        <!-- ① 房间背景：墙面（淡网格纹，像表格底） -->
         <div class="of-wall"></div>
-        <div class="of-window"><i class="of-moon"></i></div>
-        <img class="of-girl" src="assets/girl.png" alt="">
-        <!-- 桌面左侧显示器（挡在人物身后，只露上半截） -->
-        <div class="of-monitor">
-          <div class="of-screen">
-            <i class="of-l1"></i><i class="of-l2"></i><i class="of-l3"></i>
-            <div class="of-scan"></div>
-            <div class="of-dots"><i></i><i></i><i></i></div>
-            <div class="of-ok">✓</div>
-          </div>
-          <div class="of-mfoot"></div>
-          <div class="of-mbase"></div>
+        <!-- ② 墙上装饰：窗户（云飘动）+ 画框 + 书架（书本 + 小盆栽） -->
+        <div class="of-window"><i class="of-cloud"></i><i class="of-moon"></i></div>
+        <div class="of-pic"><i></i></div>
+        <div class="of-shelf of-books">
+          <i class="of-book"></i><i class="of-book"></i><i class="of-book"></i>
         </div>
-        <!-- 第 2 个键带 .f-key：IDLE 时只由它闪（见 style.css 里的注释，别再用 nth-child 数位置） -->
-        <div class="of-keyboard"><i></i><i class="f-key"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <!-- 桌面挡下半身 → 视觉上"坐着办公" -->
+        <!-- ③ 人物：只有上半身露在桌面之上（下半身被桌子挡住 → 坐姿） -->
+        <img class="of-girl" src="assets/girl.png" alt="">
+        <!-- ④ 桌子：盖住下半身；顶边那条 2px 黑线告诉眼睛"人坐在这条线之上" -->
         <div class="of-desk">
           <div class="of-drawer"></div>
           <div class="of-drawer r"></div>
         </div>
-        <!-- 状态特效 -->
+        <!-- ⑤ 显示器：屏幕上是敲代码动画（4 行代码循环打字 + 光标） -->
+        <div class="of-monitor">
+          <div class="of-screen">
+            <div class="of-code">
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+            </div>
+            <div class="of-cursor"></div>
+            <div class="of-scan"></div>
+            <div class="of-dots"><i></i><i></i><i></i></div>
+            <div class="of-ok">✓</div>
+          </div>
+          <div class="of-mstand"></div>
+          <div class="of-mbase"></div>
+        </div>
+        <!-- ⑥ 键盘：8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js） -->
+        <div class="of-keyboard">
+          <i></i><i class="f-key"></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <!-- ⑦ 桌面小物：马克杯（点击 → ☕ 气泡）+ 小盆栽 -->
+        <div class="of-mug"><i></i></div>
+        <div class="of-plant"><i></i></div>
+        <!-- ⑧ 状态特效 -->
         <div class="of-bubble"><i></i><i></i><i></i></div>
         <div class="of-gear"><i></i></div>
         <div class="of-stars"><i></i><i></i><i></i></div>
-        <!-- 文字气泡（吉祥物"说话"用）：老板 2026-10-11 让"可以说话"，走的是头顶冒字而不是 TTS 语音。
-             renderer.js 里 girlSay() 负责填字+显隐。 -->
+        <!-- ⑨ 文字气泡（吉祥物"说话"用）：头顶冒字而不是 TTS。renderer.js girlSay() 填字+显隐 -->
         <div class="of-bubble-txt" id="of-bubble-txt" aria-live="polite"></div>
       </div>
+      <!-- girl-cap：renderer.js setState 和 test/shot-girl.js 仍引用它。
+           视觉上不显示（display:none），但 DOM 保留以便测试和状态同步。 -->
+      <span id="girl-cap" style="display:none" aria-hidden="true">待机</span>
     </div>
   </aside>
 

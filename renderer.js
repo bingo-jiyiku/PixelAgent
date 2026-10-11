@@ -279,15 +279,34 @@ const STATE_ZH = { IDLE: '空闲', THINKING: '思考中', TOOL: '处理中', DON
 const CAP_ZH = { THINKING: '思考中…', TOOL: '处理中…', DONE: '完成！', IDLE: '待机' };
 
 // 吉祥物「说话」：头顶冒文字气泡。老板 2026-10-11 明确不要 TTS 语音，
-// 走的是文字气泡。词库分成四态 + 点击时随机选一句。
-// 词库刻意简短（≤8 字），因为气泡只有 84px 宽 —— 长句要么撑破要么截断。
+// 走的是文字气泡。词库按四态 + 分区点击分：
+//   - IDLE / THINKING / TOOL / DONE：状态自动切换时随机冒
+//   - CLICK：通用点击（点空白、点桌子、点书架）
+//   - GIRL：点人物本体
+//   - MONITOR：点显示器（换代码片段，冒编程相关的话）
+//   - KEYBOARD：点键盘（打字爆发，冒敲代码相关的话）
+//   - MUG：点马克杯（☕）
+// 词库刻意简短（≤10 字），因为气泡宽 80px —— 长句要么撑破要么截断。
 const GIRL_LINES = {
   IDLE:       ['嗨~', '在的', '等你', '…', '☕', '有空吗'],
   THINKING:   ['想想…', '嗯…', '让我看看', '在跑…'],
-  TOOL:       ['干呢…', '稍等', '正在处理'],
+  TOOL:       ['干呢…', '稍等', '正在处理', '写代码…'],
   DONE:       ['好！', '搞定~', '✓', 'OK~'],
-  CLICK:      ['嗨~', '在的', '有事吗', '…', '嗯嗯', '☕']
+  CLICK:      ['嗨~', '在的', '有事吗', '…', '嗯嗯'],
+  GIRL:       ['嗨~', '在的', '怎么啦', '…', '在的~'],
+  MONITOR:    ['看代码…', '写着呢', 'bug?', '调试中…', '编译…'],
+  KEYBOARD:   ['噼啪~', '敲代码…', '噼里啪啦', 'Ctrl+C', 'Tab→'],
+  MUG:        ['☕', '来杯？', '续命水', '咖啡因+1']
 };
+
+// 显示器代码片段库：点显示器时循环切换
+// 每片段 4 行，用短横线长度代表"代码行宽"，视觉更像真实代码。
+const MONITOR_SNIPPETS = [
+  [30, 22, 40, 25],  // 片段 1
+  [18, 35, 28, 42],  // 片段 2
+  [40, 15, 32, 20],  // 片段 3
+  [25, 38, 18, 33]   // 片段 4
+];
 
 // 上一次触发气泡的时间戳（毫秒）—— 用来决定"这次要不要打断上一条"。
 // 用户连续点击时想让人看到最新的；状态自动切换时若离上一条很近，就覆盖。
@@ -336,26 +355,75 @@ function setState(state) {
   girlSay(pickLine(state), durByState[state] || 2500);
 }
 
-/* 点击吉祥物 → 冒一句"打招呼"类的话，触发一个短暂的动画。
-   绑在 .girl-scene 而不是 .office 上，因为 hover/指针提示整个场景都算。
-   连续点击时 girlSay 会用最新的 timer 覆盖旧的（见上面的 clearTimeout）。 */
+/* 点击分区互动 —— 老板 2026-10-11 18:54「点击可交互的」
+   绑在 .girl-scene（整个场景），通过 e.target 判断点的是哪个分区：
+     .of-girl      → 点头 + 招呼气泡
+     .of-monitor   → 点头 + 切换代码片段 + 编程话
+     .of-keyboard  → 点头 + 打字爆发（键盘键快闪） + 敲代码话
+     .of-mug       → 点头 + ☕ 气泡
+     其余（墙、桌、书架） → 点头 + 通用招呼气泡
+   连续点击时 girlSay 会用最新 timer 覆盖旧的。
+   点人物本体的时候，e.target 可能是 .of-girl 本身，也可能是 img 元素
+   （img 在 .of-girl 里，但 click 事件的 target 就是 img）—— 用 closest 判。 */
 function attachGirlClick() {
   const scene = $('girl-scene');
   if (!scene) return;
   scene.addEventListener('click', (e) => {
-    // 点的是场景外的元素（比如 hl-hint）就不要冒气泡
     if (!scene.contains(e.target)) return;
-    girlSay(pickLine('CLICK'), 2000);
-    // 顺便把人物"点头"一下 —— 用 dataset 触发一个 CSS class
+
     const girl = $('pixel-girl');
-    if (girl) {
-      girl.classList.remove('girl-nod');
-      // 强制 reflow 让同一个 class 可以反复触发
-      void girl.offsetWidth;
-      girl.classList.add('girl-nod');
-      setTimeout(() => girl.classList.remove('girl-nod'), 700);
-    }
+    if (!girl) return;
+
+    // 判断点了哪个分区
+    const t = e.target;
+    let zone = 'CLICK';
+    if (t.classList && t.classList.contains('of-girl')) zone = 'GIRL';
+    else if (t.closest && t.closest('.of-monitor')) zone = 'MONITOR';
+    else if (t.closest && t.closest('.of-keyboard')) zone = 'KEYBOARD';
+    else if (t.closest && t.closest('.of-mug')) zone = 'MUG';
+    else if (t.tagName === 'IMG' && girl.contains(t)) zone = 'GIRL';
+
+    // 按分区冒对应的话
+    girlSay(pickLine(zone), 2000);
+
+    // 点头动画（所有分区都点头，因为吉祥物"回应"了）
+    girl.classList.remove('girl-nod');
+    void girl.offsetWidth;
+    girl.classList.add('girl-nod');
+    setTimeout(() => girl.classList.remove('girl-nod'), 700);
+
+    // 分区专属特效
+    if (zone === 'MONITOR') triggerMonitorCycle();
+    else if (zone === 'KEYBOARD') triggerTypingBurst();
   });
+}
+
+/* 显示器代码片段循环：点击显示器时切换到下一个片段
+   片段切换通过 CSS variable --cl-w 控制每行代码的宽度
+   （CSS 里 .of-cl 的 width 从 0 动画到 var(--cl-w)） */
+let monitorSnipIdx = 0;
+function triggerMonitorCycle() {
+  monitorSnipIdx = (monitorSnipIdx + 1) % MONITOR_SNIPPETS.length;
+  const snip = MONITOR_SNIPPETS[monitorSnipIdx];
+  const clEls = document.querySelectorAll('.of-cl');
+  clEls.forEach((el, i) => {
+    el.style.setProperty('--cl-w', (snip[i] || 30) + 'px');
+  });
+  // 顺便让代码重新播放打字动画（强制 reflow 重启 animation）
+  const code = document.querySelector('.of-code');
+  if (code) { void code.offsetWidth; }
+}
+
+/* 键盘打字爆发：点击键盘时让所有键快闪 3 次
+   给每个键加 .typing-burst 类，400ms 后移除 */
+let typingBurstTimer = null;
+function triggerTypingBurst() {
+  const keys = document.querySelectorAll('.of-keyboard i');
+  keys.forEach(k => k.classList.add('typing-burst'));
+  if (typingBurstTimer) clearTimeout(typingBurstTimer);
+  typingBurstTimer = setTimeout(() => {
+    keys.forEach(k => k.classList.remove('typing-burst'));
+  }, 400);
 }
 
 /* ---------- 计时 ---------- */
