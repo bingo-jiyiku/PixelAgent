@@ -57,25 +57,37 @@
       <div class="hl-zh">复古像素终端</div>
       <div class="hl-en">PIXEL() 像素终端</div>
       <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
-        <div class="girl-desk">
-          <div class="gd-screen"><div class="gd-scan"></div></div>
-          <div class="girl" id="pixel-girl" data-state="IDLE">
-            <div class="g-hair-back"></div>
-            <div class="g-head">
-              <div class="g-eye l"></div>
-              <div class="g-eye r"></div>
-              <div class="g-blush l"></div>
-              <div class="g-blush r"></div>
-              <div class="g-mouth"></div>
+        <!-- 办公场景：人物是老板给的形象（assets/girl.png，只去了白底没重画），
+             桌椅/显示器/键盘都是 CSS 搭的；下半身被桌面挡住 → 读起来就是"坐着办公"。
+             四态动画由 [data-state] 驱动：IDLE / THINKING / TOOL / DONE -->
+        <div class="office" id="pixel-girl" data-state="IDLE">
+          <div class="of-wall"></div>
+          <div class="of-window"><i class="of-moon"></i><i class="of-st s1"></i><i class="of-st s2"></i><i class="of-st s3"></i></div>
+          <div class="of-shelf"><i></i><i></i><i></i><i></i></div>
+          <img class="of-girl" src="assets/girl.png" alt="">
+          <!-- 桌面上：左侧显示器 / 中间键盘 / 右侧马克杯和书 -->
+          <div class="of-monitor">
+            <div class="of-screen">
+              <i class="of-l1"></i><i class="of-l2"></i><i class="of-l3"></i>
+              <div class="of-scan"></div>
+              <div class="of-dots"><i></i><i></i><i></i></div>
+              <div class="of-ok">✓</div>
             </div>
-            <div class="g-hair-front"></div>
-            <div class="g-body"><div class="g-arm l"></div><div class="g-arm r"></div></div>
-            <div class="g-bubble"><i></i><i></i><i></i></div>
-            <div class="g-gear"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i></div>
-            <div class="g-stars"><i></i><i></i><i></i></div>
+            <div class="of-mfoot"></div>
+            <div class="of-mbase"></div>
           </div>
-          <div class="g-keyboard"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="g-desk"></div>
+          <!-- 第 2 个键带 .f-key：IDLE 时只由它闪（见 style.css 里的注释，别再用 nth-child 数位置） -->
+          <div class="of-keyboard"><i></i><i class="f-key"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="of-mug"></div>
+          <div class="of-books"><i></i><i></i></div>
+          <div class="of-desk">
+            <div class="of-drawer"></div>
+            <div class="of-drawer r"></div>
+          </div>
+          <!-- 状态特效 -->
+          <div class="of-bubble"><i></i><i></i><i></i></div>
+          <div class="of-gear"><i></i></div>
+          <div class="of-stars"><i></i><i></i><i></i></div>
         </div>
         <div class="girl-cap" id="girl-cap">待机</div>
       </div>
@@ -149,6 +161,7 @@
     <div class="palette hidden" id="palette">
       <div class="pal-hd" id="pal-hd">命令</div>
       <div class="pal-list" id="pal-list"></div>
+      <div class="pal-foot" id="pal-foot"></div>
     </div>
 
     <span class="ps">›</span>
@@ -214,20 +227,85 @@
 
 <!-- ═══════════════ 设置对话框 ═══════════════ -->
 <div class="mask hidden" id="mask">
-  <div class="win dialog">
+  <div class="win dialog dialog-set">
     <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="win-name">设置()</span>
+      <span class="win-name" id="set-title">设置</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="dlg-x" type="button" title="关闭">✕</button>
       </span>
     </div>
-    <div class="dlg-body">
+    <div class="dlg-body" id="set-body">
+
+      <div class="set-sec">工作与模型</div>
+      <div class="set-row">
+        <label class="set-lb" for="set-cwd">工作目录</label>
+        <input class="set-in" id="set-cwd" type="text" spellcheck="false" autocomplete="off" />
+        <button class="px-btn" id="set-cwd-pick" type="button">选择…</button>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="set-model">默认模型</label>
+        <select class="set-in" id="set-model"><option value="">（用 pi 默认）</option></select>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="set-thinking">思考档位</label>
+        <select class="set-in" id="set-thinking">
+          <option value="">（用 pi 默认）</option>
+          <option value="off">关闭</option>
+          <option value="minimal">极少</option>
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="high">高</option>
+          <option value="xhigh">很高</option>
+          <option value="max">最高</option>
+        </select>
+      </div>
+
+      <div class="set-sec">输入</div>
+      <div class="set-row">
+        <span class="set-lb">Enter 键</span>
+        <span class="seg" id="set-enter">
+          <button class="seg-b" type="button" data-v="1">发送</button>
+          <button class="seg-b" type="button" data-v="0">换行</button>
+        </span>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="set-maximg">一次最多图片</label>
+        <input class="set-in num" id="set-maximg" type="number" min="1" max="9" step="1" />
+        <span class="set-unit">张</span>
+      </div>
+
+      <div class="set-sec">外观</div>
+      <div class="set-row">
+        <span class="set-lb">主题色</span>
+        <span class="seg sw" id="set-accent"></span>
+      </div>
+      <div class="set-row">
+        <span class="set-lb">吉祥物动画</span>
+        <label class="chk"><input type="checkbox" id="set-mascot" /><i></i><span>开启（关掉更省电）</span></label>
+      </div>
+      <div class="set-row">
+        <span class="set-lb">紧凑模式</span>
+        <label class="chk"><input type="checkbox" id="set-compact" /><i></i><span>开启（行距更紧）</span></label>
+      </div>
+      <div class="set-row">
+        <span class="set-lb">新消息自动到底</span>
+        <label class="chk"><input type="checkbox" id="set-scroll" /><i></i><span>开启</span></label>
+      </div>
+      <div class="set-row">
+        <span class="set-lb">导出格式</span>
+        <span class="seg" id="set-export">
+          <button class="seg-b" type="button" data-v="html">网页</button>
+          <button class="seg-b" type="button" data-v="md">Markdown 文档</button>
+          <button class="seg-b" type="button" data-v="json">JSON</button>
+        </span>
+      </div>
+
+      <div class="set-sec">运行信息（只读）</div>
       <div class="kv"><span>后端</span><b>pi</b></div>
       <div class="kv"><span>输出模式</span><b id="set-mode">JSON</b></div>
-      <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
-      <div class="kv"><span>工作目录</span><b id="set-cwd">—</b></div>
+      <div class="kv"><span>当前模型</span><b id="set-curmodel">读取中…</b></div>
       <div class="kv"><span>配置目录</span><b id="set-agentdir">—</b></div>
       <div class="kv"><span>凭据</span><b id="set-auth">—</b></div>
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
@@ -236,7 +314,14 @@
         配置目录是隔离的：PixelAgent 用自己那份，跟终端里的 pi 各不打扰
         （共用会被残留的锁文件互相牵连）。首次运行会从终端配置里抄一份凭据过来。
       </p>
-      <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
+
+      <div class="dlg-foot">
+        <button class="px-btn" id="set-reset" type="button">恢复默认</button>
+        <span class="set-foot-gap"></span>
+        <button class="px-btn" id="set-cancel" type="button">取消</button>
+        <button class="px-btn primary" id="set-save" type="button">保存</button>
+      </div>
+      <p class="set-note" id="set-note"></p>
     </div>
   </div>
 </div>
@@ -246,7 +331,7 @@
   <div class="win dialog dialog-model">
     <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="win-name">模型()</span>
+      <span class="win-name" id="mdl-title">模型</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="mdl-x" type="button" title="关闭">✕</button>
@@ -269,6 +354,7 @@
 
 <script src="md.js"></script>
 <script src="parse.js"></script>
+<script src="pal.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

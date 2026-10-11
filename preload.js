@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   history: (seq) => ipcRenderer.invoke('pi:session-history', seq),
   renameSession: (seq, name) => ipcRenderer.invoke('pi:session-rename', seq, name),
   deleteSession: (seq) => ipcRenderer.invoke('pi:session-delete', seq),
-  exportSession: (seq, outPath) => ipcRenderer.invoke('pi:session-export', seq, outPath),
+  exportSession: (seq, outPath, fmt) => ipcRenderer.invoke('pi:session-export', seq, outPath, fmt),
 
   // 跨会话搜索
   search: (q) => ipcRenderer.invoke('pi:search', q),
@@ -43,6 +43,11 @@ contextBridge.exposeInMainWorld('pixelAPI', {
 
   // 读信息（模型/会话路径/配置目录），设置面板用
   info: () => ipcRenderer.invoke('pi:info'),
+
+  // 设置：读 / 写 / 恢复默认
+  cfg: () => ipcRenderer.invoke('pi:cfg'),
+  setCfg: (patch) => ipcRenderer.invoke('pi:cfg-set', patch),
+  resetCfg: () => ipcRenderer.invoke('pi:cfg-reset'),
 
   // 窗口控制（无原生标题栏后，按钮自己发号施令）
   winMin: () => ipcRenderer.invoke('win:min'),

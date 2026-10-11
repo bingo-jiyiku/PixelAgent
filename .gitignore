@@ -20,3 +20,6 @@ node_modules/
 # 注意：nul 是 Windows 保留设备名，普通删除 / 回收站都会报
 # "指定的设备名无效 (0x800704B0)"，需要 \\?\ 扩展路径；这里选择忽略而不是删除。
 /nul
+
+# 吉祥物原图素材：tools/make-girl.js 的输入，产品只用抠好的 assets/girl.png
+assets/girl-src.png

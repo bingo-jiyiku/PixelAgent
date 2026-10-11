@@ -639,6 +639,12 @@ app.whenReady().then(async () => {
      路径、工具名…… 这些天生可能是英文），并给每个排除写清理由。
      排除清单写错的风险靠**反向验证**兜底：故意塞个英文标签必须变红。 */
   console.log('\n[7] 中文体检（界面标签不该再是英文）');
+  // ★ 命令面板要**先打开**，它的候选项（.pal-k / .pal-d）才会进入 DOM。
+  //   不打开的话，"按 class 排除候选项"这条规则恒等于没被执行过 ——
+  //   又是一个"以为排了其实没排"的盲区。打开之后下面还要反过来确认
+  //   分组标题（.pal-group）**在**体检范围内，证明排除是按 class 而不是按整个容器。
+  await js(`(function(){ const i=document.getElementById('input'); i.value='/'; i.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(450);
   // 先喂一条带代码块的 AI 消息 —— 代码块右上角那个复制按钮只在这时才存在。
   // （上一版漏了它：它是从 md.js 里生成的，看不见就扫不到，"COPY" 一直留着）
   await js(`(function(){
@@ -649,6 +655,9 @@ app.whenReady().then(async () => {
     feed({type:'message_update', assistantMessageEvent:{type:'text_end'}});
     return true; })()`);
   await sleep(400);
+  const palItemN = await js(`document.querySelectorAll('#pal-list .pal-item').length`);
+  console.log('  ℹ 体检时命令面板候选项数: ' + palItemN + '（>0 才说明 .pal-k/.pal-d 的排除规则被真正执行到）');
+  t('体检时命令面板是打开的（否则排除规则是空转）', palItemN > 0, true);
   const mdCopy = await js(`(function(){ const b=document.querySelector('#log .md-copy'); return b ? b.textContent.trim() : 'NO_EL'; })()`);
   console.log('  ℹ 代码块复制按钮: ' + mdCopy);
   t('代码块右上角复制按钮是中文', mdCopy, '复制');
@@ -669,20 +678,28 @@ app.whenReady().then(async () => {
       'fp','fname','fpath','filebar-p',              // 文件路径与文件名
       'sess-name','todo-txt','search-c','att-n','att-s', // 会话标题 / 待办正文 / 附件名
       'hl-en','tb-brand','sb-keys',                  // 品牌字、快捷键提示（含 ESC 等保留词）
-      'pal-list'                                     // 命令/文件面板里的候选项
+      // 命令面板里的**候选项**（命令键 / 文件名 / 描述里带路径）是数据，按 class 排掉。
+      // ⚠ 上一版排的是整个 'pal-list'（CONTENT_ID），那会把"最近使用""没有这个命令"
+      //   这些**真标签**一起排掉 —— 等于给未来的英文残留开了个后门。所以改成按 class 排。
+      'pal-k','pal-d'
     ]);
     // 内容位（按**标签名**）：<pre>/<code> 装的是工具原始输出、参数 JSON、代码 —— 天生英文
     // （上一版把 'pre' 当成类名塞进 CONTENT_CLS，结果一个都没排掉）
-    const CONTENT_TAG = new Set(['PRE', 'CODE', 'SCRIPT', 'STYLE', 'INPUT', 'TEXTAREA']);
+    // SELECT：设置面板里的下拉，option 装的是模型 id / 档位值，是**控件数据**不是界面标签；
+    //        它左边永远配着一个中文的 .set-lb 标题，中文检查照样能覆盖到那一行。
+    const CONTENT_TAG = new Set(['PRE', 'CODE', 'SCRIPT', 'STYLE', 'INPUT', 'TEXTAREA', 'SELECT']);
     // 虽然是"标签位"，但它们在 #log 里（#log 是内容位）—— 必须单独留下，否则 .who 会被一起排掉
     // 它们虽然是"标签位"，但祖先落在内容位里（#log / #session-list）——
     // 必须单独捞出来，否则会被一起排掉（.who 和 .md-copy 都踩过这个坑）
     const KEEP_CLS = new Set(['who', 'att-note', 'sh-code', 'md-copy', 'f-ico', 'm-btn', 'sess-op']);
     // 内容/数据位（按 id）
     const CONTENT_ID = new Set([
-      'log','input','mirror','attbar','files-list','ext-list','pal-list','session-list',
+      'log','input','mirror','attbar','files-list','ext-list','session-list',
       'kv-model','kv-model2','kv-cwd','kv-time','kv-round','ub-text','files-root',
-      'set-cli','set-session','set-cwd','set-agentdir','set-mode','set-model'
+      'set-cli','set-session','set-agentdir','set-mode','set-curmodel'
+      // set-curmodel 装的是 "provider/model"（英文字面值），set-mode 是 "JSON（…）"，
+      // 都是**读回来的运行数据**不是界面标签；set-note 是动态状态文案，**故意不排**，
+      // 让它的中文也一起被体检到。
     ]);
     const cls0 = (el) => String(el.className || '').trim().split(/\\s+/)[0];
     const inContent = (el) => {
@@ -719,6 +736,19 @@ app.whenReady().then(async () => {
   console.log('  ℹ 纯英文标签: ' + JSON.stringify(badUniq));
   t('没有整块都是英文的界面标签', badUniq.length, 0);
 
+  // 反向确认排除范围没扩过头：命令面板的分组标题必须**还在**被检查的名单里。
+  // 如果哪天有人图省事把 '#pal-list' 整个塞进排除表，这条会立刻红。
+  const palGroups = labelList.filter((x) => x.sel.indexOf('pal-group') >= 0).length;
+  console.log('  ℹ 命令面板分组标题进体检的数量: ' + palGroups);
+  t('命令面板分组标题没有被打包排除掉（排除是按 class，不是按容器）', palGroups > 0, true);
+  // 同理：设置面板那些中文行标题必须在名单里（它不是内容位）
+  const setLabels = labelList.filter((x) => x.sel.indexOf('set-lb') >= 0).length;
+  console.log('  ℹ 设置面板行标题进体检的数量: ' + setLabels);
+  t('设置面板的行标题也在体检范围内', setLabels >= 6, true);
+  // 体检完把面板收掉，别把浮层带进后面的截图和断言
+  await js(`(function(){ const i=document.getElementById('input'); i.value=''; i.dispatchEvent(new Event('input')); return 1; })()`);
+  await sleep(250);
+
   // 第二道：混在中文里的英文关键词（纯英文检查抓不到 "⏎ SEND · ESC STOP" 这种）
   const BLOCK = ['SESSIONS', 'COMMANDS', 'REFERENCE', 'STANDBY', 'THINKING', 'WORKING',
     'RENAME()', 'DELETE()', 'INPUT()', 'SETTINGS()', 'MODEL()', 'EXIT ', 'IMG×',
@@ -747,7 +777,276 @@ app.whenReady().then(async () => {
   t('状态灯的 data-status 仍是英文内部值', ['IDLE','THINKING','TOOL','DONE'].indexOf(dataEnv.status) >= 0, true);
   t('女孩的 data-state 与状态灯同源', dataEnv.girl, dataEnv.status);
 
-  /* ================= 8. 收尾截图 ================= */
+  /* ================= 8. 设置 / 命令面板 / 命名 ================= */
+  // 这一段盯的是老板这轮提的三件事：
+  //   ①「设置要有设置该有的功能」→ 改得动 + 存得下 + 重启后还在（三条都要证据）
+  //   ②「/命名要有该有的功能」  → 带参数直接改、重名拦下、留空回落自动标题
+  //   ③ 顺带把命令面板该有的（模糊/高亮/分组/无结果/参数提示）逐条钉住
+  console.log('\n[8] 设置 / 命令面板 / 命名');
+
+  /* ---- 8a. 设置：三层对账（界面控件 → 配置文件 → 生效的样式） ---- */
+  const cfgFile = path.join(__dirname, '..', '.pixelagent.json');
+  const readFileCfg = () => { try { return JSON.parse(fs.readFileSync(cfgFile, 'utf8')); } catch (e) { return {}; } };
+  const cfgBefore = readFileCfg();
+
+  await js(`document.getElementById('btn-settings').click()`);
+  await sleep(1100);          // 里面要真跑一次 pi:info + 拉模型目录
+
+  const ctl = await js(`(function(){
+    const q = (s)=>document.querySelector(s);
+    const tn = (s)=> q(s) ? q(s).tagName : 'MISSING';
+    const ty = (s)=> q(s) ? (q(s).type||'') : 'MISSING';
+    return {
+      cwd: tn('#set-cwd'), model: tn('#set-model'), think: tn('#set-thinking'),
+      maxT: ty('#set-maximg'), mascotT: ty('#set-mascot'), compactT: ty('#set-compact'),
+      scrollT: ty('#set-scroll'),
+      accents: document.querySelectorAll('#set-accent .seg-b').length,
+      enterSeg: document.querySelectorAll('#set-enter .seg-b').length,
+      exportSeg: document.querySelectorAll('#set-export .seg-b').length,
+      thinkOpts: document.querySelectorAll('#set-thinking option').length
+    };
+  })()`);
+  console.log('  ℹ 设置面板控件: ' + JSON.stringify(ctl));
+  t('工作目录是真输入框（不是只读一行）', ctl.cwd, 'INPUT');
+  t('默认模型是真下拉', ctl.model, 'SELECT');
+  t('思考档位是真下拉', ctl.think, 'SELECT');
+  t('思考档位有 7 档 + 默认', ctl.thinkOpts, 8);
+  t('图片上限是 number 框', ctl.maxT, 'number');
+  t('吉祥物动画是 checkbox', ctl.mascotT, 'checkbox');
+  t('紧凑模式是 checkbox', ctl.compactT, 'checkbox');
+  t('自动滚到底是 checkbox', ctl.scrollT, 'checkbox');
+  t('主题色有 4 个色块', ctl.accents, 4);
+  t('Enter 行为有两个选项', ctl.enterSeg, 2);
+  t('导出格式有三个选项', ctl.exportSeg, 3);
+
+  /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
+     原来的 bug：文档级 keydown 只有 mask-input / mask-model 两支，
+     设置面板开着时 Esc 会掉到 `if (activeElement !== input) doAbort()`。
+     两个"差点测不到"的点，都要在这里把前提量出来：
+       ① doAbort 有 `if (!S.busy) return`，没在跑就什么都不发生
+          → 验收计数放在 busy 判断之前（window.__pixelAborts）；
+       ② 中断分支要求焦点**不在**聊天输入框，而输入框启动时自动聚焦
+          → 先把焦点移进面板，否则走不到那一支。 */
+  const escPre = await js(`(function(){
+    document.getElementById('set-cwd').focus();
+    return { notChatInput: document.activeElement !== document.getElementById('input'),
+             aborts: window.__pixelAborts }; })()`);
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  await sleep(350);
+  const escPost = await js(`(function(){
+    return { hidden: document.getElementById('mask').classList.contains('hidden'),
+             aborts: window.__pixelAborts }; })()`);
+  console.log('  ℹ Esc：焦点在面板内=' + escPre.notChatInput +
+    ' → 关面板=' + escPost.hidden + ' 中断计数 ' + escPre.aborts + '→' + escPost.aborts);
+  t('前提成立：焦点在面板内（否则下面两条是空转）', escPre.notChatInput, true);
+  t('设置面板开着时 Esc 能关掉面板', escPost.hidden, true);
+  t('Esc 关面板没有顺手中断正在跑的这轮', escPost.aborts, escPre.aborts);
+  await js(`document.getElementById('btn-settings').click()`);   // 后面 8a 还要改设置
+  await sleep(1200);
+
+  // 故意选一个**跟当前盘上不一样**的值：否则"存进去了"这条断言是空转
+  const META = await js(`window.pixelAPI.cfg()`);
+  const ACC = (META && META.accents) || {};
+  const targetAccent = (cfgBefore.accent === 'teal') ? 'amber' : 'teal';
+  const targetMax = (Number(cfgBefore.maxImages) === 7) ? 6 : 7;
+  console.log('  ℹ 盘上原本: accent=' + cfgBefore.accent + ' maxImages=' + cfgBefore.maxImages +
+    ' → 本轮改成 ' + targetAccent + ' / ' + targetMax);
+
+  await js(`(function(){
+    const segs = document.querySelectorAll('#set-accent .seg-b');
+    for (const b of segs) if (b.dataset.v === ${JSON.stringify(targetAccent)}) b.click();
+    const m = document.getElementById('set-maximg'); m.value = ${JSON.stringify(String(targetMax))};
+    const msc = document.getElementById('set-mascot'); msc.checked = false; msc.dispatchEvent(new Event('change'));
+    return 1; })()`);
+  await sleep(250);
+  // 预览生效（还没保存）
+  const previewLav = await js(`getComputedStyle(document.documentElement).getPropertyValue('--lav').trim()`);
+  t('点主题色立刻预览（--lav 已变）', previewLav.toLowerCase(), String((ACC[targetAccent] || {}).main).toLowerCase());
+  t('（反向）盘上此刻还是旧值', readFileCfg().accent === cfgBefore.accent, true);
+
+  await js(`document.getElementById('set-save').click()`);
+  await sleep(1400);
+  const cfgAfter = readFileCfg();
+  console.log('  ℹ 保存后盘上: ' + JSON.stringify({ accent: cfgAfter.accent, maxImages: cfgAfter.maxImages, mascotAnim: cfgAfter.mascotAnim }));
+  t('保存后 accent 写进了 .pixelagent.json', cfgAfter.accent, targetAccent);
+  t('保存后 maxImages 写进了 .pixelagent.json', cfgAfter.maxImages, targetMax);
+  t('保存后 mascotAnim 写进了 .pixelagent.json', cfgAfter.mascotAnim, false);
+  t('保存后盘上值确实变了（否则上面三条是空转）', cfgBefore.accent !== cfgAfter.accent, true);
+  t('关掉动画 → body 上有 no-anim（这个开关是真起作用的）',
+    await js(`document.body.classList.contains('no-anim')`), true);
+  const noteTxt = await js(`document.getElementById('set-note').textContent`);
+  console.log('  ℹ 保存回执: ' + JSON.stringify(noteTxt));
+  t('保存后给了回执（不是默默存完）', noteTxt.length > 0, true);
+
+  // 主进程**不认识**的键必须如实报出来（界面笔误时才能一眼看出）
+  const dropRes = await js(`window.pixelAPI.setCfg({ mascot: true, maxImages: 3 })`);
+  console.log('  ℹ 故意传一个错键: ' + JSON.stringify({ dropped: dropRes && dropRes.droppedKeys }));
+  t('不认识的键被报出来而不是默默吞掉',
+    !!(dropRes && dropRes.droppedKeys && dropRes.droppedKeys.indexOf('mascot') >= 0), true);
+  t('认识的键照常生效', dropRes && dropRes.cfg && dropRes.cfg.maxImages, 3);
+
+  // 越界值要被夹回默认（校验不是在界面上做的）
+  const clampRes = await js(`window.pixelAPI.setCfg({ maxImages: 999, accent: '彩虹', exportFormat: 'exe' })`);
+  t('越界的 maxImages 被夹回默认 4', clampRes && clampRes.cfg && clampRes.cfg.maxImages, 4);
+  t('不存在的主题色被夹回默认', clampRes && clampRes.cfg && clampRes.cfg.accent, 'lav');
+  t('不存在的导出格式被夹回默认', clampRes && clampRes.cfg && clampRes.cfg.exportFormat, 'html');
+
+  // 关掉面板（取消会把预览回滚，这里已经保存过，直接关）
+  await js(`(function(){ const b=document.getElementById('set-cancel'); if(b) b.click(); return 1; })()`);
+  await sleep(300);
+
+  // 恢复默认 → 盘上必须回到默认值（否则测试会污染老板的配置）
+  const reset = await js(`window.pixelAPI.resetCfg()`);
+  t('恢复默认返回成功', !!(reset && reset.ok), true);
+  t('恢复默认后盘上是默认值', readFileCfg().accent, 'lav');
+  t('恢复默认后盘上是默认值 maxImages', readFileCfg().maxImages, 4);
+  // 把测试开始前的配置还回去（万一老板本来改过设置，不能被这个测试洗掉）
+  const restore = Object.assign({}, cfgBefore);
+  delete restore.workDir;                  // 工作目录不归这一段管，也不该被重设
+  await js(`window.pixelAPI.setCfg(${JSON.stringify(restore)})`);
+  t('测试跑完把老板原来的设置还回去了', readFileCfg().accent, cfgBefore.accent);
+
+  /* ---- 8b. Enter 键行为：设置说"换行"时，Enter 就不能发送 ---- */
+  await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { enterToSend: false }))`);
+  const logN0 = await js(`document.querySelectorAll('#log .m').length`);
+  await js(`(function(){ const i=document.getElementById('input'); i.value='!echo pxl-enter-probe';
+    i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); return 1; })()`);
+  await sleep(500);
+  const logN1 = await js(`document.querySelectorAll('#log .m').length`);
+  t('enterToSend=false 时 Enter 不发送（换行）', logN1, logN0);
+  // 反向：Ctrl+Enter 必须能发（走 `!` 命令，不烧 token 也不经过模型）
+  await js(`(function(){ const i=document.getElementById('input');
+    i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true})); return 1; })()`);
+  await sleep(900);
+  const logN2 = await js(`document.querySelectorAll('#log .m').length`);
+  t('enterToSend=false 时 Ctrl+Enter 能发送（否则这个设置等于把发送废掉了）', logN2 > logN1, true);
+  await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { enterToSend: true }))`);
+  await js(`(function(){ const i=document.getElementById('input'); i.value=''; i.dispatchEvent(new Event('input')); return 1; })()`);
+
+  /* ---- 8c. 命令面板：模糊 / 高亮 / 分组 / 无结果 / 参数提示 ---- */
+  const typeIn = async (v) => {
+    await js(`(function(){ const i=document.getElementById('input');
+      i.value=${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); return 1; })()`);
+    await sleep(260);
+  };
+  const palState = () => js(`(function(){
+    const on = document.querySelector('#pal-list .pal-item.on');
+    return {
+      open: !document.getElementById('palette').classList.contains('hidden'),
+      items: document.querySelectorAll('#pal-list .pal-item').length,
+      groups: Array.prototype.map.call(document.querySelectorAll('#pal-list .pal-group'), function(e){return e.textContent.trim();}),
+      first: on ? on.querySelector('.pal-k').textContent.trim() : 'NONE',
+      hits: document.querySelectorAll('#pal-list .pal-hit').length,
+      empty: (document.querySelector('#pal-list .pal-empty') || { textContent: '' }).textContent,
+      foot: document.getElementById('pal-foot').textContent
+    };
+  })()`);
+
+  await typeIn('/');
+  const ps1 = await palState();
+  console.log('  ℹ 输入 / → ' + JSON.stringify({ open: ps1.open, items: ps1.items, groups: ps1.groups }));
+  t('输入 / 打开命令面板', ps1.open, true);
+  t('候选项够多（不是只剩一条）', ps1.items >= 12, true);
+  t('候选项有分组标题', ps1.groups.length >= 3, true);
+  t('分组标题是中文', ps1.groups.every((g) => /^[\u4e00-\u9fa5]+$/.test(g)), true);
+
+  await typeIn('/rn');
+  const ps2 = await palState();
+  console.log('  ℹ 输入 /rn → ' + JSON.stringify({ first: ps2.first, items: ps2.items, hits: ps2.hits }));
+  t('/rn 首选就是 /rename（模糊匹配真的按顺序匹配）', ps2.first, '/rename');
+  t('命中字符被高亮出来（有 .pal-hit）', ps2.hits > 0, true);
+  t('/rn 把候选收敛下来', ps2.items < 6, true);
+
+  await typeIn('/rename');
+  const ps3 = await palState();
+  console.log('  ℹ 高亮 /rename 时底部提示: ' + JSON.stringify(ps3.foot));
+  t('/rename 底部给出参数写法', ps3.foot.indexOf('/rename') >= 0, true);
+
+  await typeIn('/zzz');
+  const ps4 = await palState();
+  console.log('  ℹ 输入 /zzz → ' + JSON.stringify({ open: ps4.open, empty: ps4.empty }));
+  t('没有匹配时**不关**面板', ps4.open, true);
+  t('没有匹配时给出中文提示', /[\u4e00-\u9fa5]/.test(ps4.empty), true);
+
+  /* ---- 8d. 命名：带参数直接改名 / 重名拦下 / 留空回落 ---- */
+  const TMP2 = 996;
+  const tmp2File = path.join(__dirname, '..', '.sessions', 'chat-' + TMP2 + '.json');
+  const nowIso2 = new Date().toISOString();
+  fs.writeFileSync(tmp2File, [
+    { type: 'session', version: 3, id: 'verify-996', timestamp: nowIso2, cwd: path.join(__dirname, '..') },
+    { type: 'message', id: 'u996', parentId: null, timestamp: nowIso2,
+      message: { role: 'user', content: [{ type: 'text', text: '命名验收用的一次性会话' }], timestamp: Date.now() } }
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n', 'utf8');
+
+  const NAME = '验收临时名';
+  // `/rename` 改的是**当前会话**，所以先把当前会话切到这条一次性会话上
+  // （走渲染层的 openSession，S.seq 才会跟着变；裸调 IPC 会导致测歪）
+  const origSeq = (await js(`window.pixelAPI.sessions()`)).current;
+  await js(`window.__pixelOpenSession(${TMP2})`);
+  await sleep(900);
+  t('已切到一次性会话', await js(`window.pixelAPI.sessions().then(function(r){return r.current;})`), TMP2);
+
+  await typeIn('/rename ' + NAME);
+  const ps5 = await palState();
+  console.log('  ℹ 输入 /rename 名字 → ' + JSON.stringify({ items: ps5.items, first: ps5.first }));
+  t('带参数时只剩一条候选', ps5.items, 1);
+  t('候选标签是完整写法', ps5.first, '/rename ' + NAME);
+  // 回车执行（直接打在输入框上）
+  await js(`(function(){ document.getElementById('input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); return 1; })()`);
+  await sleep(900);
+
+  const sessAfterRename = await js(`window.pixelAPI.sessions()`);
+  const row996 = ((sessAfterRename.sessions || []).filter((s) => s.seq === TMP2))[0] || {};
+  t('/rename 名字 真的改了名', row996.title, NAME);
+  t('改名带上了「已改名」标记', row996.renamed, true);
+  t('改名落盘了', (readFileCfg().names || {})[String(TMP2)], NAME);
+  const railHas = await js(`document.getElementById('session-list').textContent.indexOf(${JSON.stringify(NAME)}) >= 0`);
+  t('左栏立刻反映新名字', railHas, true);
+
+  // 重名校验：改成另一条会话已经在用的标题 → 必须拦下并指名道姓
+  const otherName = ((sessAfterRename.sessions || []).filter((s) => s.seq !== TMP2 && s.title))[0] || {};
+  const clash = await js(`window.pixelAPI.renameSession(${TMP2}, ${JSON.stringify(otherName.title || '')} )`);
+  console.log('  ℹ 重名结果: ' + JSON.stringify({ reason: clash && clash.reason, clash: clash && clash.clash }));
+  t('重名被拦下', clash && clash.reason, 'NAME_TAKEN');
+  t('拦下时告诉撞的是哪一条', typeof (clash && clash.clash), 'number');
+  t('被拦下时原名没有被改掉', (((await js(`window.pixelAPI.sessions()`)).sessions || [])
+    .filter((s) => s.seq === TMP2)[0] || {}).title, NAME);
+
+  // 留空 = 恢复自动标题（界面上的「重命名」对话框走的是同一条路）
+  const cleared = await js(`window.pixelAPI.renameSession(${TMP2}, '   ')`);
+  t('留空可提交（不算非法）', !!(cleared && cleared.ok), true);
+  t('留空后回落到自动标题',
+    (((await js(`window.pixelAPI.sessions()`)).sessions || []).filter((s) => s.seq === TMP2)[0] || {}).title,
+    '命名验收用的一次性会话');
+  t('留空后别名从配置里删掉了', (readFileCfg().names || {})[String(TMP2)], undefined);
+
+  // 界面上的重命名对话框也要能走通（改名 + 取消两条路）
+  await js(`(function(){ const rows=document.querySelectorAll('#session-list .sess');
+    for (const r of rows) { if (r.querySelector('.sess-idx') && r.querySelector('.sess-idx').textContent.trim()==='#996') {
+      const b=r.querySelector('.sess-op'); if (b) b.click(); } }
+    return 1; })()`);
+  await sleep(500);
+  const dlgOpen = await js(`!document.getElementById('mask-input').classList.contains('hidden')`);
+  t('会话条上的「改名」能弹出对话框', dlgOpen, true);
+  await js(`(function(){ const f=document.getElementById('inp-field'); f.value='对话框改的名';
+    document.getElementById('inp-ok').click(); return 1; })()`);
+  await sleep(800);
+  t('对话框改名也能生效',
+    (((await js(`window.pixelAPI.sessions()`)).sessions || []).filter((s) => s.seq === TMP2)[0] || {}).title,
+    '对话框改的名');
+
+  // 清理：一次性会话 + 它的别名，一个都不留
+  await js(`window.pixelAPI.renameSession(${TMP2}, '')`);
+  try { fs.rmSync(tmp2File, { force: true }); } catch (e) { /* ignore */ }
+  t('清理后会话文件已移除', fs.existsSync(tmp2File), false);
+  t('清理后别名也没留下', (readFileCfg().names || {})[String(TMP2)], undefined);
+  // 把当前会话切回原来那条（测试把会话的"当前"改过，得还回去）
+  if (typeof origSeq === 'number') { await js(`window.__pixelOpenSession(${origSeq})`); await sleep(700); }
+  t('当前会话已切回原来那条',
+    await js(`window.pixelAPI.sessions().then(function(r){return r.current;})`), origSeq);
+  await typeIn('');
+
+  /* ================= 9. 收尾截图 ================= */
   await js(`document.querySelector('.rtab[data-tab="tools"]').click()`);
   await sleep(300);
   await shot('11-final.png');

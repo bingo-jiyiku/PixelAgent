@@ -37,14 +37,66 @@ const CONFIG_FILE = path.join(APP_DIR, '.pixelagent.json');
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 // ---------- 配置 ----------
-let cfg = { workDir: APP_DIR, names: {} };
+/*
+  两张表要分清：
+  · CFG_DEFAULTS —— **真设置**：改得动、存得下、能被验收读回。
+  · names        —— 会话改名记录，不是"设置"，只是搭同一个文件存着。
+  凡是界面上摆出来的开关，这里必须有对应字段 + 校验；反过来也成立，
+  不摆"只显示不生效"的假设置（老板这轮的原话就是"设置要有设置该有的功能"）。
+*/
+const CFG_DEFAULTS = {
+  workDir: APP_DIR,
+  names: {},
+  enterToSend: true,        // true=Enter 发送；false=Enter 换行、Ctrl+Enter 发送
+  maxImages: 4,             // 一次最多几张图（1..9）
+  accent: 'lav',            // 主题强调色
+  mascotAnim: true,         // 吉祥物四态动画
+  compact: false,           // 紧凑模式（行距更紧）
+  autoScroll: true,         // 新消息自动滚到底
+  exportFormat: 'html',     // 导出默认格式
+  defaultModel: '',         // '' = 用 pi 默认
+  defaultThinking: ''       // '' = 用 pi 默认
+};
+// 主题色：两档（主色 / 硬阴影色）成对给，改一个变量就能整体换皮
+const ACCENTS = {
+  lav:   { name: '薰衣草紫', main: '#c381b5', deep: '#a8669c' },
+  teal:  { name: '青瓷',     main: '#4f9c93', deep: '#3d7d76' },
+  amber: { name: '琥珀',     main: '#c08a2e', deep: '#9a6c1f' },
+  rose:  { name: '玫瑰',     main: '#c96a7e', deep: '#a04f61' }
+};
+const EXPORT_FORMATS = ['html', 'md', 'json'];
+
+let cfg = { ...CFG_DEFAULTS };
+
+// 白名单式校验：不在表里的键**一律丢掉**，免得界面笔误把垃圾写进配置文件
+function normalizeCfg(patch) {
+  const p = patch || {}, out = {};
+  if ('enterToSend' in p) out.enterToSend = !!p.enterToSend;
+  if ('maxImages' in p) {
+    const n = Math.round(Number(p.maxImages));
+    out.maxImages = (Number.isFinite(n) && n >= 1 && n <= 9) ? n : CFG_DEFAULTS.maxImages;
+  }
+  if ('accent' in p) out.accent = ACCENTS[p.accent] ? p.accent : CFG_DEFAULTS.accent;
+  if ('mascotAnim' in p) out.mascotAnim = !!p.mascotAnim;
+  if ('compact' in p) out.compact = !!p.compact;
+  if ('autoScroll' in p) out.autoScroll = !!p.autoScroll;
+  if ('exportFormat' in p) out.exportFormat = EXPORT_FORMATS.includes(p.exportFormat) ? p.exportFormat : CFG_DEFAULTS.exportFormat;
+  if ('defaultModel' in p) out.defaultModel = typeof p.defaultModel === 'string' ? p.defaultModel : '';
+  if ('defaultThinking' in p) {
+    out.defaultThinking = THINKING_LEVELS.includes(p.defaultThinking) ? p.defaultThinking : '';
+  }
+  return out;
+}
 
 function loadCfg() {
+  cfg = { ...CFG_DEFAULTS, names: {} };
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
-    const j = JSON.parse(raw);
-    if (j && typeof j.workDir === 'string' && j.workDir) cfg.workDir = j.workDir;
-    if (j && j.names && typeof j.names === 'object') cfg.names = j.names;
+    const j = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (j && typeof j === 'object') {
+      if (typeof j.workDir === 'string' && j.workDir) cfg.workDir = j.workDir;
+      if (j.names && typeof j.names === 'object') cfg.names = j.names;
+      Object.assign(cfg, normalizeCfg(j));      // 老配置里没有的键自动落默认值
+    }
   } catch (e) { /* 首次运行没有配置文件，用默认 */ }
   // 工作目录必须真实存在，否则文件树和 pi 的 cwd 都会出错
   try { if (!fs.statSync(cfg.workDir).isDirectory()) cfg.workDir = APP_DIR; }
@@ -52,6 +104,11 @@ function loadCfg() {
 }
 function saveCfg() {
   try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); } catch (e) { /* 写不进去不该崩 */ }
+}
+// 给界面看的子集：names 可能很大，不该跟着设置面板来回传
+function cfgForUi() {
+  const { names, ...rest } = cfg;
+  return { ...rest, renameCount: Object.keys(names || {}).length };
 }
 loadCfg();
 
@@ -256,6 +313,17 @@ function listFiles(dir) {
 let modelsCache = null;   // 模型列表缓存（一次会话内不变）
 let curModel = null;      // null = 用 pi 自己的默认配置
 let curThinking = null;   // null = 用 pi 默认；否则 off|minimal|low|medium|high|xhigh|max
+
+// 设置里的"默认模型 / 默认思考档位" → 当前选择。
+// 只在两处调用：① 启动时；② 用户真的改了这两个设置时。
+// 故意**不**在每次保存设置时调用 —— 否则"换主题色"会把用户刚选的模型重置掉。
+function applyModelDefaults() {
+  const m = String(cfg.defaultModel || '');
+  const i = m.indexOf('/');
+  curModel = (i > 0) ? { provider: m.slice(0, i), model: m.slice(i + 1) } : null;
+  curThinking = THINKING_LEVELS.includes(cfg.defaultThinking) ? cfg.defaultThinking : null;
+}
+applyModelDefaults();
 
 function parseSize(s) {
   const m = /^([\d.]+)\s*([KM]?)$/.exec(String(s || ''));
@@ -476,14 +544,32 @@ ipcMain.handle('pi:session-history', (_e, seq) => {
 });
 
 // ---------- 会话重命名（只记别名，不动 pi 的会话文件） ----------
+// ---------- 会话重命名（只记别名，不动 pi 的会话文件） ----------
+// 校验放在主进程：只有它手里有"全部会话的最终标题"（别名 || 自动标题），
+// 界面那边只有一份渲染结果，拿它去判重是会判漏的。
 ipcMain.handle('pi:session-rename', (_e, seq, name) => {
   const n = Number(seq);
   if (!Number.isFinite(n) || n < 0) return { ok: false, reason: 'BAD_SEQ' };
-  const clean = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 60);
+
+  // 控制字符会把列表布局搞乱（换行/制表），先清掉再压空格
+  const clean = String(name == null ? '' : name)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+
+  if (clean) {
+    const rows = listSessions();
+    const clash = rows.filter((s) => s.seq !== n && s.title === clean)[0];
+    if (clash) {
+      return { ok: false, reason: 'NAME_TAKEN', clash: clash.seq, name: clean, sessions: rows };
+    }
+  }
+
   if (clean) cfg.names[String(n)] = clean;
   else delete cfg.names[String(n)];      // 传空 = 恢复成自动标题
   saveCfg();
-  return { ok: true, sessions: listSessions() };
+  return { ok: true, seq: n, name: clean, cleared: !clean, sessions: listSessions() };
 });
 
 // ---------- 会话删除：进回收站，绝不 rm ----------
@@ -525,26 +611,56 @@ ipcMain.handle('pi:session-delete', async (_e, seq) => {
   };
 });
 
-// ---------- 会话导出：用 pi 自己的 --export，产出独立 HTML ----------
+// ---------- 会话导出：三种格式，默认哪种由设置决定 ----------
 // 支持两种走法：
 //   exportSession(seq)              → 弹系统保存框（界面按钮用）
 //   exportSession(seq, outPath)     → 直接写到指定路径，不开框（验收 / 脚本 / 命令面板用）
 // 为什么要拆出 outPath：系统保存框是阻塞式的，自动化验收没法点它，
 // 于是"导出"这个功能就一直验不了。能绕开对话框的接口，才验得动。
-ipcMain.handle('pi:session-export', async (_e, seq, outPath) => {
+//
+// 为什么自己写 md / json 两条路：设置里那个「导出格式」如果只改后缀名、
+// 内容还是一份 HTML，那就是**假设置**。要么不摆这个开关，要么三种都是真的。
+function sessionToMarkdown(parsed, title) {
+  const L = [];
+  L.push('# ' + (title || 'PixelAgent 会话'));
+  L.push('');
+  L.push('- 导出时间：' + new Date().toLocaleString('zh-CN'));
+  if (parsed.model) L.push('- 模型：' + parsed.model);
+  if (parsed.cwd) L.push('- 工作目录：' + parsed.cwd);
+  L.push('');
+  for (const m of parsed.msgs) {
+    L.push('## ' + (m.role === 'user' ? '你' : '助手'));
+    L.push('');
+    if (m.images) L.push('> （含 ' + m.images + ' 张图片，Markdown 里不保留）\n');
+    L.push(String(m.text || '').trim());
+    L.push('');
+  }
+  if (parsed.todos && parsed.todos.length) {
+    L.push('## 待办');
+    L.push('');
+    for (const t of parsed.todos) L.push('- [' + (t.done ? 'x' : ' ') + '] ' + t.text);
+    L.push('');
+  }
+  return L.join('\n');
+}
+
+ipcMain.handle('pi:session-export', async (_e, seq, outPath, fmtArg) => {
   const n = Number(seq == null ? sessionSeq : seq);
   const file = sessionFile(n);
   if (!fs.existsSync(file)) return { ok: false, reason: 'NOT_FOUND' };
 
   const alias = cfg.names[String(n)];
+  const fmt = EXPORT_FORMATS.includes(fmtArg) ? fmtArg : cfg.exportFormat;
+  const ext = fmt === 'md' ? 'md' : fmt === 'json' ? 'json' : 'html';
+  const FMT_NAME = { html: '独立 HTML', md: 'Markdown 文档', json: '原始 JSON' };
   let target = typeof outPath === 'string' && outPath ? outPath : '';
 
   if (!target) {
     if (!win || win.isDestroyed()) return { ok: false, reason: 'NO_WINDOW' };
     const r = await dialog.showSaveDialog(win, {
-      title: '导出会话（独立 HTML）',
-      defaultPath: path.join(cfg.workDir, (alias || ('pixelagent-chat-' + n)) + '.html'),
-      filters: [{ name: 'HTML', extensions: ['html'] }]
+      title: '导出会话（' + FMT_NAME[fmt] + '）',
+      defaultPath: path.join(cfg.workDir, (alias || ('pixelagent-chat-' + n)) + '.' + ext),
+      filters: [{ name: FMT_NAME[fmt], extensions: [ext] }]
     });
     if (r.canceled || !r.filePath) return { ok: false, reason: 'CANCELED' };
     target = r.filePath;
@@ -552,8 +668,24 @@ ipcMain.handle('pi:session-export', async (_e, seq, outPath) => {
 
   try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (e) { /* 目录已存在即可 */ }
 
+  // JSON：原样搬走 pi 的会话文件（无损，便于二次处理）
+  if (fmt === 'json') {
+    try { fs.copyFileSync(file, target); return { ok: true, out: target, format: fmt }; }
+    catch (e) { return { ok: false, reason: 'EXPORT_FAILED', error: e.message }; }
+  }
+
+  // Markdown：自己按消息渲染（pi 的 --export 只出 HTML，没有 md）
+  if (fmt === 'md') {
+    try {
+      const parsed = parseSession(file);
+      fs.writeFileSync(target, sessionToMarkdown(parsed, alias || parsed.title), 'utf8');
+      return { ok: true, out: target, format: fmt };
+    } catch (e) { return { ok: false, reason: 'EXPORT_FAILED', error: e.message }; }
+  }
+
+  // HTML：交给 pi 自己的 --export
   const q = await runPiQuery(['--export', file, target], 60000, AGENT_DIR);
-  if (q.ok && fs.existsSync(target)) return { ok: true, out: target };
+  if (q.ok && fs.existsSync(target)) return { ok: true, out: target, format: fmt };
   return { ok: false, reason: 'EXPORT_FAILED', error: q.error || (q.err || '').slice(-400) };
 });
 
@@ -747,7 +879,7 @@ ipcMain.handle('pi:agents', async () => {
   };
 });
 
-// ---------- 设置面板信息 ----------
+// ---------- 设置面板信息（只读部分） ----------
 ipcMain.handle('pi:info', () => {
   const loc = bridge.locate();
   return {
@@ -761,6 +893,33 @@ ipcMain.handle('pi:info', () => {
     mode: 'JSON（换行分隔事件流）',
     current: modelState()
   };
+});
+
+// ---------- 设置：读 / 写 / 恢复默认（老板要的"设置要有设置该有的功能"） ----------
+// 三层都要能对上，才算"真的能改"：
+//   ① 界面改 → ② 存进 .pixelagent.json → ③ 重启后还在（test/verify-settings.js 验的就是这条）
+ipcMain.handle('pi:cfg', () => ({
+  ok: true, cfg: cfgForUi(), accents: ACCENTS,
+  thinkingLevels: THINKING_LEVELS, exportFormats: EXPORT_FORMATS
+}));
+
+ipcMain.handle('pi:cfg-set', (_e, patch) => {
+  const applied = normalizeCfg(patch);
+  // 白名单外的键要**报出来**而不是默默吞掉：界面笔误（比如把 mascotAnim 写成 mascot）
+  // 会表现成"点了保存但没生效"，没有这个回执就只能靠猜。
+  const dropped = Object.keys(patch || {}).filter((k) => !(k in applied));
+  Object.assign(cfg, applied);
+  saveCfg();
+  if ('defaultModel' in applied || 'defaultThinking' in applied) applyModelDefaults();
+  return { ok: true, cfg: cfgForUi(), applied, droppedKeys: dropped };
+});
+
+ipcMain.handle('pi:cfg-reset', () => {
+  const names = cfg.names;                       // 会话改名记录不是设置，不清
+  cfg = { ...CFG_DEFAULTS, names };
+  saveCfg();
+  applyModelDefaults();
+  return { ok: true, cfg: cfgForUi() };
 });
 
 // ---------- 窗口控制（无原生标题栏用） ----------

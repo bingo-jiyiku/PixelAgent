@@ -67,15 +67,22 @@ app.whenReady().then(async () => {
   }
   await sleep(500);
   await shoot(win, '09-model.png');
-  await win.webContents.executeJavaScript(`document.getElementById('mdl-x').click()`);
-
-  // 设置面板（改中文之后要复核：输出模式 / 配置目录 / 凭据 / pi 入口 这些标签）
-  await sleep(400);
-  await win.webContents.executeJavaScript(`document.getElementById('btn-settings').click()`);
-  await sleep(1400);   // 里面还会真跑一次 pi:info
-  await shoot(win, '10-settings.png');
   await win.webContents.executeJavaScript(
-    `(function(){const b=document.getElementById('dlg-x'); if(b) b.click(); return 1;})()`);
+    `(function(){const b=document.getElementById('mdl-x'); if(!b) throw new Error('找不到 #mdl-x，关不掉模型框'); b.click(); return 1;})()`);
+
+  /* 设置面板**不在这里拍**。
+     踩过的坑：这里原来是 `await js('mdl-x').click()` 之后紧接拍 10-settings.png，
+     而 09-model.png 与 10-settings.png 的字节数完全相同（106198）——
+     两张静态同帧才会字节一致 ⇒ 所谓"设置截图"其实还是模型框。
+     原因有两个，都要记住：
+       ① 两个遮罩都是 `.mask { z-index:50 }`，`#mask-model` 在 DOM 里更靠后，
+          它会把 `#mask` 盖住；
+       ② `if (b) b.click()` 这种写法**找不到按钮就不吭声**，失败是静默的。
+     ⇒ 设置面板交给 test/shot-settings.js（它会回读每一步的真实状态、
+       按 DOM 的 rect 裁图，并且写完就做像素/数值核对）。
+       一个产物只留一个负责人，别两个脚本抢同一个文件名。
+     上面那句 `throw` 也是同一个道理：找不到就报错，不要静默跳过。 */
+  console.log('（设置面板截图见 npm run shot:settings —— 这里不再重复拍 10-settings.png）');
 
   console.log('✅ 补充截图完成');
   app.exit(0);

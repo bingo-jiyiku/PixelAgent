@@ -29,7 +29,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 // 用户能看到的文案在这几个文件里生成（main.js 的 pi:info / 报错文案也算）
-const FILES = ['renderer.js', 'md.js', 'main.js', 'attach.js', 'parse.js', 'preload.js', 'pi-bridge.js'];
+// pal.js 也在里面：分组标题（"最近使用"）、"回车执行"、参数提示都是它给的
+const FILES = ['renderer.js', 'md.js', 'main.js', 'attach.js', 'parse.js', 'preload.js', 'pi-bridge.js', 'pal.js'];
 const CJK = /[\u3000-\u9fff\uff00-\uffef]/;
 
 // 用户看得见、但有意保留的专有名词
@@ -48,7 +49,8 @@ const INTERNAL_KEEP = new Set([
 // 但它们在源码里长得像英文标签，所以必须显式声明，否则工具会一直报噪音。
 const INTERNAL_TOKENS = new Set(('use strict,IDLE,THINKING,TOOL,DONE,SYS,ERR,IMG,YOU,PI,STOP,SHELL,' +
   'BUSY,EMPTY,BAD_SEQ,NOT_FOUND,TRASH_FAILED,NO_WINDOW,CANCELED,EXPORT_FAILED,NOT_DIR,SPAWN_FAILED,' +
-  'IMAGE_REJECTED,unknown,on,del,off,minimal,low,medium,high,xhigh,max').split(','));
+  'IMAGE_REJECTED,unknown,on,del,off,minimal,low,medium,high,xhigh,max,' +
+  'NAME_TAKEN,NAME_EMPTY,html,md,json').split(','));
 const KEEP = new Set([...PUBLIC_KEEP, ...INTERNAL_KEEP]);
 const keepLc = new Set([...KEEP].map((s) => s.toLowerCase()));
 const tokenLc = new Set([...INTERNAL_TOKENS].map((s) => s.toLowerCase()));

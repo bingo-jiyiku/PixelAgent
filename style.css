@@ -65,9 +65,31 @@ body {
 
 ::selection { background: var(--lav); color: var(--ink); }
 
-/* 全局去滚动条（保留滚动能力） */
-* { scrollbar-width: none; -ms-overflow-style: none; }
-::-webkit-scrollbar { width: 0; height: 0; display: none; }
+/* ============================================================
+   滚动条：95 风格的粗条（**不能藏**）
+   ------------------------------------------------------------
+   原来这里是：
+       * { scrollbar-width: none; }
+       ::-webkit-scrollbar { width: 0; height: 0; display: none; }
+   藏得非常干净，直到设置面板做出来才发现代价：
+   实测设置内容 **1129px**、可视区只有 **685px**（`.dialog { max-height: 84vh }`），
+   底下 5 个设置项一个提示都没有 —— 用户会读成"设置就只有这几项"。
+   滚动条不是装饰，它是「下面还有东西」的唯一证据。
+
+   这里改成全局恢复 + 统一 95 造型（灰凹槽 + 白滑块 + 3px 黑描边），
+   而不是去手写一张"哪些容器要滚动条"的名单 —— 名单一定会漏（新加一个面板就漏一个），
+   而且漏了**不会报错**，只会静默地又藏起来。
+   ★ 两个必须注意的点，写错就是"改了没效果还不报错"：
+     ① 必须显式 `display: block`：全局那条的 `display:none` 会继续作用到同一个伪元素；
+     ② 别写 `scrollbar-width: none`：Chromium 会优先用标准属性、直接忽略下面这些自定义规则。
+   `overflow: auto` 的容器只在真需要时才出现滚动条，所以不妨碍观感。
+   ============================================================ */
+* { scrollbar-width: auto; -ms-overflow-style: auto; }
+::-webkit-scrollbar { width: 13px; height: 13px; display: block; }
+::-webkit-scrollbar-track { background: var(--panel-3); border: 3px solid var(--ink); }
+::-webkit-scrollbar-thumb { background: var(--panel); border: 3px solid var(--ink); }
+::-webkit-scrollbar-thumb:hover { background: var(--lav); }
+::-webkit-scrollbar-corner { background: var(--panel-3); border: 3px solid var(--ink); }
 
 .hidden { display: none !important; }
 
@@ -424,8 +446,24 @@ body {
 .pal-item:last-child { border-bottom: none; }
 .pal-item.on { background: var(--ink); }
 .pal-item.on .pal-k, .pal-item.on .pal-d { color: var(--panel); }
+.pal-item.on .pal-hit { color: var(--warn); }
 .pal-k { font-family: var(--f-px); font-size: 10px; color: var(--ink); flex: 0 0 auto; min-width: 92px; }
 .pal-d { font-size: 17px; color: var(--muted); }
+/* 模糊搜索命中高亮：只把命中的字符变色，不整条刷底色 */
+.pal-hit { color: var(--lav-deep); font-weight: 400; }
+.pal-group {
+  font-family: var(--f-px); font-size: 8px; letter-spacing: 1px; color: var(--muted);
+  background: var(--panel-2); border-bottom: 2px solid var(--panel-3);
+  padding: 4px 10px;
+}
+.pal-empty { padding: 12px 10px; font-size: 18px; color: var(--muted); }
+.pal-foot {
+  flex: 0 0 auto; min-height: 0;
+  font-size: 17px; color: var(--muted);
+  padding: 0 10px; border-top: 3px solid var(--ink); background: var(--panel-2);
+}
+.pal-foot:empty { display: none; }
+.pal-foot:not(:empty) { padding: 6px 10px; }
 .promptbar .ps { font-family: var(--f-px); font-size: 16px; color: var(--lav-deep); flex: 0 0 auto; }
 .inputwrap {
   flex: 1 1 auto; position: relative;
@@ -510,92 +548,185 @@ body {
 .sb-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
 
 /* ============================================================
-   像素小女孩办公动画（纯 CSS 逐帧，无图片依赖）
-   状态由 #pixel-girl / #girl-scene 的 data-state 驱动：
+   吉祥物：粉色双马尾少女「坐在电脑前办公」
+   ------------------------------------------------------------
+   人物是老板给的形象（assets/girl.png）——
+   由 tools/make-girl.js 只做「去白底 + 裁边」，细节一个像素都没重画。
+   桌椅 / 显示器 / 键盘 / 马克杯都是 CSS 搭的。
+
+   为什么让桌面挡住下半身：原图是站姿。把桌面板压在她的裙摆之上，
+   视觉上立刻读成"坐着办公"，而不需要让任何模型重画一遍
+   （重画必然改掉发绳 / 蝴蝶结 / 裙褶这些细节，就不是"这个形象"了）。
+
+   四态由 #pixel-girl(.office) / #girl-scene 的 data-state 驱动：
    IDLE / THINKING / TOOL / DONE
    ============================================================ */
-.girl-scene { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.girl-scene { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .girl-cap {
   font-family: var(--f-px); font-size: 9px; letter-spacing: 1px; color: var(--muted);
   border: 2px solid var(--ink); background: var(--panel); padding: 3px 6px;
 }
-.girl-desk {
-  position: relative; width: 200px; height: 172px;
-  border: 3px solid var(--ink);
-  background: repeating-linear-gradient(0deg, var(--panel-2) 0 2px, var(--panel) 2px 4px);
-  overflow: hidden;
+.office {
+  position: relative; width: 272px; height: 216px; overflow: hidden;
+  border: 3px solid var(--ink); background: var(--panel-2);
 }
-.girl { position: absolute; left: 50%; bottom: 26px; width: 72px; height: 92px; transform: translateX(-50%); image-rendering: pixelated; }
-.g-hair-back { position: absolute; left: 8px; top: 8px; width: 56px; height: 46px; background: #3a2b22; box-shadow: 0 4px 0 #3a2b22; }
-.g-head { position: absolute; left: 14px; top: 12px; width: 44px; height: 40px; background: #f6d5b8; border: 3px solid #2b1d14; z-index: 3; }
-.g-eye { position: absolute; top: 15px; width: 6px; height: 6px; background: #2b1d14; }
-.g-eye.l { left: 9px; }
-.g-eye.r { right: 9px; }
-.girl[data-state="IDLE"] .g-eye { animation: g-blink 4s steps(1) infinite; }
-@keyframes g-blink { 0%, 92% { transform: scaleY(1); } 94%, 96% { transform: scaleY(.12); } 98%, 100% { transform: scaleY(1); } }
-.g-blush { position: absolute; top: 25px; width: 7px; height: 4px; background: var(--lav); }
-.g-blush.l { left: 5px; }
-.g-blush.r { right: 5px; }
-.g-mouth { position: absolute; left: 50%; top: 28px; width: 10px; height: 4px; background: #b4593f; transform: translateX(-50%); }
-.girl[data-state="DONE"] .g-mouth { height: 8px; width: 12px; }
-.g-hair-front { position: absolute; left: 12px; top: 6px; width: 48px; height: 14px; background: #3a2b22; z-index: 4; box-shadow: 4px 10px 0 #3a2b22, -2px 10px 0 #3a2b22; }
-.g-body { position: absolute; left: 20px; bottom: 0; width: 32px; height: 26px; background: var(--lav); border: 3px solid #2b1d14; z-index: 5; }
-.g-arm { position: absolute; width: 10px; height: 22px; background: var(--lav); border: 3px solid #2b1d14; z-index: 6; transform-origin: 5px 3px; }
-.g-arm.l { left: 10px; top: 26px; }
-.g-arm.r { right: 10px; top: 26px; }
-.girl[data-state="IDLE"] .g-arm.r { animation: g-type 1.1s steps(2) infinite; }
-@keyframes g-type { 0%, 49% { transform: rotate(0deg) translateY(0); } 50%, 100% { transform: rotate(10deg) translateY(4px); } }
-.girl[data-state="THINKING"] .g-arm.r { transform: rotate(-40deg) translateY(-4px); }
-.girl[data-state="TOOL"] .g-arm { z-index: 9; animation: g-work .7s steps(2) infinite; }
-@keyframes g-work { 0%, 49% { transform: rotate(-56deg) translateY(-6px); } 50%, 100% { transform: rotate(-70deg) translateY(-8px); } }
-.girl[data-state="DONE"] .g-arm { z-index: 9; }
-.girl[data-state="DONE"] .g-arm.l { transform: rotate(-150deg) translateY(-6px); }
-.girl[data-state="DONE"] .g-arm.r { transform: rotate(150deg) translateY(-6px); }
-.girl[data-state="DONE"] { animation: g-cheer 1.4s steps(2) infinite; }
-@keyframes g-cheer { 0%, 49% { transform: translateX(-50%) translateY(0); } 50%, 100% { transform: translateX(-50%) translateY(-5px); } }
+.of-wall {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, var(--panel-2) 0 9px, var(--panel-3) 9px 10px);
+}
 
-.g-bubble { position: absolute; left: 50%; top: -34px; transform: translateX(-50%); display: none; gap: 4px; padding: 6px; background: var(--panel); border: 3px solid var(--ink); z-index: 9; white-space: nowrap; }
-.g-bubble i { width: 6px; height: 6px; background: var(--lav); display: block; }
-.g-bubble i:nth-child(2) { animation: b-dot 1s steps(2) infinite; }
-.g-bubble i:nth-child(3) { animation: b-dot 1s steps(2) .3s infinite; }
-@keyframes b-dot { 0%, 49% { opacity: .25; } 50%, 100% { opacity: 1; } }
-.girl[data-state="THINKING"] .g-bubble { display: flex; }
+/* --- 墙上：窗户 + 书架 --- */
+.of-window {
+  position: absolute; left: 16px; top: 12px; width: 62px; height: 46px;
+  background: var(--lav); border: 3px solid var(--ink); overflow: hidden; z-index: 1;
+}
+.of-window::before, .of-window::after { content: ''; position: absolute; background: var(--ink); }
+.of-window::before { left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1px; }
+.of-window::after { top: 50%; left: 0; right: 0; height: 3px; margin-top: -1px; }
+.of-moon { position: absolute; left: 7px; top: 6px; width: 13px; height: 13px; background: var(--panel); border-radius: 50%; }
+.of-st { position: absolute; width: 4px; height: 4px; background: var(--panel); }
+.of-st.s1 { left: 8px; top: 29px; }
+.of-st.s2 { left: 36px; top: 7px; }
+.of-st.s3 { left: 45px; top: 31px; }
 
-.g-gear { position: absolute; left: 50%; top: 0; width: 18px; height: 18px; margin-left: -9px; display: none; z-index: 8; }
-.g-gear::before, .g-gear::after { content: ''; position: absolute; background: var(--ink); }
-.g-gear::before { left: 0; top: 6px; width: 18px; height: 6px; }
-.g-gear::after  { left: 6px; top: 0; width: 6px; height: 18px; }
-.g-gear i { position: absolute; width: 6px; height: 6px; background: var(--ink); }
-.g-gear i.t1 { left: 6px; top: -3px; }
-.g-gear i.t2 { left: 6px; bottom: -3px; }
-.g-gear i.t3 { top: 6px; left: -3px; }
-.g-gear i.t4 { top: 6px; right: -3px; }
-.g-gear, .g-gear::before, .g-gear::after, .g-gear i { animation: g-spin 1.6s steps(4) infinite; }
-@keyframes g-spin { to { transform: rotate(360deg); } }
-.girl[data-state="TOOL"] .g-gear { display: block; }
+.of-shelf { position: absolute; right: 16px; top: 20px; width: 64px; height: 6px;
+  background: var(--panel-3); border: 3px solid var(--ink); z-index: 1; }
+.of-shelf i { position: absolute; bottom: 6px; width: 9px; border: 2px solid var(--ink); }
+.of-shelf i:nth-child(1) { left: 3px;  height: 20px; background: var(--lav-deep); }
+.of-shelf i:nth-child(2) { left: 15px; height: 26px; background: var(--lav); }
+.of-shelf i:nth-child(3) { left: 27px; height: 16px; background: var(--warn); }
+.of-shelf i:nth-child(4) { left: 39px; height: 23px; background: var(--panel); }
 
-.g-stars { position: absolute; left: 0; right: 0; top: -40px; height: 16px; display: none; z-index: 9; }
-.g-stars i { position: absolute; width: 8px; height: 8px; background: var(--warn);
+/* --- 人物（原图，未重画） --- */
+/*
+   ★ 这里**故意没有椅背** —— 别再"好心"加回来。
+   踩过的坑：最初画了个 86×78 的椅背放在人物身后想强化"坐着"，
+   结果实测（tools/girl-profile.js 量轮廓）发现：她的双马尾最宽处几乎占满
+   整个人物框（311/315 px），椅背只在**马尾与身体之间的那两道缝**里露出来，
+   在浅色墙面上就是两条惨白的竖条 → 读起来像"背后贴了张白卡片"。
+   而"坐姿"这件事其实已经由桌面挡住下半身完成了（实测垂直重叠 38px），
+   不需要再画椅子。少一个元素 = 少一处视觉噪音。
+*/
+.of-girl {
+  position: absolute; left: 150px; bottom: 24px; width: 108px; margin-left: -54px;
+  z-index: 4; transform-origin: 50% 100%;
+}
+.office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
+@keyframes of-breathe { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-2px); } }
+.office[data-state="THINKING"] .of-girl { animation: of-sway 2s steps(2) infinite; }
+@keyframes of-sway { 0%, 49% { transform: rotate(-1.5deg); } 50%, 100% { transform: rotate(1.5deg); } }
+.office[data-state="DONE"] .of-girl { animation: of-hop 1.2s steps(2) infinite; }
+@keyframes of-hop { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-6px); } }
+
+/* --- 桌子（挡住下半身 → 坐姿） --- */
+.of-desk {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 64px; z-index: 6;
+  /* 比墙面(#f2f2f2 / #e4e4e0)略深一档，桌面才不会和墙"糊"成一片 */
+  background: #dbd8d1; border-top: 4px solid var(--ink);
+}
+.of-desk::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 8px;
+  background: var(--panel-2); border-bottom: 3px solid var(--ink); }
+.of-drawer { position: absolute; left: 16px; bottom: 9px; width: 62px; height: 28px;
+  background: var(--panel-2); border: 3px solid var(--ink); }
+.of-drawer.r { left: auto; right: 16px; }
+.of-drawer::after { content: ''; position: absolute; left: 50%; top: 9px; width: 18px; height: 5px;
+  margin-left: -9px; background: var(--ink); }
+
+/* --- 桌面物品 --- */
+.of-monitor { position: absolute; left: 6px; bottom: 64px; width: 84px; z-index: 8; }
+.of-screen { position: relative; width: 84px; height: 54px; overflow: hidden;
+  background: #241d16; border: 3px solid var(--ink); }
+.of-l1, .of-l2, .of-l3 { position: absolute; height: 5px; background: var(--lav); opacity: .92; }
+.of-l1 { left: 8px; top: 10px; width: 40px; }
+.of-l2 { left: 8px; top: 21px; width: 26px; }
+.of-l3 { left: 8px; top: 32px; width: 48px; }
+.of-scan { position: absolute; left: 0; right: 0; height: 9px; background: rgba(195, 129, 181, .3); animation: of-scan 2.6s linear infinite; }
+@keyframes of-scan { from { top: -9px; } to { top: 100%; } }
+/* 「正在处理」的三个点必须**居中**：原来 left:9 靠左，在暗屏上像两块碎屑 */
+.of-dots { position: absolute; left: 0; right: 0; bottom: 8px; display: none;
+  justify-content: center; gap: 5px; }
+.of-dots i { width: 5px; height: 5px; background: var(--lav); display: block; }
+.of-dots i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
+.of-dots i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
+@keyframes of-dot { 0%, 49% { opacity: .25; } 50%, 100% { opacity: 1; } }
+.of-ok { position: absolute; left: 0; right: 0; top: 14px; text-align: center; display: none;
+  font-family: var(--f-px); font-size: 20px; color: var(--lav); }
+.of-mfoot { width: 14px; height: 8px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); border-top: none; }
+.of-mbase { width: 42px; height: 5px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); }
+
+.office[data-state="THINKING"] .of-l1,
+.office[data-state="THINKING"] .of-l2,
+.office[data-state="THINKING"] .of-l3,
+.office[data-state="TOOL"] .of-l1,
+.office[data-state="TOOL"] .of-l2,
+.office[data-state="TOOL"] .of-l3,
+.office[data-state="DONE"] .of-l1,
+.office[data-state="DONE"] .of-l2,
+.office[data-state="DONE"] .of-l3 { display: none; }
+.office[data-state="THINKING"] .of-dots,
+.office[data-state="TOOL"] .of-dots { display: flex; }
+.office[data-state="TOOL"] .of-scan { background: rgba(195, 129, 181, .5); animation-duration: 1s; }
+.office[data-state="DONE"] .of-ok { display: block; }
+
+/* 键盘：宽度按桌面留白收紧（80px），两侧要留出书本和杯子的位置 */
+.of-keyboard { position: absolute; left: 150px; bottom: 64px; width: 80px; height: 15px; margin-left: -40px;
+  background: var(--panel-2); border: 3px solid var(--ink); z-index: 8;
+  display: flex; gap: 3px; align-items: center; justify-content: center; }
+.of-keyboard i { width: 6px; height: 5px; background: var(--ink); }
+/* IDLE 只让**这一个具名键**闪。
+   原来写的是 `i:nth-child(2)` —— 靠数位置认键，以后往键盘里加一个键、
+   或在前面插一个元素，闪的就变成旁边那个，而且**不会有任何报错**（静默走位）。
+   槽位就该用名字标出来，这是这一轮所有"槽位改造"的同一条理由。 */
+.office[data-state="IDLE"] .of-keyboard i.f-key { animation: of-key 1.1s steps(2) infinite; }
+.office[data-state="TOOL"] .of-keyboard i { animation: of-key .7s steps(2) infinite; }
+.office[data-state="TOOL"] .of-keyboard i:nth-child(odd) { animation-delay: .35s; }
+@keyframes of-key { 0%, 49% { background: var(--ink); } 50%, 100% { background: var(--lav); } }
+
+/* 桌面右侧：马克杯（靠边）+ 两本平放的书。三者不叠 —— 键盘 110..190 / 书 196..222 / 杯 236..254 */
+.of-mug { position: absolute; right: 12px; bottom: 64px; width: 18px; height: 16px; z-index: 8;
+  background: var(--lav); border: 3px solid var(--ink); }
+.of-mug::after { content: ''; position: absolute; right: -7px; top: 3px; width: 6px; height: 7px;
+  border: 3px solid var(--ink); border-left: none; }
+.of-books { position: absolute; right: 44px; bottom: 64px; width: 26px; z-index: 8; }
+.of-books i { display: block; height: 7px; border: 3px solid var(--ink); }
+.of-books i:first-child { background: var(--lav-deep); width: 26px; }
+.of-books i:last-child { background: var(--warn); width: 22px; }
+
+/* --- 状态特效 --- */
+/* 气泡：贴着头的**右侧**（原来在头顶正上方 176px 处，飘在空墙上看不出是"对谁说的"） */
+.of-bubble { position: absolute; left: 196px; bottom: 152px; display: none;
+  gap: 4px; padding: 6px; background: var(--panel); border: 3px solid var(--ink); z-index: 9; }
+.of-bubble i { width: 6px; height: 6px; background: var(--lav); display: block; }
+.of-bubble i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
+.of-bubble i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
+.office[data-state="THINKING"] .of-bubble { display: flex; }
+
+/* 齿轮：放在人物右侧的空墙上。
+   踩过三次坑，最后定成这样：
+   ① 原来 left:40/bottom:158 —— 正好压在窗户上，像个黑十字；
+   ② 原来只有 4 根齿条、没有本体 → 渲出来就是"+"，不像齿轮；
+   ③ 加了本体之后**旋转**反而更糊：12px 的小东西转到 45° 时四条齿把四角填满，
+      放大看就是一坨黑方块（角度是随机的，截图经常正好撞上那一帧）。
+   ⇒ 定稿：不转，改成**脉冲**（95 风格本来就爱用"闪"而不是"平滑动"），
+      尺寸放大到本体 14px + 四齿各 7px，中间掏 6px 的孔 —— 齿轮形状清清楚楚。 */
+.of-gear { position: absolute; left: 212px; bottom: 94px; width: 14px; height: 14px; display: none; z-index: 9;
+  background: var(--ink);
+  box-shadow: -7px 0 0 var(--ink), 7px 0 0 var(--ink), 0 -7px 0 var(--ink), 0 7px 0 var(--ink);
+  animation: of-pulse .7s steps(2) infinite; }
+.of-gear::before { content: ''; position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; background: var(--panel-3); }
+@keyframes of-pulse { 0%, 49% { transform: scale(1); } 50%, 100% { transform: scale(1.14); } }
+.office[data-state="TOOL"] .of-gear { display: block; }
+
+/* 星星：只撒在人物头顶那一小片（原来的框 108px 宽、右端顶到书架，
+   最左最右两颗飘到窗户和书架上方 → 读起来像墙上的随机装饰） */
+.of-stars { position: absolute; left: 108px; width: 72px; bottom: 174px; height: 16px; display: none; z-index: 9; }
+.of-stars i { position: absolute; width: 8px; height: 8px; background: var(--warn);
   box-shadow: -4px 0 0 var(--warn), 4px 0 0 var(--warn), 0 -4px 0 var(--warn), 0 4px 0 var(--warn); }
-.g-stars i:nth-child(1) { left: 4px; top: 2px; animation: s-pop .9s steps(2) infinite; }
-.g-stars i:nth-child(2) { left: 50%; top: -6px; animation: s-pop .9s steps(2) .25s infinite; }
-.g-stars i:nth-child(3) { right: 4px; top: 2px; animation: s-pop .9s steps(2) .5s infinite; }
-@keyframes s-pop { 0%, 49% { transform: scale(.6); opacity: .6; } 50%, 100% { transform: scale(1); opacity: 1; } }
-.girl[data-state="DONE"] .g-stars { display: block; }
-
-.gd-screen { position: absolute; left: 12px; top: 44px; width: 52px; height: 40px; background: var(--ink); border: 3px solid #2b1d14; overflow: hidden; z-index: 1; }
-.gd-screen::before { content: ''; position: absolute; left: 10px; top: 12px; width: 5px; height: 5px; background: var(--lav);
-  box-shadow: 12px 0 0 var(--lav), 6px 8px 0 var(--lav); }
-.gd-scan { position: absolute; left: 0; right: 0; height: 8px; background: rgba(195, 129, 181, .22); animation: gd-scan 2.4s linear infinite; }
-@keyframes gd-scan { from { top: -8px; } to { top: 100%; } }
-
-.g-keyboard { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); width: 62px; height: 14px; background: var(--panel-2); border: 3px solid var(--ink); display: flex; gap: 3px; align-items: center; justify-content: center; z-index: 7; }
-.g-keyboard i { width: 6px; height: 5px; background: var(--ink); }
-.girl[data-state="IDLE"] ~ .g-keyboard i:nth-child(2) { animation: key-hit 1.1s steps(2) infinite; }
-.girl[data-state="TOOL"] ~ .g-keyboard i:nth-child(4) { animation: key-hit .7s steps(2) infinite; }
-@keyframes key-hit { 0%, 49% { background: var(--ink); } 50%, 100% { background: var(--lav); } }
-
-.g-desk { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: var(--panel); border-top: 3px solid var(--ink); z-index: 1; }
+.of-stars i:nth-child(1) { left: 0; top: 4px; animation: of-pop .9s steps(2) infinite; }
+.of-stars i:nth-child(2) { left: 50%; top: -4px; animation: of-pop .9s steps(2) .25s infinite; }
+.of-stars i:nth-child(3) { right: 0; top: 4px; animation: of-pop .9s steps(2) .5s infinite; }
+@keyframes of-pop { 0%, 49% { transform: scale(.6); opacity: .6; } 50%, 100% { transform: scale(1); opacity: 1; } }
+.office[data-state="DONE"] .of-stars { display: block; }
 
 /* ============================================================
    设置对话框（同一套 95 语言）
@@ -646,6 +777,61 @@ body {
 .dlg-body .kv { font-size: 19px; padding: 10px 14px; }
 .dlg-tip { font-size: 18px; color: var(--muted); margin: 0; padding: 14px 14px; line-height: 1.5; }
 .dlg-foot { padding: 0 14px 16px; }
+
+/* ============================================================
+   设置面板的控件（同一套 95 语言）
+   —— 划分段标题 / 行 / 输入框 / 分段按钮 / 自绘复选框
+   ============================================================ */
+.dialog-set { width: min(680px, 95vw); }
+.set-sec {
+  font-family: var(--f-px); font-size: 9px; letter-spacing: 2px; color: var(--ink);
+  background: var(--panel-2); border-top: 3px solid var(--ink); border-bottom: 3px solid var(--ink);
+  padding: 7px 14px; margin-top: 6px;
+}
+.set-sec:first-child { margin-top: 0; }
+.set-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-bottom: 2px dotted var(--panel-3);
+}
+.set-lb { flex: 0 0 136px; font-family: var(--f-px); font-size: 10px; letter-spacing: 1px; color: var(--ink); }
+.set-in {
+  flex: 1 1 auto; min-width: 0; font-family: var(--f-tx); font-size: 19px;
+  border: 3px solid var(--ink); border-radius: 0; background: var(--panel); color: var(--ink);
+  padding: 3px 7px; box-shadow: inset 2px 2px 0 var(--panel-3);
+}
+.set-in:focus { outline: none; background: #fffdf6; }
+.set-in.num { flex: 0 0 88px; }
+select.set-in { cursor: pointer; }
+.set-unit { font-size: 18px; color: var(--muted); flex: 0 0 auto; }
+.set-foot-gap { flex: 1 1 auto; }
+.set-note { margin: 0; padding: 10px 14px 14px; font-size: 18px; color: var(--muted); min-height: 22px; }
+.set-note.bad { color: var(--err); }
+
+/* 分段按钮（Enter 键行为 / 导出格式 / 主题色） */
+.seg { display: inline-flex; }
+.seg-b {
+  font-family: var(--f-px); font-size: 9px; letter-spacing: 1px; cursor: pointer; border-radius: 0;
+  border: 3px solid var(--ink); background: var(--panel); color: var(--ink);
+  padding: 6px 10px; margin-left: -3px;
+}
+.seg-b:first-child { margin-left: 0; }
+.seg-b:hover { background: var(--panel-2); }
+.seg-b.on { background: var(--lav); }
+.sw .sw-b { width: 36px; height: 26px; padding: 0; }
+.sw .sw-b.on { box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 6px var(--ink); }
+
+/* 自绘复选框（原生那个在像素风里太糙） */
+.chk { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 18px; color: var(--muted); }
+.chk input { position: absolute; opacity: 0; width: 0; height: 0; }
+.chk i { width: 20px; height: 20px; flex: 0 0 20px; border: 3px solid var(--ink); background: var(--panel); box-shadow: inset 2px 2px 0 var(--panel-3); }
+.chk input:checked + i { background: var(--lav); box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 6px var(--ink); }
+.chk input:focus-visible + i { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ---------- 设置项真的生效：关动画 / 紧凑 ---------- */
+body.no-anim .office *, body.no-anim .girl-scene *, body.no-anim .m { animation: none !important; }
+body.compact .log { padding: 8px 10px; }
+body.compact .m { margin-bottom: 5px; line-height: 1.34; font-size: 20px; }
+body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 
 /* ============================================================
    Markdown 渲染（PI 回复）

@@ -45,6 +45,7 @@ const S = {
   modelsLoaded: false,
   pendingTool: {},    // toolCallId -> {name, args}：args 只在 start 事件里有
   attachments: [],    // 待发送的图片附件
+  attLoading: 0,      // 正在读取中的图片张数（算上限时要算上，否则连拖 10 张会全进来）
   attSent: 0,         // 这一轮实际发出去几张图（用来对账"图到底进没进请求"）
   imgIn: 0,           // pi 回显的 user 消息里真的有几个 image 块
   imgWarned: false,   // 这一轮已经就图片问题提过醒，别重复刷屏
@@ -151,7 +152,8 @@ function bindMdCopy(root) {
    消息时间线
    ============================================================ */
 function showTimeline() { if (welcome) welcome.classList.add('hidden'); }
-function scrollEnd() { log.scrollTop = log.scrollHeight; }
+// 自动滚到底：受设置「新消息自动到底」控制（关掉后由用户自己滚，不再抢滚动条）
+function scrollEnd() { if (!CFG || CFG.autoScroll !== false) log.scrollTop = log.scrollHeight; }
 
 // 面向用户的标签一律中文；代码/样式/测试里仍用英文内部键（WHO_ZH 只负责显示层）
 const WHO_ZH = {
@@ -166,6 +168,8 @@ const REASON_ZH = {
   IMAGE_REJECTED: '图片没收下',
   EMPTY: '内容为空',
   BAD_SEQ: '会话号不对',
+  NAME_TAKEN: '这个名字已经有会话在用了',
+  NAME_EMPTY: '名字不能为空',
   NOT_FOUND: '文件不存在',
   TRASH_FAILED: '回收站操作失败',
   NO_WINDOW: '窗口不可用',
@@ -367,8 +371,19 @@ function addAttachment(file) {
     addMsg('err', 'ERR', '图片太大（' + fmtBytes(file.size) + '，上限 16M）');
     return;
   }
+  // 张数上限走设置（默认 4）。超了要**说清楚**而不是静默丢掉 —— 静默丢图
+  // 会让人以为"图发出去了"，跟 pi 那边静默丢图是同一类坑。
+  const cap = (CFG && CFG.maxImages) ? CFG.maxImages : 4;
+  const pending = S.attachments.length + S.attLoading;
+  if (pending >= cap) {
+    addMsg('err', 'ERR', '一次最多带 ' + cap + ' 张图（现在已有 ' + pending + ' 张，可在「设置」里调）');
+    return;
+  }
+  S.attLoading += 1;
   const r = new FileReader();
+  r.onerror = () => { S.attLoading = Math.max(0, S.attLoading - 1); addMsg('err', 'ERR', '这张图读不出来（' + esc(file.name || '未命名') + '）'); };
   r.onload = () => {
+    S.attLoading = Math.max(0, S.attLoading - 1);
     S.attachments.push({
       id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       name: file.name || ('pasted-' + Date.now() + '.png'),
@@ -616,6 +631,8 @@ function endTurn(code) {
 }
 
 function doAbort() {
+  // 计数放在 busy 判断之前：见 window.__pixelAborts 处的注释（测试要能看见"被叫了几次"）
+  if (typeof window.__pixelAborts === 'number') window.__pixelAborts++;
   if (!S.busy) return;
   if (api) api.abort();
   addMsg('step', 'STOP', '&gt; 已手动停止这一轮');
@@ -693,10 +710,10 @@ function onMsg(msg) {
       t.code.textContent = '退出码 ' + msg.code;
       if (msg.code !== 0) t.code.classList.add('bad');
       delete S.shellEls[msg.id];
-      log.scrollTop = log.scrollHeight;
+      scrollEnd();
     } else if (msg.data) {
       t.out.appendChild(el('span', msg.stream === 'err' ? 'sh-err' : null, esc(msg.data)));
-      log.scrollTop = log.scrollHeight;
+      scrollEnd();
     }
     return;
   }
@@ -830,7 +847,7 @@ function onMsg(msg) {
     if (ev.message.model) {
       $('kv-model').textContent = ev.message.model;
       if (!S.curModel) $('kv-model2').textContent = ev.message.model;
-      $('set-model').textContent = (ev.message.provider || '') + '/' + ev.message.model;
+      $('set-curmodel').textContent = (ev.message.provider || '') + '/' + ev.message.model;
       updateVision();
     }
     setUsage(ev.message.usage, ev.message.model);
@@ -895,8 +912,18 @@ function onMsg(msg) {
 window.__pixelFeed = onMsg;
 // 验收入口：导出 / 删除结果处理都要能**绕过需要人工点的对话框**单独调用。
 // 它们各自绑着 system 保存框 / confirmBox，不抽出来就永远只能靠肉眼验。
-window.__pixelExport = (seq, outPath) => exportSession({ seq: seq, title: '' }, outPath);
+window.__pixelExport = (seq, outPath, fmt) => exportSession({ seq: seq, title: '' }, outPath, fmt);
+window.__pixelCfg = () => CFG;                                   // 验收脚本读当前生效的设置
+window.__pixelApplyCfg = (c) => applyCfg(c);                     // 验收脚本直接灌一份设置看效果
+// 按 seq 打开会话：走渲染层这条**真实**路径（不是裸调 IPC），
+// 否则 S.seq 不会跟着变，后面 `/rename` 之类依赖"当前会话"的功能就测歪了。
+window.__pixelOpenSession = (seq) => openSession(seq);
 window.__pixelApplyDelete = (seq, res) => applyDeleteResult(seq, res);
+// 「中断了几次」—— 只有可观测才验得动。
+// 起因：设置面板开着时按 Esc，原来会掉进 doAbort() 把正在跑的这轮**中断掉**，
+// 而面板还不关。doAbort 里有 `if (!S.busy) return`，测试时没在跑就什么都看不出来，
+// 所以计数器必须放在 busy 判断**之前**，否则这条 bug 永远测不到。
+window.__pixelAborts = 0;
 
 if (api) api.onMsg(onMsg);
 
@@ -915,7 +942,7 @@ function sessionRow(r) {
     return b;
   };
   ops.appendChild(mk('改名', '重命名这个会话', '', () => renameSession(r)));
-  ops.appendChild(mk('导出', '导出成独立 HTML', '', () => exportSession(r)));
+  ops.appendChild(mk('导出', '导出这个会话（格式在设置里选）', '', () => exportSession(r)));
   ops.appendChild(mk('删除', '删除（进回收站，可恢复）', 'del', () => deleteSession(r)));
 
   d.innerHTML =
@@ -1055,12 +1082,42 @@ function doNewSessionLocal() {
 }
 
 /* ---------- 会话操作 ---------- */
-async function renameSession(r) {
-  if (!api) return;
-  const name = await askInput('重命名()', r.renamed ? r.title : '', '留空 = 恢复成自动标题');
-  if (name == null) return;
+// 命名：三个入口共用这一条路 —— 会话条上的「重命名」按钮、`/rename`、`/rename 名字`。
+// preset 给了就直接用（命令面板带参数），没给就弹框问。
+async function renameSession(r, preset) {
+  if (!api) return null;
+  let name = preset;
+  if (name == null) {
+    name = await askInput('重命名()', r.renamed ? r.title : '',
+      '留空 = 恢复成自动标题（跟别的会话重名会被拦下）');
+    if (name == null) return null;                 // 取消
+  }
   const res = await api.renameSession(r.seq, name);
-  if (res && res.sessions) renderSessions(res.sessions);
+  if (!res) return null;
+  if (res.ok === false) {
+    // 重名要**指名道姓**说清跟谁撞了，只回一句"失败"用户没法处理
+    if (res.reason === 'NAME_TAKEN') {
+      addMsg('err', 'ERR', '已经有会话叫「' + esc(res.name) + '」了（#' + res.clash + '），换个名字吧。');
+    } else {
+      addMsg('err', 'ERR', '改名失败：' + reasonZh(res.reason));
+    }
+    if (res.sessions) renderSessions(res.sessions);
+    return res;
+  }
+  if (res.sessions) renderSessions(res.sessions);   // 改名要**立刻**反映到左栏
+  addMsg('step', 'SYS', res.cleared
+    ? '&gt; 会话 #' + r.seq + ' 已恢复成自动标题'
+    : '&gt; 会话 #' + r.seq + ' 已改名为「' + esc(res.name) + '」');
+  return res;
+}
+
+// `/rename [名字]`：拿的是**当前**会话（@ 后面那些路径的语义不同，别混）
+async function renameCurrent(preset) {
+  if (!api) return null;
+  const all = await api.sessions();
+  const row = (((all && all.sessions) || []).filter((s) => s.seq === S.seq))[0];
+  if (!row) { addMsg('err', 'ERR', '找不到当前会话（可能还没有落盘），先发一句话再改名。'); return null; }
+  return renameSession(row, preset);
 }
 
 async function deleteSession(r) {
@@ -1102,10 +1159,12 @@ function applyDeleteResult(seq, res) {
 
 // outPath 可选：给了就跳过系统保存框直接写过去（自动化验收 / 脚本用）。
 // 不给则弹框问用户 —— 界面按钮走的是这条路。
-async function exportSession(r, outPath) {
+// fmt 可选：不传就用设置里的「导出格式」（html / md / json，三种都是真格式）
+async function exportSession(r, outPath, fmt) {
   if (!api) return null;
-  const res = await api.exportSession(r.seq, outPath);
-  if (res && res.ok) addMsg('step', 'SYS', '&gt; 已导出：' + esc(res.out));
+  const format = fmt || (CFG && CFG.exportFormat) || 'html';
+  const res = await api.exportSession(r.seq, outPath, format);
+  if (res && res.ok) addMsg('step', 'SYS', '&gt; 已导出（' + esc(res.format || format) + '）：' + esc(res.out));
   else if (res && res.reason !== 'CANCELED') {
     addMsg('err', 'ERR', '导出失败：' + (res.error || reasonZh(res.reason)));
   }
@@ -1322,7 +1381,7 @@ async function pickDir() {
   S.fileCache = (r.files && r.files.items) || [];
   $('kv-cwd').textContent = r.dir;
   $('kv-cwd').title = r.dir;
-  $('set-cwd').textContent = r.dir;
+  $('set-cwd').value = r.dir;
   await loadFiles(r.dir);
   addMsg('step', 'SYS', '&gt; 工作目录已切到 ' + esc(r.dir) + '（pi 的 cwd 和 @ 引用都跟着走）');
 }
@@ -1371,6 +1430,9 @@ function renderModelList(q) {
   const query = String(q || '').toLowerCase();
   const rows = S.models.filter((m) => !query || (m.provider + '/' + m.model).toLowerCase().includes(query));
   $('mdl-count').textContent = rows.length + ' 个模型';
+  // 标题带上条数（原来写死 `模型()`，一对空括号看着像坏了）。
+  // 顺带把"一共多少 / 筛完剩多少"顶到标题栏 —— 列表要滚动时这是最省事的提示。
+  $('mdl-title').textContent = '模型(' + rows.length + ')';
   if (!rows.length) { box.appendChild(el('div', 'empty', '没有匹配的模型')); return; }
 
   let curProv = null;
@@ -1409,6 +1471,7 @@ async function openModelPicker() {
   if (!api) { renderModelList(''); return; }
   if (!S.modelsLoaded) {
     $('mdl-count').textContent = '读取中…（正在运行 pi --list-models）';
+    $('mdl-title').textContent = '模型(读取中)';
     const r = await api.models();
     if (r && r.ok && r.models && r.models.length) {
       S.models = r.models;
@@ -1416,6 +1479,7 @@ async function openModelPicker() {
       if (r.current) { S.curModel = r.current.model; S.curThinking = r.current.thinking; }
     } else {
       $('mdl-count').textContent = '读取失败：' + ((r && r.error) || '未知原因');
+      $('mdl-title').textContent = '模型(读取失败)';
       return;
     }
   }
@@ -1486,6 +1550,11 @@ if ($('inp-field')) {
 
 /* ============================================================
    命令面板（/ 开头）+ 文件引用（@ 开头）
+   ------------------------------------------------------------
+   一个成熟桌面端的命令面板该有的：模糊搜索 + 命中高亮、分组、最近使用、
+   无结果提示、参数提示（`/rename 我的会话` 能连着写）。
+   过滤/排序/渲染都收在这一段；键盘（↑↓ / Tab / Enter / ESC）在旁边那段。
+   ★ 改过滤规则记得同时改 test/verify-palette.js 的反向验证用例。
    ============================================================ */
 function switchTab(t) {
   const b = document.querySelector('.rtab[data-tab="' + t + '"]');
@@ -1493,22 +1562,48 @@ function switchTab(t) {
 }
 
 const COMMANDS = [
-  { k: '/new',    d: '新建会话（清空上下文）',       run: () => newSession() },
-  { k: '/model',  d: '切换模型 / 思考档位',          run: () => openModelPicker() },
-  { k: '/stop',   d: '停止当前这一轮',                run: () => doAbort() },
-  { k: '/img',    d: '添加图片（也可直接粘贴/拖拽）', run: () => filePicker.click() },
-  { k: '/dir',    d: '切换工作目录',                  run: () => pickDir() },
-  { k: '/export', d: '导出当前会话为 HTML',           run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
-  { k: '/search', d: '跳到左栏搜索框',                run: () => { $('sess-q').focus(); } },
-  { k: '/tools',  d: '打开右栏「工具」',            run: () => switchTab('tools') },
-  { k: '/todos',  d: '打开右栏「待办」',            run: () => switchTab('todos') },
-  { k: '/files',  d: '打开右栏「文件」',            run: () => switchTab('files') },
-  { k: '/agents', d: '打开右栏「智能体」（看已装扩展）', run: () => switchTab('sub') },
-  { k: '/clear',  d: '清空当前视图（不动会话文件）',   run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
-  { k: '/info',   d: '查看后端 / 会话信息',            run: () => $('btn-settings').click() }
+  { k: '/new',    g: '会话', d: '新建会话（清空上下文）',       run: () => newSession() },
+  { k: '/rename', g: '会话', d: '给当前会话改名', arg: '名字',   run: (a) => renameCurrent(a) },
+  { k: '/export', g: '会话', d: '导出当前会话（格式见设置）',   run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
+  { k: '/clear',  g: '会话', d: '清空当前视图（不动会话文件）', run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
+  { k: '/model',  g: '模型', d: '切换模型 / 思考档位',          run: () => openModelPicker() },
+  { k: '/stop',   g: '运行', d: '停止当前这一轮',                run: () => doAbort() },
+  { k: '/img',    g: '输入', d: '添加图片（也可直接粘贴/拖拽）', run: () => filePicker.click() },
+  { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() },
+  { k: '/search', g: '导航', d: '跳到左栏搜索框',                run: () => { $('sess-q').focus(); } },
+  { k: '/tools',  g: '视图', d: '打开右栏「工具」',            run: () => switchTab('tools') },
+  { k: '/todos',  g: '视图', d: '打开右栏「待办」',            run: () => switchTab('todos') },
+  { k: '/files',  g: '视图', d: '打开右栏「文件」',            run: () => switchTab('files') },
+  { k: '/agents', g: '视图', d: '打开右栏「智能体」（看已装扩展）', run: () => switchTab('sub') },
+  { k: '/settings', g: '视图', d: '打开设置（主题 / 输入 / 模型）', run: () => $('btn-settings').click() },
+  { k: '/info',   g: '视图', d: '查看后端 / 会话运行信息',        run: () => $('btn-settings').click() }
 ];
 
-const pal = { open: false, mode: '', items: [], idx: 0 };
+const pal = { open: false, mode: '', items: [], idx: 0, empty: '' };
+
+/* ---------- 最近使用（localStorage；这是使用痕迹，不是设置，不占配置文件） ---------- */
+const PAL_RECENT_KEY = 'pixelagent.recentCmds';
+function recentCmds() {
+  try {
+    const a = JSON.parse(localStorage.getItem(PAL_RECENT_KEY) || '[]');
+    return Array.isArray(a) ? a : [];
+  } catch (e) { return []; }
+}
+function pushRecent(k) {
+  try {
+    const list = recentCmds().filter((x) => x !== k);
+    list.unshift(k);
+    localStorage.setItem(PAL_RECENT_KEY, JSON.stringify(list.slice(0, 5)));
+  } catch (e) { /* 存不了不该影响功能 */ }
+}
+
+/* ---------- 模糊匹配 / 高亮 / 排序都在 pal.js（纯逻辑，Node 里可断言） ----------
+   这一层只负责把片段拼成 HTML —— 转义和拼标签必须在同一处做。 */
+function segHtml(text, marks) {
+  return Pal.segments(text, marks)
+    .map((s) => (s.hit ? '<b class="pal-hit">' + esc(s.t) + '</b>' : esc(s.t)))
+    .join('');
+}
 
 function openPalette(mode, hd) {
   pal.open = true;
@@ -1521,42 +1616,76 @@ function closePalette() {
   pal.open = false;
   $('palette').classList.add('hidden');
 }
+
 function renderPalette() {
   const box = $('pal-list');
   box.innerHTML = '';
+  // 无结果**不关面板**：关掉会让人以为自己没输进去，或者以为命令不存在
+  if (!pal.items.length) {
+    box.appendChild(el('div', 'pal-empty', pal.empty || '没有匹配的项'));
+    $('pal-foot').textContent = '';
+    return;
+  }
+  let last = '';
   pal.items.forEach((it, i) => {
+    if (it.group && it.group !== last) {
+      last = it.group;
+      box.appendChild(el('div', 'pal-group', esc(it.group)));
+    }
     const d = el('div', 'pal-item' + (i === pal.idx ? ' on' : ''));
-    d.innerHTML = '<span class="pal-k">' + esc(it.label) + '</span>' +
+    d.innerHTML = '<span class="pal-k">' + (it.labelHtml || esc(it.label)) + '</span>' +
                   '<span class="pal-d">' + esc(it.desc || '') + '</span>';
     d.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      const item = pal.items[i];
-      closePalette();
-      if (pal.mode === 'cmd') { input.value = ''; syncCursor(); }
-      if (item && item.run) item.run();
+      runPalItem(i);
     });
     box.appendChild(d);
   });
+  // 参数提示：当前高亮项支持参数就在底部教一遍写法
+  const cur = pal.items[pal.idx];
+  $('pal-foot').textContent = (cur && cur.argTip) ? cur.argTip : '';
+}
+
+// 点/回车都走这里：记账「最近使用」→ 关面板 → 执行
+function runPalItem(i) {
+  const it = pal.items[i];
+  const wasCmd = pal.mode === 'cmd';
+  closePalette();
+  if (wasCmd) { input.value = ''; syncCursor(); }
+  if (!it) return;
+  if (it.key && wasCmd) pushRecent(it.key);
+  if (it.run) it.run();
+}
+
+/* ---------- 命令候选 ---------- */
+function cmdItems(v) {
+  return Pal.rankCommands(COMMANDS, v, recentCmds()).map((it) => ({
+    label: it.label, labelHtml: segHtml(it.label, it.marks), desc: it.desc,
+    group: it.group, argTip: it.argTip, key: it.key,
+    // 用 key 反查命令（而不是在闭包里存引用）：命令表将来动了也不会指错
+    run: () => {
+      const c = COMMANDS.filter((x) => x.k === it.key)[0];
+      if (!c) return;
+      return (it.arg != null && it.arg !== '') ? c.run(it.arg) : c.run();
+    }
+  }));
 }
 
 function updatePalette() {
   const v = input.value;
 
   if (v.startsWith('/')) {
-    const q = v.slice(1).toLowerCase();
-    pal.items = COMMANDS
-      .filter((c) => c.k.slice(1).toLowerCase().includes(q) || c.d.includes(v.slice(1)))
-      .map((c) => ({ label: c.k, desc: c.d, run: c.run }));
-    if (pal.items.length) { if (!pal.open || pal.mode !== 'cmd') pal.idx = 0; openPalette('cmd', '命令'); renderPalette(); }
-    else closePalette();
+    pal.items = cmdItems(v);
+    pal.empty = '没有这个命令。试试 /new、/model、/rename、/settings';
+    if (!pal.open || pal.mode !== 'cmd') pal.idx = 0;   // 重新开始输入时回到第一条
+    if (pal.idx >= pal.items.length) pal.idx = 0;
+    openPalette('cmd', '命令');
+    renderPalette();
     return;
   }
 
-  // `!` 开头给一条明确提示（不进命令列表，直接就是执行）
-  if (v.startsWith('!')) {
-    closePalette();
-    return;
-  }
+  // `!` 开头：直接执行，不进候选
+  if (v.startsWith('!')) { closePalette(); return; }
 
   const at = v.lastIndexOf('@');
   if (at >= 0 && !/\s/.test(v.slice(at + 1))) {
@@ -1569,8 +1698,13 @@ function updatePalette() {
         desc: (f.dir ? '目录' : (fmtBytes(f.size) || '文件')) + ' · ' + (S.fileDir || '工作目录'),
         run: () => { input.value = v.slice(0, at) + '@' + f.name + ' '; syncCursor(); input.focus(); }
       }));
-    if (pal.items.length) { if (!pal.open || pal.mode !== 'file') pal.idx = 0; openPalette('file', '引用文件'); renderPalette(); }
-    else closePalette();
+    pal.empty = S.fileCache.length ? ('工作目录里没有匹配「' + v.slice(at + 1) + '」的文件') : '文件列表还没加载出来';
+    // 文件列表都没加载出来就别弹空面板（比如消息里就写了个邮箱地址，@ 后面当然没文件）
+    if (!pal.items.length && !S.fileCache.length) { closePalette(); return; }
+    if (!pal.open || pal.mode !== 'file') pal.idx = 0;
+    if (pal.idx >= pal.items.length) pal.idx = 0;
+    openPalette('file', '引用文件');
+    renderPalette();
     return;
   }
 
@@ -1583,26 +1717,46 @@ function updatePalette() {
 btnSend.addEventListener('click', send);
 input.addEventListener('keydown', (e) => {
   if (pal.open) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); pal.idx = (pal.idx + 1) % pal.items.length; renderPalette(); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); pal.idx = (pal.idx - 1 + pal.items.length) % pal.items.length; renderPalette(); return; }
+    const n = pal.items.length;
+    if (n && e.key === 'ArrowDown') { e.preventDefault(); pal.idx = (pal.idx + 1) % n; renderPalette(); return; }
+    if (n && e.key === 'ArrowUp') { e.preventDefault(); pal.idx = (pal.idx - 1 + n) % n; renderPalette(); return; }
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      const it = pal.items[pal.idx];
-      const wasCmd = pal.mode === 'cmd';
-      closePalette();
-      if (wasCmd) { input.value = ''; syncCursor(); }
-      if (it && it.run) it.run();
-      return;
+      // 命令面板开着但一条都没匹配上：**别把 /xyz 当聊天发出去**，
+      // 也别静默什么都不做 —— 那两种情况用户都看不出发生了什么。
+      if (!pal.items.length) {
+        const wasCmd = pal.mode === 'cmd';
+        const typed = input.value;
+        closePalette();
+        if (wasCmd) {
+          input.value = ''; syncCursor();
+          addMsg('err', 'ERR', '没有这个命令：' + esc(typed.trim()));
+          return;
+        }
+        // 文件引用没匹配上不算"命令"：关掉面板后继续往下走，这一下 Enter 该发就发
+      } else {
+        runPalItem(pal.idx);
+        return;
+      }
     }
     if (e.key === 'Escape') { e.preventDefault(); closePalette(); return; }
   }
-  if (e.key === 'Enter') { e.preventDefault(); send(); }
+  // Enter 的行为由设置决定：true=Enter 发送（Shift+Enter 换行）；
+  // false=Enter 换行、Ctrl+Enter 发送。两种都在提示条里写清楚，别让用户猜。
+  if (e.key === 'Enter') {
+    const enterSends = !CFG || CFG.enterToSend !== false;
+    if (enterSends ? !e.shiftKey : (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+  }
   if (e.key === 'Escape') { e.preventDefault(); doAbort(); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!$('mask-input').classList.contains('hidden')) { closeInput(false); return; }
     if (!$('mask-model').classList.contains('hidden')) { closeModelPicker(); return; }
+    // ★ 设置面板这一支原来**漏了**：面板开着按 Esc 会一路掉到下面的 doAbort()，
+    //   结果"想关掉设置"变成"把正在跑的这轮中断掉"，而且面板还开着。
+    //   浮层谁开着就该谁吃掉 Esc —— 这里少写一行，代价是一个静默的误中断。
+    if (!mask.classList.contains('hidden')) { closeSettings(true); return; }
     if (document.activeElement !== input) doAbort();
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newSession(); }
@@ -1632,27 +1786,228 @@ $('mdl-default').addEventListener('click', async () => {
   $('ub-text').textContent = '— / —';
 });
 
-/* 设置面板 */
-$('btn-settings').addEventListener('click', () => {
+/* ============================================================
+   设置：真能改（界面 → .pixelagent.json → 重启还在）
+   ------------------------------------------------------------
+   规矩：界面上摆出来的每一个开关，都必须
+     ① 在主进程 CFG_DEFAULTS 里有字段、有校验；
+     ② 在下面 applyCfg / 各处使用点里**真的起作用**；
+     ③ 能被 test/verify-settings.js 读回核对。
+   摆了不生效的开关比没有这个开关更坏 —— 用户会以为是自己没点对。
+   ============================================================ */
+let CFG = null;        // 主进程回来的当前配置
+let CFG_META = null;   // 主题色表 / 思考档位表（由主进程给，不在两处各写一份）
+let cfgDraft = null;   // 面板里正在改的副本；取消要把预览整个回滚
+
+function applyCfg(c, meta) {
+  CFG = c || CFG || {};
+  if (meta) CFG_META = meta;
+  const acc = ((CFG_META && CFG_META.accents) || {})[CFG.accent];
+  if (acc) {
+    document.documentElement.style.setProperty('--lav', acc.main);
+    document.documentElement.style.setProperty('--lav-deep', acc.deep);
+  }
+  document.body.classList.toggle('no-anim', CFG.mascotAnim === false);
+  document.body.classList.toggle('compact', CFG.compact === true);
+}
+
+async function loadCfg() {
+  if (!api) return;                      // 演示模式没有主进程，保持默认
+  const r = await api.cfg();
+  if (r && r.ok) applyCfg(r.cfg, { accents: r.accents, thinkingLevels: r.thinkingLevels, exportFormats: r.exportFormats });
+}
+
+function segOn(host, v) {
+  if (!host) return null;
+  const btns = host.querySelectorAll('.seg-b');
+  for (const b of btns) {
+    const hit = String(b.dataset.v) === String(v);
+    b.classList.toggle('on', hit);
+    if (hit) return b;
+  }
+  return btns[0] || null;
+}
+function segPick(host) {
+  const b = host && host.querySelector('.seg-b.on');
+  return b ? b.dataset.v : '';
+}
+
+// 主题色色块：由主进程的色表生成，不在 HTML 里写死
+function buildAccentSeg() {
+  const host = $('set-accent');
+  if (!host) return;
+  const table = (CFG_META && CFG_META.accents) || {};
+  host.innerHTML = '';
+  for (const k of Object.keys(table)) {
+    const b = el('button', 'seg-b sw-b');
+    b.type = 'button';
+    b.dataset.v = k;
+    b.title = table[k].name;
+    b.style.background = table[k].main;
+    b.addEventListener('click', () => { segOn(host, k); previewDraftCfg(); });
+    host.appendChild(b);
+  }
+}
+
+function cfgToForm(c) {
+  if (!c) return;
+  $('set-cwd').value = c.workDir || '';
+  const msel = $('set-model');
+  // 默认模型下拉：以真跑回来的模型目录为准；当前值不在目录里也补一条，免得被悄悄改掉
+  const want = c.defaultModel || '';
+  if (!msel.dataset.filled) {
+    msel.innerHTML = '<option value="">（用 pi 默认）</option>';
+    for (const m of (S.models || [])) {
+      const o = el('option', null, esc(m.provider + '/' + m.model));
+      o.value = m.provider + '/' + m.model;
+      msel.appendChild(o);
+    }
+    msel.dataset.filled = '1';
+  }
+  if (want && !Array.prototype.some.call(msel.options, (o) => o.value === want)) {
+    const o = el('option', null, esc(want));
+    o.value = want;
+    msel.appendChild(o);
+  }
+  msel.value = want;
+  $('set-thinking').value = c.defaultThinking || '';
+  $('set-maximg').value = String(c.maxImages == null ? 4 : c.maxImages);
+  $('set-mascot').checked = c.mascotAnim !== false;
+  $('set-compact').checked = c.compact === true;
+  $('set-scroll').checked = c.autoScroll !== false;
+  segOn($('set-enter'), c.enterToSend === false ? '0' : '1');
+  segOn($('set-export'), c.exportFormat || 'html');
+  segOn($('set-accent'), c.accent || 'lav');
+}
+
+function formToCfg() {
+  return {
+    workDir: $('set-cwd').value.trim(),
+    defaultModel: $('set-model').value,
+    defaultThinking: $('set-thinking').value,
+    maxImages: Number($('set-maximg').value),
+    mascotAnim: $('set-mascot').checked,
+    compact: $('set-compact').checked,
+    autoScroll: $('set-scroll').checked,
+    enterToSend: segPick($('set-enter')) === '1',
+    exportFormat: segPick($('set-export')) || 'html',
+    accent: segPick($('set-accent')) || 'lav'
+  };
+}
+
+// 主题色 / 动画 / 紧凑 这类"看得见"的先即时预览，取消时再整个回滚
+function previewDraftCfg() {
+  const d = formToCfg();
+  applyCfg(Object.assign({}, CFG, { accent: d.accent, mascotAnim: d.mascotAnim, compact: d.compact }));
+}
+
+function setNote(text, bad) {
+  const n = $('set-note');
+  if (!n) return;
+  n.textContent = text || '';
+  n.classList.toggle('bad', !!bad);
+}
+
+async function openSettings() {
   mask.classList.remove('hidden');
-  if (api) api.info().then((i) => {
-    $('set-cli').textContent = i.cli || '未找到 pi 入口';
-    $('set-session').textContent = i.session;
-    $('set-mode').textContent = i.mode;
-    $('set-cwd').textContent = i.cwd || '—';
-    $('set-agentdir').textContent = i.agentDir || '—';
-    const st = i.agentDirState || {};
-    $('set-auth').textContent = st.ready
-      ? ('就绪' + (st.copied && st.copied.length ? '（首次已抄入 ' + st.copied.join('/') + '）' : ''))
-      : ('未就绪：' + (st.error || '未知'));
-    $('kv-cwd').textContent = i.cwd || '—';
-    $('kv-cwd').title = i.cwd || '';
-    if (i.cli === null) $('set-model').textContent = 'pi 未安装';
-  });
+  setNote('');
+  // 标题里带上条目数：原来写死 `设置()`，空括号读起来像"坏了"。
+  // 而且这个数字有用 —— 面板放不下要滚动（见 style.css 滚动条那段），
+  // 标题先告诉用户"这里有 10 项"，比让人自己去发现底下还有东西强。
+  $('set-title').textContent = '设置(' + document.querySelectorAll('.dialog-set .set-row').length + ' 项)';
+  if (api) {
+    const c = await api.cfg();
+    if (c && c.ok) applyCfg(c.cfg, { accents: c.accents, thinkingLevels: c.thinkingLevels, exportFormats: c.exportFormats });
+    // 模型目录：下拉要有真数据；没加载过就先拉一次（--list-models 冷启动慢，给个提示）
+    if (!S.models.length) {
+      $('set-model').innerHTML = '<option value="">（模型目录加载中…）</option>';
+      $('set-model').dataset.filled = '';
+      api.models().then((r) => {
+        if (r && r.ok && r.models) { S.models = r.models; S.modelsLoaded = true; }
+        $('set-model').dataset.filled = '';
+        cfgToForm(CFG);
+      }).catch(() => { $('set-model').dataset.filled = ''; cfgToForm(CFG); });
+    }
+    buildAccentSeg();
+    cfgToForm(CFG);
+  }
+  fillRunInfo();
+}
+
+function closeSettings(revert) {
+  if (revert && CFG) applyCfg(CFG);      // 回滚即时预览
+  cfgDraft = null;
+  mask.classList.add('hidden');
+}
+
+async function fillRunInfo() {
+  if (!api) return;
+  const i = await api.info();
+  $('set-cli').textContent = i.cli || '未找到 pi 入口';
+  $('set-session').textContent = i.session;
+  $('set-mode').textContent = i.mode;
+  $('set-agentdir').textContent = i.agentDir || '—';
+  const st = i.agentDirState || {};
+  $('set-auth').textContent = st.ready
+    ? ('就绪' + (st.copied && st.copied.length ? '（首次已抄入 ' + st.copied.join('/') + '）' : ''))
+    : ('未就绪：' + (st.error || '未知'));
+  $('set-curmodel').textContent = i.current && i.current.model
+    ? (i.current.model.provider + '/' + i.current.model.model)
+    : (i.cli === null ? 'pi 未安装' : '（用 pi 默认）');
+  $('kv-cwd').textContent = i.cwd || '—';
+  $('kv-cwd').title = i.cwd || '';
+}
+
+$('btn-settings').addEventListener('click', () => openSettings());
+
+$('set-cancel').addEventListener('click', () => closeSettings(true));
+$('dlg-x').addEventListener('click', () => closeSettings(true));
+mask.addEventListener('click', (e) => { if (e.target === mask) closeSettings(true); });
+
+$('set-cwd-pick').addEventListener('click', async () => {
+  if (!api) return;
+  const r = await api.pickDir();
+  if (!r || !r.ok) { if (r && r.reason !== 'CANCELED') setNote('选目录失败：' + (r.error || reasonZh(r.reason)), true); return; }
+  $('set-cwd').value = r.dir;
+  setNote('工作目录已切到 ' + r.dir + '（保存后生效）');
 });
-$('dlg-close').addEventListener('click', () => mask.classList.add('hidden'));
-$('dlg-x').addEventListener('click', () => mask.classList.add('hidden'));
-mask.addEventListener('click', (e) => { if (e.target === mask) mask.classList.add('hidden'); });
+
+$('set-save').addEventListener('click', async () => {
+  if (!api) return;
+  const d = formToCfg();
+  // 工作目录单独走 setWorkDir：它要校验目录真的存在，并顺手刷新文件树
+  if (d.workDir && d.workDir !== (CFG.workDir || '')) {
+    const r = await api.setWorkDir(d.workDir);
+    if (!r || !r.ok) { setNote('工作目录没改成：' + reasonZh(r && r.reason), true); return; }
+    CFG.workDir = r.dir;
+    S.fileDir = r.dir;
+    S.fileCache = (r.files && r.files.items) || [];
+    $('kv-cwd').textContent = r.dir;
+  }
+  delete d.workDir;
+  const res = await api.setCfg(d);
+  if (!res || !res.ok) { setNote('保存失败：' + reasonZh(res && res.reason), true); return; }
+  applyCfg(res.cfg, null);
+  cfgToForm(CFG);
+  // 主进程没认的键必须说出来：界面笔误（mascotAnim 写成 mascot）会表现成"点了没反应"
+  if (res.droppedKeys && res.droppedKeys.length) {
+    setNote('已保存，但有 ' + res.droppedKeys.length + ' 个键没认出来：' + res.droppedKeys.join('、'), true);
+  } else {
+    setNote('已保存到 .pixelagent.json，重启后依然生效');
+  }
+  if (api.models) api.models().then((r) => { if (r && r.ok && r.models) { S.models = r.models; S.modelsLoaded = true; $('set-model').dataset.filled = ''; cfgToForm(CFG); } }).catch(() => {});
+});
+
+$('set-reset').addEventListener('click', async () => {
+  if (!api) return;
+  const res = await api.resetCfg();
+  if (!res || !res.ok) { setNote('恢复失败', true); return; }
+  applyCfg(res.cfg, null);
+  cfgToForm(CFG);
+  setNote('已恢复默认（会话改名记录不受影响）');
+});
+// 面板里改"看得见"的项就即时预览
+['set-mascot', 'set-compact'].forEach((id) => $(id).addEventListener('change', previewDraftCfg));
 
 /* 窗口按钮 */
 $('tb-min').addEventListener('click', () => api && api.winMin());
@@ -1723,6 +2078,7 @@ function demoReply(text) {
 syncCursor();
 setState('IDLE');
 paintModelBar();
+loadCfg();        // 先把设置读回来（主题色 / 紧凑 / 动画 / Enter 行为…），再画界面动作
 renderTodos();
 renderSubs();
 renderExts();
@@ -1753,6 +2109,8 @@ if (api) {
         $('sb-usage').title = '上下文总窗口 ' + ctx + ' tokens';
       }
       updateVision();
+      // 模型目录到了 → 设置面板的"默认模型"下拉才有真数据，重建一次
+      $('set-model').dataset.filled = '';
     }
   }).catch(() => {});
 }
