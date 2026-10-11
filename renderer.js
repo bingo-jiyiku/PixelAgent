@@ -1963,23 +1963,21 @@ function switchTab(t) {
   if (b) b.click();
 }
 
+// 老板 2026-10-11 定的规矩：命令面板只留"点按钮做不了"的。
+// 之前有 14 条，其中 /tools /todos /files /agents /search /settings /info 七条
+// 都是"右栏 tab / 左栏按钮 / 搜索框 focus"能直接点出来的 —— 留着只会让人以为
+// 得记命令才行。删掉后剩 7 条，都是有实际入口差异的：
+// - /rename /export /clear：功能上有（改名要参数、导出有格式），但会话条按钮不覆盖
+// - /new /stop /img /dir：状态栏或按钮上有类似的，但保留是因为
+//   「按一次」比「找按钮」快（老板说保留，尊重老板）
 const COMMANDS = [
   { k: '/new',    g: '会话', d: '新建会话（清空上下文）',       run: () => newSession() },
   { k: '/rename', g: '会话', d: '给当前会话改名', arg: '名字',   run: (a) => renameCurrent(a) },
   { k: '/export', g: '会话', d: '导出当前会话（格式见设置）',   run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
   { k: '/clear',  g: '会话', d: '清空当前视图（不动会话文件）', run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
-  // 这里**故意没有 /model** —— 状态栏那个「模型」按钮就是入口，
-  // 命令面板里再摆一条只是多一个会走偏的路（老板原话：UI 上已经有了）。
   { k: '/stop',   g: '运行', d: '停止当前这一轮',                run: () => doAbort() },
   { k: '/img',    g: '输入', d: '添加图片（也可直接粘贴/拖拽）', run: () => filePicker.click() },
-  { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() },
-  { k: '/search', g: '导航', d: '跳到左栏搜索框',                run: () => { $('sess-q').focus(); } },
-  { k: '/tools',  g: '视图', d: '打开右栏「工具」',            run: () => switchTab('tools') },
-  { k: '/todos',  g: '视图', d: '打开右栏「待办」',            run: () => switchTab('todos') },
-  { k: '/files',  g: '视图', d: '打开右栏「文件」',            run: () => switchTab('files') },
-  { k: '/agents', g: '视图', d: '打开右栏「智能体」（看已装扩展）', run: () => switchTab('sub') },
-  { k: '/settings', g: '视图', d: '打开设置（主题 / 输入 / 模型）', run: () => $('btn-settings').click() },
-  { k: '/info',   g: '视图', d: '查看后端 / 会话运行信息',        run: () => $('btn-settings').click() }
+  { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() }
 ];
 
 const pal = { open: false, mode: '', items: [], idx: 0, empty: '' };
@@ -2083,7 +2081,9 @@ function updatePalette() {
     // 手写的那份已经留下过一句"试试 /model"—— 而 /model 早被删了（老板原话：
     // "UI 界面上已经有了"），于是提示把用户指向一个不存在的命令。
     // 现取的话，命令一删，推荐语自动跟着消失。
-    const SUGGEST = ['/new', '/rename', '/settings', '/img'];
+    // 老板 2026-10-11：命令表减到 7 条后，把 SUGGEST 里已经删掉的 /settings 也换掉。
+    // 换成 /export —— 是"没对应按钮、且用户会用到"的一个。
+    const SUGGEST = ['/new', '/rename', '/export', '/img'];
     const have = SUGGEST.filter((k) => COMMANDS.some((c) => c.k === k));
     pal.empty = '没有这个命令。试试 ' + have.join('、');
     if (!pal.open || pal.mode !== 'cmd') pal.idx = 0;   // 重新开始输入时回到第一条

@@ -995,7 +995,10 @@ app.whenReady().then(async () => {
   const ps1 = await palState();
   console.log('  ℹ 输入 / → ' + JSON.stringify({ open: ps1.open, items: ps1.items, groups: ps1.groups }));
   t('输入 / 打开命令面板', ps1.open, true);
-  t('候选项够多（不是只剩一条）', ps1.items >= 12, true);
+  // 老板 2026-10-11：命令表减到 7 条（删掉了 /tools /todos /files /agents
+  // /search /settings /info 七条"点按钮就能做"的），所以下限也跟着降到 7。
+  // 断言还是保留，防的是"命令被误删空"这类事故。
+  t('候选项够多（不是只剩一条）', ps1.items >= 7, true);
   t('候选项有分组标题', ps1.groups.length >= 3, true);
   t('分组标题是中文', ps1.groups.every((g) => /^[\u4e00-\u9fa5]+$/.test(g)), true);
 
