@@ -54,59 +54,40 @@
     </div>
     <!-- 老板 2026-10-11 18:54：「红框内固定这一块作为吉祥物活动区，房间背景（或表格纹），
          电脑桌在前、人在后，能看到敲打键盘 + 电脑显示敲代码动画，点击可交互」。
+         老板 2026-10-11 20:30：「桌子太大了、要看到上半身、桌上的换成键盘、
+         AI 思考时作思考动作、AI 输出时敲键盘、背景铺满左右、白色标签感」。
          四态动画仍由 [data-state] 驱动：IDLE / THINKING / TOOL / DONE。
          分区点击（renderer.js attachGirlClick 里判断 e.target）：
            .of-girl     → 点头 + 招呼气泡
-           .of-monitor  → 切换代码片段
            .of-keyboard → 打字爆发（短暂全键闪）
            .of-mug      → ☕ 气泡
            其余        → 通用招呼气泡（保留原行为） -->
     <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
       <div class="office" id="pixel-girl" data-state="IDLE">
-        <!-- ① 房间背景：墙面（淡网格纹，像表格底） -->
+        <!-- ① 背景：白色标签感（横条纹 + 淡阴影）—— 老板 2026-10-11 要"之前那种白色标签感" -->
         <div class="of-wall"></div>
-        <!-- ② 墙上装饰：窗户（云飘动）+ 画框 + 书架（书本 + 小盆栽） -->
-        <div class="of-window"><i class="of-cloud"></i><i class="of-moon"></i></div>
-        <div class="of-pic"><i></i></div>
+        <!-- ② 墙上装饰：只留书架（书本 + 小盆栽）—— 桌面变矮 + 场景铺满后，
+           原来 3 件装饰（窗/画框/书架）会互相挤到，删掉前两件更清爽 -->
         <div class="of-shelf of-books">
           <i class="of-book"></i><i class="of-book"></i><i class="of-book"></i>
         </div>
-        <!-- ③ 人物：只有上半身露在桌面之上（下半身被桌子挡住 → 坐姿） -->
+        <div class="of-plant"><i></i></div>
+        <!-- ③ 人物：往右挪一点，从桌上露出更多上半身（top:38, desk h:55 → 露 127px 高） -->
         <img class="of-girl" src="assets/girl.png" alt="">
-        <!-- ④ 桌子：盖住下半身；顶边那条 2px 黑线告诉眼睛"人坐在这条线之上" -->
-        <div class="of-desk">
-          <div class="of-drawer"></div>
-          <div class="of-drawer r"></div>
-        </div>
-        <!-- ⑤ 显示器：屏幕上是敲代码动画（4 行代码循环打字 + 光标） -->
-        <div class="of-monitor">
-          <div class="of-screen">
-            <div class="of-code">
-              <span class="of-cl"></span>
-              <span class="of-cl"></span>
-              <span class="of-cl"></span>
-              <span class="of-cl"></span>
-            </div>
-            <div class="of-cursor"></div>
-            <div class="of-scan"></div>
-            <div class="of-dots"><i></i><i></i><i></i></div>
-            <div class="of-ok">✓</div>
-          </div>
-          <div class="of-mstand"></div>
-          <div class="of-mbase"></div>
-        </div>
-        <!-- ⑥ 键盘：8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js） -->
+        <!-- ④ 桌子：矮一截（90→55），把上半身露出来；顶边黑线告诉眼睛"人坐在这条线之上" -->
+        <div class="of-desk"></div>
+        <!-- ⑤ 键盘：占桌面主要位置（原来 78 宽 → 130 宽），桌上"换成键盘"（老板 2026-10-11）
+           8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js） -->
         <div class="of-keyboard">
           <i></i><i class="f-key"></i><i></i><i></i><i></i><i></i><i></i><i></i>
         </div>
-        <!-- ⑦ 桌面小物：马克杯（点击 → ☕ 气泡）+ 小盆栽 -->
+        <!-- ⑥ 桌面小物：马克杯（点击 → ☕ 气泡） -->
         <div class="of-mug"><i></i></div>
-        <div class="of-plant"><i></i></div>
-        <!-- ⑧ 状态特效 -->
+        <!-- ⑦ 状态特效 -->
         <div class="of-bubble"><i></i><i></i><i></i></div>
         <div class="of-gear"><i></i></div>
         <div class="of-stars"><i></i><i></i><i></i></div>
-        <!-- ⑨ 文字气泡（吉祥物"说话"用）：头顶冒字而不是 TTS。renderer.js girlSay() 填字+显隐 -->
+        <!-- ⑧ 文字气泡（吉祥物"说话"用）：头顶冒字而不是 TTS。renderer.js girlSay() 填字+显隐 -->
         <div class="of-bubble-txt" id="of-bubble-txt" aria-live="polite"></div>
       </div>
       <!-- girl-cap：renderer.js setState 和 test/shot-girl.js 仍引用它。

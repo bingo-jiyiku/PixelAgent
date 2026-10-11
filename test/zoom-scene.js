@@ -26,11 +26,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hex = (r, g, b) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
 
 // 每个状态要单独看清哪些元素
+// 老板 2026-10-11 20:30：显示器和抽屉删了，WANT 更新为桌面上的键盘/马克杯 + 状态特效
 const WANT = {
-  IDLE: ['.of-screen', '.of-keyboard', '.of-mug', '.of-books', '.of-drawer'],
-  THINKING: ['.of-bubble', '.of-screen', '.of-girl'],
-  TOOL: ['.of-gear', '.of-screen', '.of-keyboard'],
-  DONE: ['.of-stars', '.of-screen']
+  IDLE: ['.of-keyboard', '.of-mug', '.of-shelf', '.of-plant'],
+  THINKING: ['.of-bubble', '.of-girl'],
+  TOOL: ['.of-gear', '.of-keyboard'],
+  DONE: ['.of-stars', '.of-girl']
 };
 
 app.whenReady().then(async () => {
