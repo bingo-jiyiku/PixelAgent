@@ -174,11 +174,12 @@ body {
 
 .rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
-.rail-foot {
-  flex: 0 0 auto;
-  border-top: 3px solid var(--ink);
-  background: var(--panel);
-}
+/* ★ 老板 2026-10-11：底部 kv 4 行不要显示了。
+   但 renderer.js 里有 12+ 处读 #kv-model / #kv-cwd 的 textContent 当内部状态
+   （activeModelName、effModel、updateVision…），**元素不能删** ——
+   删了就是 "Cannot set properties of null" 崩掉整条链路（附件渲染就崩了）。
+   正确做法：display:none 藏起来，DOM 还在，读 textContent 也正常。 */
+.rail-foot { display: none; }
 
 /* ---------- 左栏：会话项 ---------- */
 .sess {
@@ -567,31 +568,29 @@ body {
    IDLE / THINKING / TOOL / DONE
    ============================================================ */
 .girl-scene {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 10px 8px 8px;
-  border-top: 3px solid var(--ink);
-  background: var(--panel);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
-.girl-cap {
-  font-family: var(--f-px); font-size: 8px; letter-spacing: 1px; color: var(--muted);
-  border: 2px solid var(--ink); background: var(--panel-2); padding: 2px 5px;
-}
-/* 老板 2026-10-11：不要框把吉祥物框住。原来的 3px 黑框去掉，
-   场景靠墙（横向细条纹）和桌面（下方色块）自然收边，看起来更像"贴在页面上的画面"
-   而不是"贴了张图"。overflow 仍然保留 —— 桌面挡下半身的定位靠它，
-   去掉的话动画 / 装饰会溢出到 rail 里、跑到 kv 上。 */
+/* 老板 2026-10-11：底部状态标签（girl-cap）删了 —— statusbar 已经有「待机/思考/工具/完成」
+   的中文状态灯，这里再写一个属于重复。renderer.js 里 setState 仍然兼容缺失的元素（if(cap)）。 */
+
+/* 老板 2026-10-11：「背景铺满那边的」
+   office 不再画自己的墙/桌面色块，全靠父容器 rail 的 --panel-2 当背景 ——
+   场景就是"贴在 rail 底面上的一张画"，跟 rail 融为一体，不再有"框"的概念。
+   桌子只做**淡淡的深色块**（比 wall 深一点），画一条 2px 的深色顶边当"桌面边缘"，
+   用来告诉眼睛"这里有一条水平线、人坐在这条线之上"。
+   溢出仍保留 —— 桌面挡下半身的定位靠它。 */
 .office {
   position: relative; width: 180px; height: 140px; overflow: hidden;
-  background: var(--panel-2);
+  background: transparent;
+  cursor: pointer;
+  transition: filter 120ms steps(2);
 }
-.office { cursor: pointer; transition: filter 120ms steps(2); }
-.office:hover { filter: brightness(1.06); }
-.office:active { filter: brightness(1.12); }
-.of-wall {
-  position: absolute; inset: 0;
-  background: repeating-linear-gradient(0deg, var(--panel-2) 0 8px, var(--panel-3) 8px 9px);
-}
+.office:hover { filter: brightness(1.05); }
+.office:active { filter: brightness(1.10); }
+/* 墙面：透明，让 rail 的 --panel-2 从下面透过来 —— 场景没有自己的墙 */
+.of-wall { position: absolute; inset: 0; background: transparent; }
 
 /* --- 墙上：窗户（唯一保留的墙面装饰）--- */
 .of-window {
@@ -613,7 +612,7 @@ body {
    少一个元素 = 少一处视觉噪音。
 */
 .of-girl {
-  position: absolute; left: 90px; bottom: 52px; width: 90px; margin-left: -45px;
+  position: absolute; left: 90px; bottom: 20px; width: 90px; margin-left: -45px;
   z-index: 5; transform-origin: 50% 100%;
 }
 .office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
@@ -636,38 +635,47 @@ body {
 }
 
 /* --- 桌子（挡住下半身 → 坐姿）--- */
+/* 老板 2026-10-11：「背景铺满那边的」+「看起来像坐在电脑后」
+   桌子不再画自己的色块，只留一条 2px 黑边当"桌面边缘"来告诉眼睛
+   "人坐在这条线之上"；桌下的抽屉也透明、只留 2px 黑边 —— 跟 rail 底色融为一体。
+   ★ 桌子从原来的 height:40 加高到 50 —— 让"挡下半身"这件事真的挡住更多：
+     女孩 bottom:20 的脚，被桌面（bottom:50 那条线）盖住 30px 的腿/裙摆，
+     只露上半身，才读得出"坐着"。原高度 40 只挡 12px，还是站着的比例。 */
 .of-desk {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 40px; z-index: 8;
-  background: #dbd8d1; border-top: 4px solid var(--ink);
+  position: absolute; left: 0; right: 0; bottom: 0; height: 50px; z-index: 8;
+  background: transparent;
+  border-top: 2px solid var(--ink);
 }
-.of-desk::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 6px;
-  background: var(--panel-2); border-bottom: 3px solid var(--ink); }
-.of-drawer { position: absolute; left: 12px; bottom: 6px; width: 54px; height: 22px;
-  background: var(--panel-2); border: 3px solid var(--ink); }
+.of-drawer { position: absolute; left: 12px; bottom: 6px; width: 54px; height: 26px;
+  background: transparent; border: 2px solid var(--ink); }
 .of-drawer.r { left: auto; right: 12px; }
-.of-drawer::after { content: ''; position: absolute; left: 50%; top: 7px; width: 14px; height: 4px;
+.of-drawer::after { content: ''; position: absolute; left: 50%; top: 8px; width: 14px; height: 4px;
   margin-left: -7px; background: var(--ink); }
 
-/* --- 显示器（挡在人物身后左侧，只露上半截屏幕）--- */
-.of-monitor { position: absolute; left: 8px; bottom: 40px; width: 64px; z-index: 3; }
-.of-screen { position: relative; width: 64px; height: 42px; overflow: hidden;
+/* --- 显示器（挡在人物身前，只露人物上半身 = "坐在电脑后"）--- */
+/* 老板 2026-10-11：「看起来像是坐在电脑后」
+   显示器从原来的 42 高加到 56 高，人物 head 从 y:16 起 —— 显示器顶部 y:34
+   正好压住人物上半身，只露出头顶和双马尾。z-index 3 < 5（人物），
+   所以显示器的边框会盖住她的上半身，视觉上就是"人坐在显示器后面"。 */
+.of-monitor { position: absolute; left: 8px; bottom: 50px; width: 64px; z-index: 3; }
+.of-screen { position: relative; width: 64px; height: 56px; overflow: hidden;
   background: #241d16; border: 3px solid var(--ink); }
 .of-l1, .of-l2, .of-l3 { position: absolute; height: 4px; background: var(--lav); opacity: .92; }
-.of-l1 { left: 6px; top: 8px; width: 32px; }
-.of-l2 { left: 6px; top: 17px; width: 22px; }
-.of-l3 { left: 6px; top: 26px; width: 40px; }
+.of-l1 { left: 6px; top: 10px; width: 34px; }
+.of-l2 { left: 6px; top: 21px; width: 24px; }
+.of-l3 { left: 6px; top: 32px; width: 42px; }
 .of-scan { position: absolute; left: 0; right: 0; height: 7px; background: rgba(248, 176, 196, .3); animation: of-scan 2.6s linear infinite; }
 @keyframes of-scan { from { top: -7px; } to { top: 100%; } }
 /* 「正在处理」的三个点必须**居中**：靠左的话在暗屏上像两块碎屑 */
-.of-dots { position: absolute; left: 0; right: 0; bottom: 5px; display: none;
+.of-dots { position: absolute; left: 0; right: 0; bottom: 6px; display: none;
   justify-content: center; gap: 4px; }
 .of-dots i { width: 4px; height: 4px; background: var(--lav); display: block; }
 .of-dots i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
 .of-dots i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
 @keyframes of-dot { 0%, 49% { opacity: .25; } 50%, 100% { opacity: 1; } }
-.of-ok { position: absolute; left: 0; right: 0; top: 8px; text-align: center; display: none;
+.of-ok { position: absolute; left: 0; right: 0; top: 10px; text-align: center; display: none;
   font-family: var(--f-px); font-size: 14px; color: var(--lav); }
-.of-mfoot { width: 12px; height: 6px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); border-top: none; }
+.of-mfoot { width: 14px; height: 6px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); border-top: none; }
 .of-mbase { width: 34px; height: 4px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); }
 
 .office[data-state="THINKING"] .of-l1,
@@ -685,7 +693,7 @@ body {
 .office[data-state="DONE"] .of-ok { display: block; }
 
 /* --- 键盘（人物右手可及的位置，桌面右端）--- */
-.of-keyboard { position: absolute; left: 110px; bottom: 40px; width: 56px; height: 12px;
+.of-keyboard { position: absolute; left: 110px; bottom: 50px; width: 56px; height: 12px;
   background: var(--panel-2); border: 3px solid var(--ink); z-index: 6;
   display: flex; gap: 2px; align-items: center; justify-content: center; }
 .of-keyboard i { width: 5px; height: 4px; background: var(--ink); }

@@ -40,7 +40,13 @@
     <div class="rail-scroll" id="session-list">
       <!-- renderer 填充 -->
     </div>
-    <div class="rail-foot">
+    <!-- 老板 2026-10-11：底部 kv 那 4 行（后端/模型/输出/工作目录）"不要显示了"。
+         ★ 注意：DOM 元素**保留**（不能删）—— renderer.js 里有 12+ 处读 #kv-model /
+         #kv-cwd 的 textContent 作为内部状态（activeModelName、effModel 等），
+         删了会引发 "Cannot set properties of null" 崩掉整条链路。
+         正确做法：**CSS 里 display:none 藏起来**，视觉上不出现但 DOM 还在。
+         下面那段 rail-foot 是渲染器要写的"隐藏状态位"，不是给老板看的。 -->
+    <div class="rail-foot" aria-hidden="true">
       <div class="kv"><span>后端</span><b>pi</b></div>
       <div class="kv"><span>模型</span><b id="kv-model">—</b></div>
       <div class="kv"><span>输出</span><b>JSON</b></div>
@@ -84,7 +90,6 @@
              renderer.js 里 girlSay() 负责填字+显隐。 -->
         <div class="of-bubble-txt" id="of-bubble-txt" aria-live="polite"></div>
       </div>
-      <div class="girl-cap" id="girl-cap">待机</div>
     </div>
   </aside>
 

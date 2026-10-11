@@ -322,7 +322,7 @@ function setState(state) {
   }
   const girl = $('pixel-girl');
   const scene = $('girl-scene');
-  const cap = $('girl-cap');
+  const cap = $('girl-cap');  // 老板 2026-10-11：底部状态标签删了，状态灯 sb-state 已经够用
   if (girl) girl.dataset.state = state;
   if (scene) scene.dataset.state = state;
   if (cap) cap.textContent = CAP_ZH[state] || state;
