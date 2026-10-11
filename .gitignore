@@ -6,3 +6,5 @@ node_modules/
 /shot*.png
 /shot*.jpg
 /shots/
+.bak/
+.impeccable/

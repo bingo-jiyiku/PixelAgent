@@ -7,10 +7,17 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<!-- ================= 顶部真标题栏（无原生窗口，可拖动 + 真的窗口按钮） ================= -->
+
+<!-- ═══════════════ 顶部标题栏（无边框窗口，自绘按钮） ═══════════════ -->
 <header class="topbar" id="titlebar">
-  <span class="tb-side tb-drag"><i class="bul sq-white"></i>PIXELAGENT</span>
-  <span class="tb-side">PIXEL / AGENT ONE<i class="bul sq-pink"></i></span>
+  <span class="tb-brand tb-drag">
+    <i class="bul sq-ink"></i>PIXELAGENT
+    <em class="tb-ver">v1.0</em>
+  </span>
+  <span class="tb-mid tb-drag">
+    <span class="tb-cur" id="tb-cur">SESSION #—</span>
+  </span>
+  <span class="tb-side">TERMINAL / AGENT ONE<i class="bul sq-pink"></i></span>
   <span class="tb-btns">
     <button class="tb-btn" id="tb-min" title="最小化">—</button>
     <button class="tb-btn" id="tb-max" title="最大化">□</button>
@@ -18,173 +25,135 @@
   </span>
 </header>
 
-<div class="page">
+<!-- ═══════════════ 主体：opencode 式三栏 ═══════════════ -->
+<div class="shell">
 
-  <!-- ================= 模式按钮行（全鼠标可点） ================= -->
-  <div class="modebar">
-    <button class="px-btn primary" id="btn-mode">1.0 模式</button>
-    <button class="px-btn" id="btn-new">新会话</button>
-    <button class="px-btn" id="btn-settings">设置</button>
-    <button class="px-btn hidden" id="btn-stop">■ 停止</button>
-
-    <!-- 状态像素标签：IDLE / THINKING / TOOL / DONE -->
-    <div class="tags" id="tags">
-      <span class="tag on" data-state="IDLE">IDLE</span>
-      <span class="tag" data-state="THINKING">THINKING</span>
-      <span class="tag" data-state="TOOL">TOOL</span>
-      <span class="tag" data-state="DONE">DONE</span>
+  <!-- ───── 左栏：会话列表 ───── -->
+  <aside class="rail rail-left">
+    <div class="rail-cap">
+      <span class="cap-t">SESSIONS</span>
+      <button class="cap-btn" id="btn-new" title="新会话">+ NEW</button>
     </div>
-  </div>
+    <div class="rail-scroll" id="session-list">
+      <!-- renderer 填充 -->
+    </div>
+    <div class="rail-foot">
+      <div class="kv"><span>BACKEND</span><b>PI</b></div>
+      <div class="kv"><span>MODEL</span><b id="kv-model">—</b></div>
+      <div class="kv"><span>MODE</span><b>JSON</b></div>
+      <div class="kv"><span>WORKDIR</span><b id="kv-cwd" title="">—</b></div>
+    </div>
+  </aside>
 
-  <!-- ================= 大标题（像素块中文 + 紫色错位硬阴影） ================= -->
-  <div class="headline">
-    <div class="hl-text">
+  <!-- ───── 中栏：消息时间线 ───── -->
+  <main class="main">
+    <!-- 空状态：大标题 + 像素女孩（有消息后自动隐藏） -->
+    <div class="welcome" id="welcome">
       <div class="hl-zh">复古像素终端</div>
-      <div class="hl-en">PIXEL() TERMINAL —— 一个会自己跑的助手</div>
+      <div class="hl-en">PIXEL() TERMINAL</div>
+      <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
+        <div class="girl-desk">
+          <div class="gd-screen"><div class="gd-scan"></div></div>
+          <div class="girl" id="pixel-girl" data-state="IDLE">
+            <div class="g-hair-back"></div>
+            <div class="g-head">
+              <div class="g-eye l"></div>
+              <div class="g-eye r"></div>
+              <div class="g-blush l"></div>
+              <div class="g-blush r"></div>
+              <div class="g-mouth"></div>
+            </div>
+            <div class="g-hair-front"></div>
+            <div class="g-body"><div class="g-arm l"></div><div class="g-arm r"></div></div>
+            <div class="g-bubble"><i></i><i></i><i></i></div>
+            <div class="g-gear"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i></div>
+            <div class="g-stars"><i></i><i></i><i></i></div>
+          </div>
+          <div class="g-keyboard"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="g-desk"></div>
+        </div>
+        <div class="girl-cap" id="girl-cap">STANDBY</div>
+      </div>
+      <div class="hl-hint">
+        <span><b>/</b> 命令</span><span><b>@</b> 引用文件</span><span><b>!</b> 执行命令</span><span><b>ESC</b> 打断</span>
+      </div>
     </div>
 
-    <!-- ============ 像素小女孩办公动画（纯 CSS 逐帧，无图片依赖） ============
-         风格要点：像素画、硬边缘、无抗锯齿、2x 放大取整、状态联动
-         - 空闲 IDLE：眨眼 + 偶尔敲一下键盘
-         - 思考 THINKING：头顶冒思考气泡（方块像素点）
-         - 工具 TOOL：头顶冒齿轮/扳手
-         - 完成 DONE：举手比耶 + 头顶冒星星
-         通过给 #pixel-girl 加 data-state 属性切换动画，由 renderer.js 驱动 -->
-    <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
-      <div class="girl-desk">
-        <!-- 显示器（屏幕内容会随状态变化） -->
-        <div class="gd-screen">
-          <div class="gd-scan"></div>
-        </div>
-        <!-- 女孩本体 -->
-        <div class="girl" id="pixel-girl" data-state="IDLE">
-          <div class="g-hair-back"></div>
-          <div class="g-head">
-            <div class="g-eye l"></div>
-            <div class="g-eye r"></div>
-            <div class="g-blush l"></div>
-            <div class="g-blush r"></div>
-            <div class="g-mouth"></div>
-          </div>
-          <div class="g-hair-front"></div>
-          <div class="g-body">
-            <div class="g-arm l"></div>
-            <div class="g-arm r"></div>
-          </div>
-          <!-- 思考/工具/ celebrate 气泡 -->
-          <div class="g-bubble"><i></i><i></i><i></i></div>
-          <div class="g-gear"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i></div>
-          <div class="g-stars"><i></i><i></i><i></i></div>
-        </div>
-        <!-- 键盘 + 桌子 -->
-        <div class="g-keyboard"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <div class="g-desk"></div>
-      </div>
-      <div class="girl-cap">WORKING…</div>
+    <div class="log" id="log"><!-- 消息流 --></div>
+
+    <!-- CRT 扫描线覆盖层（装饰，不接事件） -->
+    <div class="crt" aria-hidden="true"><span class="crt-scan"></span></div>
+  </main>
+
+  <!-- ───── 右栏：上下文面板（四 tab） ───── -->
+  <aside class="rail rail-right">
+    <div class="rtabs" id="rtabs">
+      <button class="rtab on" data-tab="tools" type="button">TOOLS</button>
+      <button class="rtab" data-tab="todos" type="button">TODOS</button>
+      <button class="rtab" data-tab="files" type="button">FILES</button>
+      <button class="rtab" data-tab="sub" type="button">AGENTS</button>
     </div>
-  </div>
-  <div class="rule"><i></i></div>
 
-  <!-- ================= 主体：仿 Win95 假窗口 + 仪表侧栏 ================= -->
-  <div class="stage">
+    <div class="rail-scroll tab-body" id="tab-tools">
+      <div class="empty" id="tools-empty">还没有工具调用</div>
+      <div class="toollist" id="tools-list"></div>
+    </div>
 
-    <!-- 仿 Win95 假窗口：紫标题栏 + 斜纹拖动把手 + 像素控制按钮 -->
-    <section class="term">
-      <div class="term-bar">
-        <span class="win-ico" aria-hidden="true"></span>
-        <span class="term-name">PIXEL() TERMINAL</span>
-        <span class="win-grip" aria-hidden="true"></span>
-        <span class="term-tabs">
-          <button class="term-tab on" id="tab-raw" type="button">RAW</button>
-          <button class="term-tab" id="tab-stream" type="button">STREAM</button>
-        </span>
-        <span class="win-ctl">
-          <button class="win-btn" id="w-min" type="button" title="最小化窗口">—</button>
-          <button class="win-btn" id="w-max" type="button" title="最大化窗口">□</button>
-          <button class="win-btn win-x" id="w-close" type="button" title="关闭窗口">✕</button>
-        </span>
+    <div class="rail-scroll tab-body hidden" id="tab-todos">
+      <div class="empty">当前会话没有待办项</div>
+    </div>
+
+    <div class="rail-scroll tab-body hidden" id="tab-files">
+      <div class="filebar">
+        <button class="cap-btn" id="btn-refresh-files" type="button">↻ 刷新</button>
+        <span class="filebar-p" id="files-root">—</span>
       </div>
+      <div class="filelist" id="files-list"></div>
+    </div>
 
-      <!-- 聊天记录区 -->
-      <div class="log" id="log">
-        <div class="m sys">
-          <span class="who">SYS</span>
-          <span class="txt">终端就绪。在下面输入框打字，点「发送」发出；正在跑的时候点「停止」打断。</span>
-        </div>
-      </div>
-
-      <!-- 输入行：> 开头 + 闪烁方块光标 -->
-      <div class="inputline">
-        <span class="ps">&gt;</span>
-        <div class="inputwrap">
-          <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…" />
-          <span id="mirror" aria-hidden="true"></span>
-          <span class="cursor" id="cursor"></span>
-        </div>
-        <button class="px-btn primary" id="btn-send">发送</button>
-      </div>
-
-      <!-- 覆盖层：滚动扫描线（极淡，纯装饰，不接事件） -->
-      <div class="crt" aria-hidden="true">
-        <span class="crt-scan"></span>
-      </div>
-    </section>
-
-    <!-- 侧栏：状态 / 模型 / 置信度 / 管线 -->
-    <aside class="side">
-      <div class="panel">
-        <h4 id="p-status">STATUS</h4>
-        <div class="panel-body">
-          <div class="kv"><span>状态</span><b id="kv-state">IDLE</b></div>
-          <div class="kv"><span>轮次</span><b id="kv-round">0</b></div>
-          <div class="kv"><span>用时</span><b id="kv-time">0.0s</b></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h4 id="p-model">MODEL</h4>
-        <div class="panel-body">
-          <div class="kv"><span>后端</span><b>PI</b></div>
-          <div class="kv"><span>模型</span><b id="kv-model">读取中…</b></div>
-          <div class="kv"><span>输出</span><b>JSON 流</b></div>
-        </div>
-      </div>
-
-      <!-- 置信度方格条（纯 CSS 画的装饰） -->
-      <div class="panel">
-        <h4 id="p-conf">CONFIDENCE</h4>
-        <div class="panel-body">
-          <div class="conf" id="conf">
-            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-          </div>
-          <div class="conf-cap" id="conf-cap">STANDBY</div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h4 id="p-pipe">PIPE</h4>
-        <div class="panel-body">
-          <div class="pipe-line"><em>1</em><span>渲染层</span></div>
-          <div class="pipe-line"><em>2</em><span>主进程 IPC</span></div>
-          <div class="pipe-line"><em>3</em><span>pi --mode json</span></div>
-          <div class="pipe-line"><em>4</em><span>text_delta 打字机</span></div>
-        </div>
-      </div>
-    </aside>
-  </div>
-
-  <!-- 底部黑框说明块（代替字幕） -->
-  <div class="callout" id="callout">全部操作都能用鼠标完成：<b>发送</b> / <b>停止</b> / <b>新会话</b> / <b>设置</b> / <b>RAW·STREAM</b> / 侧栏面板点标题可收起</div>
-
-  <div class="foot">PIXELAGENT · 不会聊天的 AI</div>
+    <div class="rail-scroll tab-body hidden" id="tab-sub">
+      <div class="empty">没有正在运行的子 Agent</div>
+    </div>
+  </aside>
 </div>
 
-<!-- ================= 设置面板（只读，展示 pi 的信息） ================= -->
+<!-- ═══════════════ 底部：输入行 + 状态栏 ═══════════════ -->
+<footer class="dock">
+  <div class="promptbar">
+    <!-- 命令面板 / 文件引用浮层（输入 / 或 @ 时弹出） -->
+    <div class="palette hidden" id="palette">
+      <div class="pal-hd" id="pal-hd">COMMANDS</div>
+      <div class="pal-list" id="pal-list"></div>
+    </div>
+
+    <span class="ps">›</span>
+    <div class="inputwrap">
+      <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件" />
+      <span id="mirror" aria-hidden="true"></span>
+      <span class="cursor" id="cursor"></span>
+    </div>
+    <button class="px-btn primary" id="btn-send">SEND</button>
+    <button class="px-btn hidden" id="btn-stop">■ STOP</button>
+  </div>
+
+  <div class="statusbar">
+    <span class="sb-tag on" id="sb-state" data-status="IDLE">IDLE</span>
+    <span class="sb-item">轮次 <b id="kv-round">0</b></span>
+    <span class="sb-item">用时 <b id="kv-time">0.0s</b></span>
+    <span class="sb-item">模型 <b id="kv-model2">—</b></span>
+    <span class="sb-spacer"></span>
+    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件</span>
+    <span class="sb-item sb-clock" id="sb-clock">--:--:--</span>
+    <button class="sb-btn" id="btn-settings" title="设置">⚙</button>
+  </div>
+</footer>
+
+<!-- ═══════════════ 设置对话框 ═══════════════ -->
 <div class="mask hidden" id="mask">
-  <div class="term dialog">
-    <div class="term-bar">
+  <div class="win dialog">
+    <div class="win-bar">
       <span class="win-ico" aria-hidden="true"></span>
-      <span class="term-name">SETTINGS()</span>
+      <span class="win-name">SETTINGS()</span>
       <span class="win-grip" aria-hidden="true"></span>
       <span class="win-ctl">
         <button class="win-btn win-x" id="dlg-x" type="button" title="关闭">✕</button>
@@ -196,7 +165,7 @@
       <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
       <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
-      <p class="dlg-tip">第一版只读展示，不做模型切换 UI（读 pi 自己的默认配置）。</p>
+      <p class="dlg-tip">只读展示（读 pi 自己的默认配置，不做模型切换 UI）。</p>
       <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
     </div>
   </div>

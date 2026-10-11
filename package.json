@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "test:pi": "node test/pi-wire.test.js",
-    "shot": "electron test/screenshot.js"
+    "shot": "electron test/screenshot.js",
+    "shot:extra": "electron test/shot-extra.js",
+    "verify:tools": "electron test/verify-tools.js"
   },
   "license": "MIT",
   "devDependencies": {
