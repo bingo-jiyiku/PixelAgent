@@ -96,6 +96,22 @@ const report = (title, arr) => {
   arr.forEach((x) => console.log('  ⚠ ' + x));
 };
 
+// ── 第二类：**裸 Markdown 标记**（照抄到界面上就是字面星号）──────────────
+// 起因：模型配置框的提示语里写了「它**不会**改变 pi 实际能收多少上下文」，
+// 那是 HTML 纯文本，`**` 不会被解析 ⇒ 用户真的看到两个星号。
+// 为什么这条判据在本项目里**不会误报**：.js 里所有 `**` 都只出现在**注释**里
+// （注释行/块注释续行都被上面跳过），index.html 不是 Markdown。
+// 所以"字符串字面量里出现 **" 在这里等价于"漏到界面上的标记"。
+// 只认 `**`。**故意不**把 `#` / `|---|` 算进来 —— 那些在 main.js 的
+// 「导出 Markdown」里是**合法产物**（`sessionToMarkdown` 本来就要生成 "# 标题"），
+// 一并算进来就会变成一堆假警报，而假警报的代价是这条判据被当成噪音忽略掉。
+// `**` 没有这个问题：全库 `.js` 里的 `**` 都在注释里，字符串里出现必是漏到界面的标记。
+const MARKUP_BAD = /\*\*/;
+const markupHits = [];
+const scanMarkup = (s, where) => {
+  if (MARKUP_BAD.test(s)) markupHits.push(where + ': ' + JSON.stringify(s.slice(0, 80)));
+};
+
 for (const f of FILES) {
   const lines = fs.readFileSync(path.join(ROOT, f), 'utf8').split('\n');
   const out = [];
@@ -106,6 +122,7 @@ for (const f of FILES) {
       let m;
       while ((m = re.exec(code))) {
         const ctx = code.slice(0, m.index);
+        scanMarkup(m[1], f + ':' + (i + 1));
         copiesInside(m[1], ctx).forEach((x) => out.push((i + 1) + ': ' + JSON.stringify(x)));
       }
     };
@@ -114,6 +131,7 @@ for (const f of FILES) {
   });
   report(f, out);
 }
+report('字符串里混进了 Markdown 标记（会在界面上显示成字面符号）', markupHits);
 
 // index.html：文本节点 + 提示属性
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -121,6 +139,9 @@ const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style
 const nodes = noScript.replace(/<[^>]*>/g, '\u0000').split('\u0000').map((s) => s.trim()).filter(Boolean);
 report('index.html 文本节点', nodes.filter((s) => /[A-Za-z]{2,}/.test(s) && !CJK.test(s) && !KEEP.has(s))
   .map((s) => JSON.stringify(s)));
+// 上面那把 `**` 就是在这里漏出来的（提示语是 HTML 纯文本，不解析 Markdown）
+report('index.html 文本节点里的 Markdown 标记',
+  nodes.filter((s) => MARKUP_BAD.test(s)).map((s) => JSON.stringify(s.slice(0, 80))));
 const attrs = [];
 const reA = /(title|placeholder|aria-label)="([^"]*)"/g;
 let ma;
@@ -131,5 +152,11 @@ while ((ma = reA.exec(html))) {
 report('index.html 属性提示', attrs);
 
 console.log('\n扫了 ' + FILES.length + ' 个 js + index.html');
-if (hits) { console.log('❌ 发现 ' + hits + ' 处疑似英文文案 —— 要么改中文，要么加进白名单并写清理由'); process.exit(1); }
-console.log('✅ 源码级没发现英文文案残留（DOM 级验证见 verify-features.js 的 [7]）');
+if (hits) {
+  // 两类问题共用同一个计数，所以汇总措辞要**把两类都说出来** ——
+  // 只写"英文文案"会让下一轮的我照着英文去查，而问题其实是漏出来的标记。
+  console.log('❌ 发现 ' + hits + ' 处问题：英文文案残留 或 裸 Markdown 标记（见上面分段标题）');
+  console.log('   改中文，或者加进白名单并写清理由；** 一律换成 <b>。');
+  process.exit(1);
+}
+console.log('✅ 源码级没发现英文文案残留、也没发现裸 Markdown 标记（DOM 级验证见 verify-features.js 的 [7]）');

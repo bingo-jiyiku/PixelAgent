@@ -786,6 +786,9 @@ body {
 .dlg-body { padding: 4px 0 0; background: var(--panel); overflow-y: auto; min-height: 0; }
 .dlg-body .kv { font-size: 19px; padding: 10px 14px; }
 .dlg-tip { font-size: 18px; color: var(--muted); margin: 0; padding: 14px 14px; line-height: 1.5; }
+/* 提示语里要强调时**别用 Markdown 那套 `**`** —— 这是 HTML 纯文本，会把星号原样显示
+   （模型配置框的提示就漏过一次，现在 audit-copy 会拦）。用 <b>，走跟正文强调一致的紫色下划线。 */
+.dlg-tip b { font-weight: 700; color: var(--ink); box-shadow: inset 0 -0.45em 0 var(--lav); }
 .dlg-foot { padding: 0 14px 16px; }
 
 /* ============================================================
