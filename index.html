@@ -34,6 +34,11 @@
       <span class="cap-t">SESSIONS</span>
       <button class="cap-btn" id="btn-new" title="新会话">+ NEW</button>
     </div>
+    <!-- 跨会话搜索：扫全部会话文件的消息正文 -->
+    <div class="sess-search">
+      <input id="sess-q" type="text" placeholder="搜索全部会话…" autocomplete="off" spellcheck="false" />
+      <button class="ss-clear hidden" id="sess-q-clear" type="button" title="清空搜索">✕</button>
+    </div>
     <div class="rail-scroll" id="session-list">
       <!-- renderer 填充 -->
     </div>
@@ -100,25 +105,45 @@
     </div>
 
     <div class="rail-scroll tab-body hidden" id="tab-todos">
-      <div class="empty">当前会话没有待办项</div>
+      <div class="panel-hd">
+        <span>待办</span><b id="todos-hd">—</b>
+      </div>
+      <div class="todolist" id="todos-list"></div>
+      <div class="empty" id="todos-empty">当前会话没有待办项</div>
     </div>
 
     <div class="rail-scroll tab-body hidden" id="tab-files">
       <div class="filebar">
-        <button class="cap-btn" id="btn-refresh-files" type="button">↻ 刷新</button>
-        <span class="filebar-p" id="files-root">—</span>
+        <button class="cap-btn" id="btn-pick-dir" type="button" title="切换工作目录（同时成为 pi 的工作目录）">📁 换目录</button>
+        <button class="cap-btn" id="btn-refresh-files" type="button" title="刷新">↻</button>
       </div>
+      <div class="filebar-p" id="files-root">—</div>
       <div class="filelist" id="files-list"></div>
     </div>
 
     <div class="rail-scroll tab-body hidden" id="tab-sub">
-      <div class="empty">没有正在运行的子 Agent</div>
+      <div class="agents-sec">
+        <div class="agents-hd">本次会话的子代理</div>
+        <div class="agentlist" id="sub-list"></div>
+        <div class="empty" id="sub-empty">还没有子代理调用</div>
+      </div>
+      <div class="agents-sec">
+        <div class="agents-hd">
+          <span>已装扩展</span>
+          <button class="cap-btn" id="btn-agents-refresh" type="button" title="重新读取 pi list">↻</button>
+        </div>
+        <div class="agentlist" id="ext-list"></div>
+        <div class="empty" id="ext-empty">读取中…</div>
+      </div>
     </div>
   </aside>
 </div>
 
 <!-- ═══════════════ 底部：输入行 + 状态栏 ═══════════════ -->
 <footer class="dock">
+  <!-- 附件预览条：粘贴/拖拽/选择进来的图片先在这里排队，再随消息一起发 -->
+  <div class="attbar hidden" id="attbar"></div>
+
   <div class="promptbar">
     <!-- 命令面板 / 文件引用浮层（输入 / 或 @ 时弹出） -->
     <div class="palette hidden" id="palette">
@@ -128,10 +153,11 @@
 
     <span class="ps">›</span>
     <div class="inputwrap">
-      <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件" />
+      <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件   图片可直接粘贴" />
       <span id="mirror" aria-hidden="true"></span>
       <span class="cursor" id="cursor"></span>
     </div>
+    <button class="px-btn att" id="btn-att" title="添加图片（也可以直接粘贴 / 拖进来）">+ IMG</button>
     <button class="px-btn primary" id="btn-send">SEND</button>
     <button class="px-btn hidden" id="btn-stop">■ STOP</button>
   </div>
@@ -144,16 +170,47 @@
       模型 <b id="kv-model2">默认</b> <em>▾</em>
     </button>
     <span class="sb-item sb-think">思考 <b id="kv-think">默认</b></span>
+    <!-- 这个标记很关键：默认模型不一定看得懂图，发图前要靠它判断 -->
+    <span class="sb-item sb-vis" id="sb-vis" title="当前模型是否支持看图">
+      图 <b id="kv-vis">?</b>
+    </span>
     <span class="sb-usage" id="sb-usage" title="上下文占用">
       <span class="ub-bar"><i id="ub-fill"></i></span>
       <b id="ub-text">— / —</b>
     </span>
     <span class="sb-spacer"></span>
-    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件</span>
+    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件 · ! shell</span>
     <span class="sb-item sb-clock" id="sb-clock">--:--:--</span>
     <button class="sb-btn" id="btn-settings" title="设置">⚙</button>
   </div>
 </footer>
+
+<!-- ═══════════════ 拖拽落区提示 ═══════════════ -->
+<div class="dropmask hidden" id="dropmask" aria-hidden="true">
+  <div class="dm-box">松手即加入附件</div>
+</div>
+
+<!-- ═══════════════ 通用单行输入框（Electron 里 window.prompt 不可用，得自绘） ═══════════════ -->
+<div class="mask hidden" id="mask-input">
+  <div class="win dialog dialog-input">
+    <div class="win-bar">
+      <span class="win-ico" aria-hidden="true"></span>
+      <span class="win-name" id="inp-title">INPUT()</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="inp-x" type="button" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="dlg-body">
+      <input id="inp-field" type="text" autocomplete="off" spellcheck="false" />
+      <p class="dlg-tip" id="inp-tip">回车确定，ESC 取消。</p>
+      <div class="dlg-foot">
+        <button class="px-btn primary" id="inp-ok" type="button">确定</button>
+        <button class="px-btn" id="inp-cancel" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════ 设置对话框 ═══════════════ -->
 <div class="mask hidden" id="mask">
@@ -170,9 +227,15 @@
       <div class="kv"><span>后端</span><b>pi</b></div>
       <div class="kv"><span>输出模式</span><b id="set-mode">json</b></div>
       <div class="kv"><span>当前模型</span><b id="set-model">读取中…</b></div>
+      <div class="kv"><span>工作目录</span><b id="set-cwd">—</b></div>
+      <div class="kv"><span>配置目录</span><b id="set-agentdir">—</b></div>
+      <div class="kv"><span>凭据</span><b id="set-auth">—</b></div>
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
       <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
-      <p class="dlg-tip">只读展示（读 pi 自己的默认配置，不做模型切换 UI）。</p>
+      <p class="dlg-tip">
+        配置目录是隔离的：PixelAgent 用自己那份，跟终端里的 pi 各不打扰
+        （共用会被 stale 锁互相牵连）。首次运行会从终端配置里抄一份凭据过来。
+      </p>
       <div class="dlg-foot"><button class="px-btn primary" id="dlg-close">知道了</button></div>
     </div>
   </div>
@@ -205,6 +268,7 @@
 </div>
 
 <script src="md.js"></script>
+<script src="parse.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

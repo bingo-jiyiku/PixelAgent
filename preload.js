@@ -7,8 +7,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('pixelAPI', {
-  // 发一轮话
-  ask: (text) => ipcRenderer.invoke('pi:ask', text),
+  // 发一轮话：payload 可以是字符串，也可以是 {text, images:[{name,dataUrl}]}
+  ask: (payload) => ipcRenderer.invoke('pi:ask', payload),
   // 停止当前这一轮
   abort: () => ipcRenderer.invoke('pi:abort'),
 
@@ -17,16 +17,31 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   sessions: () => ipcRenderer.invoke('pi:sessions'),
   openSession: (seq) => ipcRenderer.invoke('pi:open-session', seq),
   history: (seq) => ipcRenderer.invoke('pi:session-history', seq),
+  renameSession: (seq, name) => ipcRenderer.invoke('pi:session-rename', seq, name),
+  deleteSession: (seq) => ipcRenderer.invoke('pi:session-delete', seq),
+  exportSession: (seq, outPath) => ipcRenderer.invoke('pi:session-export', seq, outPath),
 
-  // 文件树
+  // 跨会话搜索
+  search: (q) => ipcRenderer.invoke('pi:search', q),
+
+  // 文件树 / 工作目录
   files: (dir) => ipcRenderer.invoke('pi:files', dir),
+  pickDir: () => ipcRenderer.invoke('pi:pick-dir'),
+  setWorkDir: (dir) => ipcRenderer.invoke('pi:set-workdir', dir),
+
+  // `!` 直接执行 shell
+  runShell: (payload) => ipcRenderer.invoke('pi:run-shell', payload),
+  killShell: (id) => ipcRenderer.invoke('pi:shell-kill', id),
 
   // 模型 / 思考档位
   models: () => ipcRenderer.invoke('pi:models'),
   setModel: (sel) => ipcRenderer.invoke('pi:set-model', sel),
   setThinking: (level) => ipcRenderer.invoke('pi:set-thinking', level),
 
-  // 读信息（模型/会话路径），设置面板用
+  // 扩展清单
+  agents: () => ipcRenderer.invoke('pi:agents'),
+
+  // 读信息（模型/会话路径/配置目录），设置面板用
   info: () => ipcRenderer.invoke('pi:info'),
 
   // 窗口控制（无原生标题栏后，按钮自己发号施令）

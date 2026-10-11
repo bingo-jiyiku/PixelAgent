@@ -5,11 +5,18 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test:pi": "node test/pi-wire.test.js",
+    "test": "node test/fixtures/load-image.js && node test/md.test.js && node test/parse.test.js && node test/bridge.test.js && node test/attach.test.js",
+    "test:fixtures": "node test/fixtures/load-image.js",
     "test:md": "node test/md.test.js",
+    "test:parse": "node test/parse.test.js",
+    "test:bridge": "node test/bridge.test.js",
+    "test:attach": "node test/attach.test.js",
+    "test:pi": "node test/pi-wire.test.js",
     "shot": "electron test/screenshot.js",
     "shot:extra": "electron test/shot-extra.js",
-    "verify:tools": "electron test/verify-tools.js"
+    "verify:tools": "electron test/verify-tools.js",
+    "verify:features": "electron test/verify-features.js",
+    "probe:trash": "electron test/probe-trash.js"
   },
   "license": "MIT",
   "devDependencies": {

@@ -1,5 +1,11 @@
 node_modules/
 .sessions/
+# pi 的隔离配置目录：里面有 auth.json（凭据）和模型目录缓存，绝不能提交
+.pi-agent/
+# 运行时落盘的图片附件
+.attachments/
+# 运行时配置：工作目录（绝对路径）+ 会话别名，属于本机状态，不是源码
+.pixelagent.json
 *.log
 /p*.bin
 /px*.bin
@@ -9,3 +15,8 @@ node_modules/
 /variants/layout/shots/
 .bak/
 .impeccable/
+
+# 一次误写（`2>nul` 这种 cmd 写法在 bash 里会真的建出一个叫 nul 的文件）留下的产物。
+# 注意：nul 是 Windows 保留设备名，普通删除 / 回收站都会报
+# "指定的设备名无效 (0x800704B0)"，需要 \\?\ 扩展路径；这里选择忽略而不是删除。
+/nul

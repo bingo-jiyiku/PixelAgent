@@ -72,11 +72,41 @@ function locate() {
 }
 
 /**
+ * 组装 pi 的命令行参数（不含 node / cli 本身）。
+ * 抽成纯函数是为了能单测 —— 这里的顺序有个真踩过的坑：
+ * 附件必须作为**独立的 argv**，排在 prompt 之前。
+ * 一旦把 "@路径 问题" 拼成一个字符串，pi 会把整串当成一个文件路径，
+ * 报 "File not found: E:\...\a.png 这张图里有什么…"。
+ */
+function buildArgs(opts) {
+  const args = ['-p', '--mode', 'json'];
+
+  // 额外参数（扩展 / 模型 / 思考档位），由调用方拼好
+  if (Array.isArray(opts.extraArgs) && opts.extraArgs.length) args.push(...opts.extraArgs);
+
+  // 会话参数也是选项，必须排在 @ 文件之前
+  if (opts.noSession) args.push('--no-session');
+  else if (opts.sessionFile) args.push('--session', opts.sessionFile);
+
+  // 附件：一律给绝对路径（pi 按 cwd 解析相对路径，绝对路径最稳）
+  if (Array.isArray(opts.attachments) && opts.attachments.length) {
+    for (const a of opts.attachments) {
+      if (a) args.push('@' + path.resolve(a));
+    }
+  }
+
+  args.push(opts.prompt);   // 用户的话永远是最后一个参数
+  return args;
+}
+
+/**
  * 发一轮问话。
  * @param {object} opts
  * @param {string} opts.prompt        用户这一轮的话
+ * @param {string[]} [opts.attachments] 附件的绝对路径（图片/文本），会以 @path 形式传给 pi
  * @param {string} opts.sessionFile   会话文件路径（多轮记忆靠它）
  * @param {boolean} [opts.noSession]  true = 不留会话（单次问答）
+ * @param {string} [opts.agentDir]    pi 配置目录（PI_CODING_AGENT_DIR），用于跟终端里的 pi 隔离
  * @param {(ev:object)=>void} opts.onEvent  每解析出一行 JSON 事件就回调
  * @param {(s:string, d:any)=>void} [opts.onState] 状态回调（THINKING/TOOL/DONE...）
  * @param {(info:object)=>void} [opts.onExit] 进程结束回调
@@ -90,20 +120,19 @@ function ask(opts) {
     return { child: null, abort() {} };
   }
 
-  // 组装参数：一律用数组传参，绝不拼字符串，避免引号/空格/中文被 shell 吃掉
-  const args = [cli, '-p', '--mode', 'json'];
-  // 额外参数（模型 / 思考档位等），由调用方拼好，位置固定在 prompt 之前
-  if (Array.isArray(opts.extraArgs) && opts.extraArgs.length) args.push(...opts.extraArgs);
-  if (opts.noSession) {
-    args.push('--no-session');
-  } else if (opts.sessionFile) {
-    // 确保会话目录存在，否则 pi 可能写不进去
-    fs.mkdirSync(path.dirname(opts.sessionFile), { recursive: true });
-    args.push('--session', opts.sessionFile);
+  // 会话目录先建好，否则 pi 可能写不进去
+  if (!opts.noSession && opts.sessionFile) {
+    try { fs.mkdirSync(path.dirname(opts.sessionFile), { recursive: true }); } catch (e) { /* ignore */ }
   }
-  args.push(opts.prompt); // 最后一个参数就是用户的话
+
+  // 组装参数：一律用数组传参，绝不拼字符串，避免引号/空格/中文被 shell 吃掉
+  const args = [cli, ...buildArgs(opts)];
 
   if (opts.onState) opts.onState('THINKING', '启动 pi');
+
+  const env = Object.assign({}, process.env, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
+  // 配置目录隔离：不共用终端里那份 ~/.pi/agent，免得互相抢锁
+  if (opts.agentDir) env.PI_CODING_AGENT_DIR = opts.agentDir;
 
   const child = spawn(node, args, {
     // stdin 必须断开（ignore，等于 /dev/null）：pi 在 stdin 是管道时会一直等，
@@ -111,7 +140,7 @@ function ask(opts) {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     cwd: opts.cwd || process.cwd(),
-    env: Object.assign({}, process.env, { PI_OFFLINE: process.env.PI_OFFLINE || '' })
+    env
   });
 
   // 标准输出按行切：pi 输出的是"换行分隔的 JSON"（NDJSON）
@@ -164,4 +193,4 @@ function ask(opts) {
   };
 }
 
-module.exports = { ask, locate };
+module.exports = { ask, locate, buildArgs };

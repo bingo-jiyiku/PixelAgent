@@ -2,24 +2,58 @@
 // main.js —— Electron 主进程
 // 职责：开窗口 + 把渲染层的请求转给 pi-bridge，
 //       再把 pi 吐出来的事件流转发回界面；
-//       顺带提供「会话列表 / 历史回放 / 文件树」三件真数据。
+//       并提供「会话管理 / 历史回放 / 文件树 / 附件落盘 /
+//       shell 执行 / 全局搜索 / 扩展清单」这些真数据。
 // ============================================================
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell: electronShell } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const bridge = require('./pi-bridge');
+const { saveAttachments } = require('./attach');
 
 let win = null;          // 主窗口
 let job = null;          // 当前正在跑的 pi 子进程（支持"停止"）
 let sessionSeq = 0;      // 当前会话序号（对应 .sessions/chat-<n>.json）
 
+const APP_DIR = __dirname;
+
 // 会话文件放在项目下的 .sessions/（在 E 盘，不占 C 盘）
-const SESSION_DIR = path.join(__dirname, '.sessions');
-// 文件树根目录：pi 跑起来的工作目录
-const WORK_DIR = __dirname;
+const SESSION_DIR = path.join(APP_DIR, '.sessions');
+// 用户发进来的图片落盘在这里（pi 只认文件路径，不认内存里的 base64）
+const ATT_DIR = path.join(APP_DIR, '.attachments');
+// pi 的**隔离**配置目录。
+// 为什么不直接用 ~/.pi/agent：那边是老板终端里那套 pi 在用的。
+// 两边共用一个目录会互相抢 settings.json.lock —— 而且 PixelAgent 一旦被强杀，
+// 会留下 stale 锁把**终端里的 pi 一起弄坏**。隔离掉，各用各的。
+const AGENT_DIR = path.join(APP_DIR, '.pi-agent');
+// 自带扩展（给 pi 补一个 todo 工具，否则右栏 TODOS tab 永远是空的）
+const TODO_EXT = path.join(APP_DIR, 'ext', 'todo.ts');
+// 本应用的配置：工作目录 + 会话别名
+const CONFIG_FILE = path.join(APP_DIR, '.pixelagent.json');
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// ---------- 配置 ----------
+let cfg = { workDir: APP_DIR, names: {} };
+
+function loadCfg() {
+  try {
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
+    const j = JSON.parse(raw);
+    if (j && typeof j.workDir === 'string' && j.workDir) cfg.workDir = j.workDir;
+    if (j && j.names && typeof j.names === 'object') cfg.names = j.names;
+  } catch (e) { /* 首次运行没有配置文件，用默认 */ }
+  // 工作目录必须真实存在，否则文件树和 pi 的 cwd 都会出错
+  try { if (!fs.statSync(cfg.workDir).isDirectory()) cfg.workDir = APP_DIR; }
+  catch (e) { cfg.workDir = APP_DIR; }
+}
+function saveCfg() {
+  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); } catch (e) { /* 写不进去不该崩 */ }
+}
+loadCfg();
 
 function sessionFile(seq) {
   const n = (seq == null) ? sessionSeq : seq;
@@ -33,6 +67,59 @@ function send(obj) {
 function getWindow() { return win; }
 
 // ============================================================
+// pi 配置目录准备：首次运行时把终端里那套凭据/模型目录抄一份过来
+// （只抄凭据与模型定义，不抄 packages —— 见下面 ensureAgentDir 的说明）
+// ============================================================
+let agentDirState = { ready: false, copied: [], error: '' };
+
+function homeDir() {
+  return process.env.USERPROFILE || process.env.HOME || '';
+}
+
+function ensureAgentDir() {
+  const src = path.join(homeDir(), '.pi', 'agent');
+  const copied = [];
+  try {
+    fs.mkdirSync(AGENT_DIR, { recursive: true });
+
+    // auth.json 是命根子：没有它 pi 会直接报 "No API key found"
+    const want = ['auth.json', 'models.json', 'settings.json'];
+    for (const f of want) {
+      const dst = path.join(AGENT_DIR, f);
+      const s = path.join(src, f);
+      if (!fs.existsSync(dst) && fs.existsSync(s)) {
+        fs.copyFileSync(s, dst);
+        copied.push(f);
+      }
+    }
+
+    // 顺手清掉本目录下自己的 stale 锁。
+    // 只清 AGENT_DIR 里的 —— 这是 PixelAgent 自己的目录，清它不碰别人的东西。
+    // （共享 ~/.pi/agent 时那种"被强杀留下锁、下次报 Lock file is already being held"
+    //   的故障，隔离目录从结构上就不会波及终端里的 pi。）
+    for (const lock of ['settings.json.lock', 'auth.json.lock', 'models-store.json.lock']) {
+      const p = path.join(AGENT_DIR, lock);
+      try {
+        const st = fs.statSync(p);
+        if (st.isDirectory() && fs.readdirSync(p).length === 0) fs.rmdirSync(p);
+      } catch (e) { /* 不存在就算了 */ }
+    }
+
+    const ok = fs.existsSync(path.join(AGENT_DIR, 'auth.json'));
+    agentDirState = {
+      ready: ok,
+      copied,
+      error: ok ? '' : (fs.existsSync(src)
+        ? '没能从 ' + src + ' 取到 auth.json'
+        : '在本机找不到 ' + src + ' —— 先在终端里跑一次 pi 并登录，或有 --api-key')
+    };
+  } catch (e) {
+    agentDirState = { ready: false, copied, error: e.message };
+  }
+  return agentDirState;
+}
+
+// ============================================================
 // 会话文件解析（pi 的会话是 NDJSON：一行一个条目）
 // ============================================================
 function textOf(content) {
@@ -43,8 +130,14 @@ function textOf(content) {
   return '';
 }
 
+// 数一下这条消息里带了几张图（不回传 base64：历史里塞大图会把 IPC 撑爆）
+function imageCountOf(content) {
+  if (!Array.isArray(content)) return 0;
+  return content.filter((c) => c && c.type === 'image').length;
+}
+
 function parseSession(file) {
-  const out = { exists: false, cwd: '', model: '', msgs: [], title: '' };
+  const out = { exists: false, cwd: '', model: '', msgs: [], title: '', todos: [] };
   if (!fs.existsSync(file)) return out;
   out.exists = true;
   let raw = '';
@@ -58,14 +151,33 @@ function parseSession(file) {
     if (j.type === 'model_change' && j.modelId) out.model = j.modelId;
     if (j.type === 'message' && j.message) {
       const role = j.message.role;
+
+      // 工具结果里带 todo 状态（自带扩展把状态放在 details 里）。
+      // 只在历史里重建列表，不当成聊天消息显示。
+      if (role === 'toolResult' && j.message.toolName === 'todo') {
+        const det = j.message.details;
+        if (det && Array.isArray(det.todos)) {
+          out.todos = det.todos.map((t) => ({
+            id: t.id,
+            text: String(t.text == null ? '' : t.text),
+            done: !!t.done
+          }));
+        }
+        continue;
+      }
+
       const t = textOf(j.message.content);
-      if (!t) continue;
-      if (role === 'user') out.msgs.push({ role: 'user', text: t });
-      else if (role === 'assistant') out.msgs.push({ role: 'assistant', text: t });
+      const imgs = imageCountOf(j.message.content);
+      if (!t && !imgs) continue;
+      if (role === 'user') out.msgs.push({ role: 'user', text: t, images: imgs });
+      else if (role === 'assistant') out.msgs.push({ role: 'assistant', text: t, images: 0 });
     }
   }
   const firstUser = out.msgs.find((m) => m.role === 'user');
-  out.title = firstUser ? firstUser.text.replace(/\s+/g, ' ').slice(0, 42) : '(空会话)';
+  out.title = firstUser
+    ? (firstUser.text.replace(/\s+/g, ' ').slice(0, 42) ||
+       (firstUser.images ? '[图片 ×' + firstUser.images + ']' : ''))
+    : '(空会话)';
   return out;
 }
 
@@ -88,12 +200,14 @@ function listSessions() {
     try { st = fs.statSync(file); } catch (e) { /* ignore */ }
     const parsed = parseSession(file);
     const rounds = parsed.msgs.filter((m) => m.role === 'user').length;
+    const alias = cfg.names[String(seq)];
     return {
       seq,
       file,
       mtime: st ? st.mtimeMs : 0,
       size: st ? st.size : 0,
-      title: parsed.title,
+      title: alias || parsed.title,     // 用户改过名就用用户的
+      renamed: !!alias,
       rounds,
       current: seq === sessionSeq
     };
@@ -103,10 +217,10 @@ function listSessions() {
 }
 
 // ============================================================
-// 文件树（只列一层，可点进子目录；限制在 WORK_DIR 之下）
+// 文件树（只列一层，可点进子目录；限制在工作目录之下）
 // ============================================================
 function listFiles(dir) {
-  const base = path.resolve(WORK_DIR);
+  const base = path.resolve(cfg.workDir);
   let target = dir ? path.resolve(String(dir)) : base;
   // 防目录穿越：必须还在工作目录之下
   if (target !== base && !target.startsWith(base + path.sep)) target = base;
@@ -130,14 +244,18 @@ function listFiles(dir) {
 }
 
 // ============================================================
+// 附件落盘
+// 实现抽到了 attach.js（纯 Node，能直接单测路径安全），这里直接用。
+// ============================================================
+
+// ============================================================
 // 模型目录 + 当前模型 / 思考档位
-// 数据来源是真跑 `pi --list-models`（132 个模型，带 context 窗口），不是写死的表
+// 数据来源是真跑 `pi --list-models`（132 个模型，带 context 窗口和 images 能力），
+// 不是写死的表。images 那一列很重要：喂图前要靠它判断模型看不看得懂图。
 // ============================================================
 let modelsCache = null;   // 模型列表缓存（一次会话内不变）
 let curModel = null;      // null = 用 pi 自己的默认配置
 let curThinking = null;   // null = 用 pi 默认；否则 off|minimal|low|medium|high|xhigh|max
-
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 function parseSize(s) {
   const m = /^([\d.]+)\s*([KM]?)$/.exec(String(s || ''));
@@ -164,17 +282,20 @@ function parseModels(text) {
   return rows;
 }
 
-// 跑一次 pi 的纯查询命令（不是 agent 调用），拿 stdout
-function runPiQuery(args, timeoutMs) {
+// 跑一次 pi 的纯查询命令（不是 agent 调用），拿 stdout。
+// 函数名带 Once 是有意的：外面还套了一层「串行 + 重试」的 runPiQuery。
+function runPiQueryOnce(args, timeoutMs, agentDir) {
   return new Promise((resolve) => {
     const { node, cli } = bridge.locate();
     if (!cli) { resolve({ ok: false, error: '找不到 pi 入口' }); return; }
+    const env = Object.assign({}, process.env, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
+    if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
     let child;
     try {
       child = spawn(node, [cli, ...args], {
         stdio: ['ignore', 'pipe', 'pipe'],   // stdin 必须断开，否则 pi 会挂住
         windowsHide: true,
-        env: process.env
+        env
       });
     } catch (e) { resolve({ ok: false, error: e.message }); return; }
 
@@ -193,11 +314,39 @@ function runPiQuery(args, timeoutMs) {
   });
 }
 
+// ---------- 串行 + 重试的查询包装 ----------
+// 为什么要串行：pi 启动时要抢配置目录里的 settings.json.lock。
+// 两个 pi 进程同时启动会互相抢不到；抢不到 pi 就直接判定"配置无效"，
+// 表现是莫名其妙的 "Lock file is already being held" + "No API key found"
+// （开发过程中真的这么中过一次，排查花了很久）。
+// 所以两件事一起做：① 同一时刻只跑一个查询；② 撞上了就退避重试。
+let piQueryChain = Promise.resolve();
+
+async function runPiQuery(args, timeoutMs, agentDir) {
+  const task = async () => {
+    // 有对话在跑就先让开，别跟它抢锁（最多等 20 秒）
+    for (let i = 0; i < 100 && job; i++) await new Promise((r) => setTimeout(r, 200));
+    let r = { ok: false, error: 'unknown' };
+    for (let i = 0; i < 3; i++) {
+      r = await runPiQueryOnce(args, timeoutMs, agentDir);
+      const blob = String(r.out || '') + String(r.err || '');
+      if (!/Lock file is already being held|state lock timeout/.test(blob)) return r;
+      await new Promise((res) => setTimeout(res, 700 * (i + 1)));
+    }
+    return r;
+  };
+  const next = piQueryChain.then(task, task);
+  piQueryChain = next.then(() => {}, () => {});   // 链条不能因为一次失败就断
+  return next;
+}
+
 function modelState() { return { model: curModel, thinking: curThinking }; }
 
-// 发问时要拼的参数（模型 / 思考档位）
+// 发问时要拼的参数（扩展 / 模型 / 思考档位）
 function modelArgs() {
   const a = [];
+  // 自带 todo 扩展：pi 本体没有 todo 工具，不挂这个右栏 TODOS 就是死的
+  if (fs.existsSync(TODO_EXT)) a.push('--extension', TODO_EXT);
   if (curModel && curModel.provider && curModel.model) {
     a.push('--provider', curModel.provider, '--model', curModel.model);
   }
@@ -233,17 +382,37 @@ function createWindow() {
 module.exports = { getWindow, sessionFile };
 
 // ---------- 渲染层 -> 主进程：发一轮话 ----------
-ipcMain.handle('pi:ask', (_e, text) => {
+ipcMain.handle('pi:ask', (_e, payload) => {
   if (job) return { ok: false, reason: 'BUSY' };
+
+  // 兼容两种调用：老式直接给字符串，新式给 {text, images}
+  const text = typeof payload === 'string' ? payload : String((payload && payload.text) || '');
+  const images = (payload && Array.isArray(payload.images)) ? payload.images : [];
+
+  // saveAttachments 现在返回 {saved, rejected}。
+  // rejected 必须一路带回界面 —— 图片收不下的原因（格式坏 / 超限 / 文件名不合法）
+  // 只有我们知道，pi 那边只会含糊地说一句 "could not be resized"。
+  const att = saveAttachments(images, ATT_DIR);
+  const files = att.saved.map((f) => f.path);
+
+  if (!text && !files.length) {
+    // 图全被拒了又没打字：别装没事把空请求发出去
+    if (att.rejected.length) {
+      return { ok: false, reason: 'IMAGE_REJECTED', rejected: att.rejected };
+    }
+    return { ok: false, reason: 'EMPTY' };
+  }
 
   const loc = bridge.locate();
   send({ kind: 'boot', node: loc.node, cli: loc.cli, session: sessionFile() });
 
   job = bridge.ask({
-    prompt: text,
+    prompt: text || '（看这张图）',
+    attachments: files,
     sessionFile: sessionFile(),
-    cwd: WORK_DIR,
-    extraArgs: modelArgs(),          // 模型 / 思考档位（没选就是空，走 pi 默认）
+    cwd: cfg.workDir,
+    agentDir: AGENT_DIR,
+    extraArgs: modelArgs(),          // 扩展 / 模型 / 思考档位
     onEvent(ev) { send({ kind: 'ev', ev }); },
     onState(state, detail) { send({ kind: 'state', state, detail }); },
     onExit(info) {
@@ -255,7 +424,7 @@ ipcMain.handle('pi:ask', (_e, text) => {
     }
   });
 
-  return { ok: true };
+  return { ok: true, attachments: files.length, rejected: att.rejected };
 });
 
 // ---------- 停止当前这一轮 ----------
@@ -288,11 +457,219 @@ ipcMain.handle('pi:open-session', (_e, seq) => {
 ipcMain.handle('pi:session-history', (_e, seq) => {
   const n = (seq == null) ? sessionSeq : Number(seq);
   const parsed = parseSession(sessionFile(n));
-  return { ok: true, seq: n, cwd: parsed.cwd, model: parsed.model, msgs: parsed.msgs };
+  return { ok: true, seq: n, cwd: parsed.cwd, model: parsed.model, msgs: parsed.msgs, todos: parsed.todos };
+});
+
+// ---------- 会话重命名（只记别名，不动 pi 的会话文件） ----------
+ipcMain.handle('pi:session-rename', (_e, seq, name) => {
+  const n = Number(seq);
+  if (!Number.isFinite(n) || n < 0) return { ok: false, reason: 'BAD_SEQ' };
+  const clean = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (clean) cfg.names[String(n)] = clean;
+  else delete cfg.names[String(n)];      // 传空 = 恢复成自动标题
+  saveCfg();
+  return { ok: true, sessions: listSessions() };
+});
+
+// ---------- 会话删除：进回收站，绝不 rm ----------
+ipcMain.handle('pi:session-delete', async (_e, seq) => {
+  const n = Number(seq);
+  if (!Number.isFinite(n) || n < 0) return { ok: false, reason: 'BAD_SEQ' };
+  const file = sessionFile(n);
+  if (!fs.existsSync(file)) return { ok: false, reason: 'NOT_FOUND' };
+
+  let trashErr = '';
+  try {
+    await electronShell.trashItem(file);   // 可恢复，比删掉安全得多
+  } catch (e) {
+    trashErr = (e && e.message) || String(e);
+  }
+
+  // ★ 不能只看 trashItem 有没有 reject。
+  //   本机实测（test/_trash-probe.js）：它会把文件**移走之后仍然 reject**
+  //   "Operation was aborted"。只按异常判，界面就会弹"删除失败"，
+  //   而文件其实已经离开原位置了 —— 用户看了假警报还得自己去找文件。
+  //   所以以**文件还在不在**为事实依据，异常只作为补充说明带回去。
+  if (fs.existsSync(file)) {
+    return { ok: false, reason: 'TRASH_FAILED', error: trashErr || '文件仍然存在' };
+  }
+
+  delete cfg.names[String(n)];
+  saveCfg();
+  const wasCurrent = (n === sessionSeq);
+  if (wasCurrent) {
+    if (job) { job.abort(); job = null; }
+    const seqs = listSessionSeqs();
+    sessionSeq = seqs.length ? Math.max(...seqs) : 0;
+  }
+  // trashNote 非空 = 回收站那一步报了异常，但文件确实已移出。
+  // 界面据此说清楚「可恢复性没确认」，而不是假装一切正常。
+  return {
+    ok: true, removedCurrent: wasCurrent, trashNote: trashErr,
+    sessions: listSessions(), current: sessionSeq
+  };
+});
+
+// ---------- 会话导出：用 pi 自己的 --export，产出独立 HTML ----------
+// 支持两种走法：
+//   exportSession(seq)              → 弹系统保存框（界面按钮用）
+//   exportSession(seq, outPath)     → 直接写到指定路径，不开框（验收 / 脚本 / 命令面板用）
+// 为什么要拆出 outPath：系统保存框是阻塞式的，自动化验收没法点它，
+// 于是"导出"这个功能就一直验不了。能绕开对话框的接口，才验得动。
+ipcMain.handle('pi:session-export', async (_e, seq, outPath) => {
+  const n = Number(seq == null ? sessionSeq : seq);
+  const file = sessionFile(n);
+  if (!fs.existsSync(file)) return { ok: false, reason: 'NOT_FOUND' };
+
+  const alias = cfg.names[String(n)];
+  let target = typeof outPath === 'string' && outPath ? outPath : '';
+
+  if (!target) {
+    if (!win || win.isDestroyed()) return { ok: false, reason: 'NO_WINDOW' };
+    const r = await dialog.showSaveDialog(win, {
+      title: '导出会话（独立 HTML）',
+      defaultPath: path.join(cfg.workDir, (alias || ('pixelagent-chat-' + n)) + '.html'),
+      filters: [{ name: 'HTML', extensions: ['html'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'CANCELED' };
+    target = r.filePath;
+  }
+
+  try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (e) { /* 目录已存在即可 */ }
+
+  const q = await runPiQuery(['--export', file, target], 60000, AGENT_DIR);
+  if (q.ok && fs.existsSync(target)) return { ok: true, out: target };
+  return { ok: false, reason: 'EXPORT_FAILED', error: q.error || (q.err || '').slice(-400) };
+});
+
+// ---------- 跨会话全局搜索 ----------
+// 线性扫 .sessions 下所有会话文件。会话多了会慢，所以：
+// 超大文件跳过、每个会话最多贡献 2 条命中、总数封顶 60。
+ipcMain.handle('pi:search', (_e, q) => {
+  const key = String(q == null ? '' : q).trim().toLowerCase();
+  if (key.length < 2) return { ok: true, hits: [], need: 2 };
+  const MAX_FILE = 32 * 1024 * 1024;
+  const hits = [];
+
+  for (const seq of listSessionSeqs()) {
+    if (hits.length >= 60) break;
+    const file = sessionFile(seq);
+    let st = null;
+    try { st = fs.statSync(file); } catch (e) { continue; }
+    if (st.size > MAX_FILE) continue;
+
+    const parsed = parseSession(file);
+    const alias = cfg.names[String(seq)];
+    let got = 0;
+    for (let i = 0; i < parsed.msgs.length && got < 2; i++) {
+      const m = parsed.msgs[i];
+      const at = m.text.toLowerCase().indexOf(key);
+      if (at < 0) continue;
+      const from = Math.max(0, at - 34);
+      hits.push({
+        seq,
+        title: alias || parsed.title,
+        role: m.role,
+        idx: i,
+        snippet: (from > 0 ? '…' : '') + m.text.slice(from, at + key.length + 46).replace(/\s+/g, ' ')
+      });
+      got++;
+    }
+  }
+  return { ok: true, hits };
 });
 
 // ---------- 文件树 ----------
 ipcMain.handle('pi:files', (_e, dir) => listFiles(dir));
+
+// ---------- 选择工作目录（同时成为 pi 的 cwd，@ 引用也按它解析） ----------
+function setWorkDir(dir) {
+  const abs = path.resolve(String(dir || ''));
+  let st = null;
+  try { st = fs.statSync(abs); } catch (e) {
+    return { ok: false, reason: 'NOT_FOUND', error: e.message };
+  }
+  if (!st.isDirectory()) return { ok: false, reason: 'NOT_DIR' };
+  cfg.workDir = abs;
+  saveCfg();
+  return { ok: true, dir: abs, files: listFiles(abs) };
+}
+
+ipcMain.handle('pi:set-workdir', (_e, dir) => setWorkDir(dir));
+
+ipcMain.handle('pi:pick-dir', async () => {
+  if (!win || win.isDestroyed()) return { ok: false, reason: 'NO_WINDOW' };
+  const r = await dialog.showOpenDialog(win, {
+    title: '选择工作目录',
+    defaultPath: cfg.workDir,
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, reason: 'CANCELED' };
+  return setWorkDir(r.filePaths[0]);
+});
+
+// ---------- `!` 直接执行 shell（不经过 pi） ----------
+// 语义上跟模型无关：这是"我在自己机器上敲一条命令"，所以不该花 token，
+// 也不该让模型替用户决定跑不跑。
+const shellJobs = {};
+
+function findShell() {
+  if (process.platform !== 'win32') return { exe: process.env.SHELL || '/bin/bash', args: ['-lc'] };
+  const cands = [
+    process.env.PIXELAGENT_SHELL,
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git', 'bin', 'bash.exe')
+  ].filter(Boolean);
+  for (const c of cands) { try { if (fs.existsSync(c)) return { exe: c, args: ['-lc'] }; } catch (e) { /* ignore */ } }
+  return { exe: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c'] };
+}
+
+ipcMain.handle('pi:run-shell', (_e, payload) => {
+  const cmd = String((payload && payload.cmd) || '');
+  const id = String((payload && payload.id) || Date.now());
+  if (!cmd.trim()) return { ok: false, reason: 'EMPTY' };
+  if (shellJobs[id]) return { ok: false, reason: 'BUSY' };
+
+  const sh = findShell();
+  let child;
+  try {
+    child = spawn(sh.exe, [...sh.args, cmd], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      cwd: cfg.workDir,
+      env: process.env
+    });
+  } catch (e) {
+    return { ok: false, reason: 'SPAWN_FAILED', error: e.message };
+  }
+  shellJobs[id] = child;
+
+  const pump = (stream) => (chunk) => send({ kind: 'shell', id, stream, data: String(chunk) });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', pump('out'));
+  child.stderr.on('data', pump('err'));
+  child.on('error', (e) => {
+    delete shellJobs[id];
+    send({ kind: 'shell', id, stream: 'err', data: String(e.message) + '\n' });
+    send({ kind: 'shell', id, done: true, code: -1 });
+  });
+  child.on('close', (code) => {
+    delete shellJobs[id];
+    send({ kind: 'shell', id, done: true, code });
+  });
+
+  return { ok: true, id, shell: sh.exe, cwd: cfg.workDir };
+});
+
+ipcMain.handle('pi:shell-kill', (_e, id) => {
+  const c = shellJobs[String(id)];
+  if (!c) return { ok: false };
+  try { c.kill(); } catch (e) { /* ignore */ }
+  delete shellJobs[String(id)];
+  return { ok: true };
+});
 
 // ---------- 模型目录（真跑 pi --list-models） ----------
 // 并发去重：启动时和打开面板时可能同时要，别重复跑两次子进程
@@ -301,7 +678,7 @@ let modelsPromise = null;
 ipcMain.handle('pi:models', async () => {
   if (modelsCache) return { ok: true, models: modelsCache, current: modelState() };
   if (!modelsPromise) {
-    modelsPromise = runPiQuery(['--list-models'], 60000).then((r) => {
+    modelsPromise = runPiQuery(['--list-models'], 60000, AGENT_DIR).then((r) => {
       modelsPromise = null;
       if (!r.ok) return { ok: false, error: r.error, models: [], current: modelState() };
       modelsCache = parseModels(r.out);
@@ -324,6 +701,37 @@ ipcMain.handle('pi:set-thinking', (_e, level) => {
   return { ok: true, current: modelState(), levels: THINKING_LEVELS };
 });
 
+// ---------- 已装扩展清单（真跑 pi list，不是写死的表） ----------
+function parseExtList(text) {
+  const out = [];
+  const lines = String(text || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    // 形如：  npm:pi-subagents
+    //            C:\Users\...\pi-subagents
+    const m = /^\s{2}([a-z]+):(\S+)\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const next = (lines[i + 1] || '').trim();
+    out.push({
+      source: m[1],
+      name: m[2],
+      path: /^[A-Za-z]:[\\/]|^\//.test(next) ? next : ''
+    });
+  }
+  return out;
+}
+
+ipcMain.handle('pi:agents', async () => {
+  const r = await runPiQuery(['list'], 30000, AGENT_DIR);
+  return {
+    ok: r.ok,
+    error: r.error || '',
+    raw: (r.out || '').slice(0, 4000),
+    extensions: r.ok ? parseExtList(r.out) : [],
+    // 自带扩展也算一个（它不是 npm 包，pi list 列不出来）
+    local: fs.existsSync(TODO_EXT) ? [{ source: 'local', name: 'todo（PixelAgent 自带）', path: TODO_EXT }] : []
+  };
+});
+
 // ---------- 设置面板信息 ----------
 ipcMain.handle('pi:info', () => {
   const loc = bridge.locate();
@@ -332,7 +740,9 @@ ipcMain.handle('pi:info', () => {
     cli: loc.cli,
     session: sessionFile(),
     sessionExists: fs.existsSync(sessionFile()),
-    cwd: WORK_DIR,
+    cwd: cfg.workDir,
+    agentDir: AGENT_DIR,
+    agentDirState,
     mode: 'json（换行分隔事件流）',
     current: modelState()
   };
@@ -347,6 +757,7 @@ ipcMain.handle('win:max', () => {
 ipcMain.handle('win:close', () => { if (win && !win.isDestroyed()) win.close(); });
 
 app.whenReady().then(() => {
+  ensureAgentDir();     // 首次运行时准备好隔离的 pi 配置目录
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
