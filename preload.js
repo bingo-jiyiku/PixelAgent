@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   // 文件树
   files: (dir) => ipcRenderer.invoke('pi:files', dir),
 
+  // 模型 / 思考档位
+  models: () => ipcRenderer.invoke('pi:models'),
+  setModel: (sel) => ipcRenderer.invoke('pi:set-model', sel),
+  setThinking: (level) => ipcRenderer.invoke('pi:set-thinking', level),
+
   // 读信息（模型/会话路径），设置面板用
   info: () => ipcRenderer.invoke('pi:info'),
 

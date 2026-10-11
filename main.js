@@ -7,6 +7,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const bridge = require('./pi-bridge');
@@ -129,6 +130,82 @@ function listFiles(dir) {
 }
 
 // ============================================================
+// 模型目录 + 当前模型 / 思考档位
+// 数据来源是真跑 `pi --list-models`（132 个模型，带 context 窗口），不是写死的表
+// ============================================================
+let modelsCache = null;   // 模型列表缓存（一次会话内不变）
+let curModel = null;      // null = 用 pi 自己的默认配置
+let curThinking = null;   // null = 用 pi 默认；否则 off|minimal|low|medium|high|xhigh|max
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+function parseSize(s) {
+  const m = /^([\d.]+)\s*([KM]?)$/.exec(String(s || ''));
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  return Math.round(n * (m[2] === 'M' ? 1048576 : m[2] === 'K' ? 1024 : 1));
+}
+
+// 解析 `pi --list-models` 的表格：provider / model / context / max-out / thinking / images
+function parseModels(text) {
+  const rows = [];
+  const lines = String(text || '').split('\n').filter((l) => l.trim());
+  for (let i = 1; i < lines.length; i++) {   // 第 0 行是表头
+    const m = /^(\S+)\s+(\S+)\s+([\d.]+[KM]?)\s+([\d.]+[KM]?)\s+(yes|no)\s+(yes|no)/.exec(lines[i]);
+    if (!m) continue;
+    rows.push({
+      provider: m[1], model: m[2],
+      context: m[3], maxOut: m[4],
+      contextTokens: parseSize(m[3]),
+      thinking: m[5] === 'yes',
+      images: m[6] === 'yes'
+    });
+  }
+  return rows;
+}
+
+// 跑一次 pi 的纯查询命令（不是 agent 调用），拿 stdout
+function runPiQuery(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const { node, cli } = bridge.locate();
+    if (!cli) { resolve({ ok: false, error: '找不到 pi 入口' }); return; }
+    let child;
+    try {
+      child = spawn(node, [cli, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],   // stdin 必须断开，否则 pi 会挂住
+        windowsHide: true,
+        env: process.env
+      });
+    } catch (e) { resolve({ ok: false, error: e.message }); return; }
+
+    let out = '', err = '';
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (e) { /* ignore */ }
+      resolve({ ok: false, error: '查询超时' });
+    }, timeoutMs || 30000);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message }); });
+    child.on('close', () => { clearTimeout(timer); resolve({ ok: true, out, err }); });
+  });
+}
+
+function modelState() { return { model: curModel, thinking: curThinking }; }
+
+// 发问时要拼的参数（模型 / 思考档位）
+function modelArgs() {
+  const a = [];
+  if (curModel && curModel.provider && curModel.model) {
+    a.push('--provider', curModel.provider, '--model', curModel.model);
+  }
+  if (curThinking) a.push('--thinking', curThinking);
+  return a;
+}
+
+// ============================================================
 // 窗口
 // ============================================================
 function createWindow() {
@@ -166,6 +243,7 @@ ipcMain.handle('pi:ask', (_e, text) => {
     prompt: text,
     sessionFile: sessionFile(),
     cwd: WORK_DIR,
+    extraArgs: modelArgs(),          // 模型 / 思考档位（没选就是空，走 pi 默认）
     onEvent(ev) { send({ kind: 'ev', ev }); },
     onState(state, detail) { send({ kind: 'state', state, detail }); },
     onExit(info) {
@@ -216,6 +294,36 @@ ipcMain.handle('pi:session-history', (_e, seq) => {
 // ---------- 文件树 ----------
 ipcMain.handle('pi:files', (_e, dir) => listFiles(dir));
 
+// ---------- 模型目录（真跑 pi --list-models） ----------
+// 并发去重：启动时和打开面板时可能同时要，别重复跑两次子进程
+let modelsPromise = null;
+
+ipcMain.handle('pi:models', async () => {
+  if (modelsCache) return { ok: true, models: modelsCache, current: modelState() };
+  if (!modelsPromise) {
+    modelsPromise = runPiQuery(['--list-models'], 60000).then((r) => {
+      modelsPromise = null;
+      if (!r.ok) return { ok: false, error: r.error, models: [], current: modelState() };
+      modelsCache = parseModels(r.out);
+      return { ok: true, models: modelsCache, current: modelState() };
+    });
+  }
+  return modelsPromise;
+});
+
+// ---------- 切换模型（provider/model 都为空 = 回到 pi 默认） ----------
+ipcMain.handle('pi:set-model', (_e, sel) => {
+  if (sel && sel.provider && sel.model) curModel = { provider: String(sel.provider), model: String(sel.model) };
+  else curModel = null;
+  return { ok: true, current: modelState() };
+});
+
+// ---------- 思考档位 ----------
+ipcMain.handle('pi:set-thinking', (_e, level) => {
+  curThinking = THINKING_LEVELS.includes(level) ? level : null;
+  return { ok: true, current: modelState(), levels: THINKING_LEVELS };
+});
+
 // ---------- 设置面板信息 ----------
 ipcMain.handle('pi:info', () => {
   const loc = bridge.locate();
@@ -225,7 +333,8 @@ ipcMain.handle('pi:info', () => {
     session: sessionFile(),
     sessionExists: fs.existsSync(sessionFile()),
     cwd: WORK_DIR,
-    mode: 'json（换行分隔事件流）'
+    mode: 'json（换行分隔事件流）',
+    current: modelState()
   };
 });
 

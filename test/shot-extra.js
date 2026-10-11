@@ -57,6 +57,18 @@ app.whenReady().then(async () => {
   await sleep(500);
   await shoot(win, '07-ref.png');
 
+  // 模型 / 思考档位选择器（真拉 pi --list-models，冷启动慢，要等够）
+  await win.webContents.executeJavaScript(`document.getElementById('btn-model').click()`);
+  for (let i = 0; i < 40; i++) {
+    const n = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('#mdl-list .mdl-item').length`);
+    if (n > 0) { console.log('模型列表已就绪，条目数 =', n); break; }
+    await sleep(500);
+  }
+  await sleep(500);
+  await shoot(win, '09-model.png');
+  await win.webContents.executeJavaScript(`document.getElementById('mdl-x').click()`);
+
   console.log('✅ 补充截图完成');
   app.exit(0);
 });

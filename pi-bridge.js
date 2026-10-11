@@ -92,6 +92,8 @@ function ask(opts) {
 
   // 组装参数：一律用数组传参，绝不拼字符串，避免引号/空格/中文被 shell 吃掉
   const args = [cli, '-p', '--mode', 'json'];
+  // 额外参数（模型 / 思考档位等），由调用方拼好，位置固定在 prompt 之前
+  if (Array.isArray(opts.extraArgs) && opts.extraArgs.length) args.push(...opts.extraArgs);
   if (opts.noSession) {
     args.push('--no-session');
   } else if (opts.sessionFile) {

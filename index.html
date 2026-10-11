@@ -140,7 +140,14 @@
     <span class="sb-tag on" id="sb-state" data-status="IDLE">IDLE</span>
     <span class="sb-item">轮次 <b id="kv-round">0</b></span>
     <span class="sb-item">用时 <b id="kv-time">0.0s</b></span>
-    <span class="sb-item">模型 <b id="kv-model2">—</b></span>
+    <button class="sb-item sb-pick" id="btn-model" type="button" title="切换模型 / 思考档位">
+      模型 <b id="kv-model2">默认</b> <em>▾</em>
+    </button>
+    <span class="sb-item sb-think">思考 <b id="kv-think">默认</b></span>
+    <span class="sb-usage" id="sb-usage" title="上下文占用">
+      <span class="ub-bar"><i id="ub-fill"></i></span>
+      <b id="ub-text">— / —</b>
+    </span>
     <span class="sb-spacer"></span>
     <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件</span>
     <span class="sb-item sb-clock" id="sb-clock">--:--:--</span>
@@ -171,6 +178,33 @@
   </div>
 </div>
 
+<!-- ═══════════════ 模型 / 思考档位选择器 ═══════════════ -->
+<div class="mask hidden" id="mask-model">
+  <div class="win dialog dialog-model">
+    <div class="win-bar">
+      <span class="win-ico" aria-hidden="true"></span>
+      <span class="win-name">MODEL()</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="mdl-x" type="button" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="mdl-top">
+      <input id="mdl-q" type="text" placeholder="搜索模型 / provider…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="mdl-think">
+      <span class="mdl-lb">THINKING</span>
+      <span class="mdl-think-btns" id="mdl-think-btns"></span>
+    </div>
+    <div class="mdl-list" id="mdl-list"></div>
+    <div class="mdl-foot">
+      <span id="mdl-count">—</span>
+      <button class="px-btn" id="mdl-default" type="button">恢复默认</button>
+    </div>
+  </div>
+</div>
+
+<script src="md.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
