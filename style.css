@@ -568,10 +568,19 @@ body {
   font-family: var(--f-px); font-size: 9px; letter-spacing: 1px; color: var(--muted);
   border: 2px solid var(--ink); background: var(--panel); padding: 3px 6px;
 }
+/* 老板 2026-10-11：不要框把吉祥物框住。原来的 3px 黑框去掉，
+   场景靠墙(横向细条纹)和桌面(下方色块)自然收边，看起来更像"贴在页面上的画面"
+   而不是"贴了张图"。overflow 仍然保留 —— 桌面挡下半身的定位靠它，
+   去掉的话动画/装饰会溢出到欢迎页面上。 */
 .office {
   position: relative; width: 272px; height: 216px; overflow: hidden;
-  border: 3px solid var(--ink); background: var(--panel-2);
+  background: var(--panel-2);
 }
+/* 可点：hover 时鼠标小手 + 场景轻微提亮，作为"可以点"的视觉提示。
+   点击时 renderer.js 会在 .of-bubble-txt 里冒一句话。 */
+.office { cursor: pointer; transition: filter 120ms steps(2); }
+.office:hover { filter: brightness(1.06); }
+.office:active { filter: brightness(1.12); }
 .of-wall {
   position: absolute; inset: 0;
   background: repeating-linear-gradient(0deg, var(--panel-2) 0 9px, var(--panel-3) 9px 10px);
@@ -619,6 +628,18 @@ body {
 @keyframes of-sway { 0%, 49% { transform: rotate(-1.5deg); } 50%, 100% { transform: rotate(1.5deg); } }
 .office[data-state="DONE"] .of-girl { animation: of-hop 1.2s steps(2) infinite; }
 @keyframes of-hop { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-6px); } }
+
+/* 点击互动：短暂"点头"（renderer.js 里 click 事件加/移除 .girl-nod）
+   动画比状态动画短（700ms），steps(2) 保持像素风。
+   注意：这个动画会**覆盖** .office[data-state=...] 的四态动画
+   —— 因为 specificity 一样、后面的规则优先。这正是想要的：
+   点一下，人物会明显地点一下头，比状态动画更醒目。 */
+.office.girl-nod .of-girl { animation: of-nod 700ms steps(2); }
+@keyframes of-nod {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-4deg); }
+  75% { transform: rotate(4deg); }
+}
 
 /* --- 桌子（挡住下半身 → 坐姿） --- */
 .of-desk {
@@ -702,6 +723,36 @@ body {
 .of-bubble i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
 .of-bubble i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
 .office[data-state="THINKING"] .of-bubble { display: flex; }
+
+/* --- 文字气泡：吉祥物"说话" --- */
+/* 老板 2026-10-11 让吉祥物"可以说话"，走的是头顶冒文字气泡（不是 TTS）。
+   定位在人物的**左上**——右上已经有原生的 of-bubble（三个小点），齿轮，
+   再摆一个会挤；左上墙是空的（窗户在 left:16 但只到 78，气泡从 8 开始到
+   90 左右，中间隔着窗户的右边）。三角尾巴在气泡右下侧，指向人物头部。
+   淡入淡出走 opacity，不动 transform —— 动画用 steps(2) 保持 95 像素风。 */
+.of-bubble-txt {
+  position: absolute; left: 8px; bottom: 168px; z-index: 10;
+  max-width: 84px; padding: 4px 6px;
+  font-family: 'Microsoft YaHei', 'SimHei', sans-serif; font-size: 11px; line-height: 1.3;
+  color: var(--ink); background: var(--panel); border: 3px solid var(--ink);
+  opacity: 0; pointer-events: none;
+  transition: opacity 140ms steps(3);
+}
+.of-bubble-txt.on { opacity: 1; }
+/* 尾巴：一个小三角，从气泡右下边斜向下指人物 */
+.of-bubble-txt::after {
+  content: ''; position: absolute; right: 10px; bottom: -9px;
+  width: 0; height: 0;
+  border-left: 6px solid transparent; border-right: 6px solid transparent;
+  border-top: 9px solid var(--ink);
+}
+.of-bubble-txt::before {
+  content: ''; position: absolute; right: 12px; bottom: -5px;
+  width: 0; height: 0;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 6px solid var(--panel);
+  z-index: 1;
+}
 
 /* 齿轮：放在人物右侧的空墙上。
    踩过三次坑，最后定成这样：

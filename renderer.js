@@ -271,10 +271,47 @@ function retryLast() {
   send();
 }
 
-/* ---------- 状态灯 + 像素女孩状态联动 ---------- */
+/* ---------- 状态灯 + 像素女孩状态联动 + 吉祥物说话 ---------- */
 // 显示用中文；dataset.status / dataset.state 仍是英文内部值（CSS 动画选择器依赖）
 const STATE_ZH = { IDLE: '空闲', THINKING: '思考中', TOOL: '处理中', DONE: '完成' };
 const CAP_ZH = { THINKING: '思考中…', TOOL: '处理中…', DONE: '完成！', IDLE: '待机' };
+
+// 吉祥物「说话」：头顶冒文字气泡。老板 2026-10-11 明确不要 TTS 语音，
+// 走的是文字气泡。词库分成四态 + 点击时随机选一句。
+// 词库刻意简短（≤8 字），因为气泡只有 84px 宽 —— 长句要么撑破要么截断。
+const GIRL_LINES = {
+  IDLE:       ['嗨~', '在的', '等你', '…', '☕', '有空吗'],
+  THINKING:   ['想想…', '嗯…', '让我看看', '在跑…'],
+  TOOL:       ['干呢…', '稍等', '正在处理'],
+  DONE:       ['好！', '搞定~', '✓', 'OK~'],
+  CLICK:      ['嗨~', '在的', '有事吗', '…', '嗯嗯', '☕']
+};
+
+// 上一次触发气泡的时间戳（毫秒）—— 用来决定"这次要不要打断上一条"。
+// 用户连续点击时想让人看到最新的；状态自动切换时若离上一条很近，就覆盖。
+let girlSayAt = 0;
+let girlSayTimer = null;
+
+function girlSay(text, ms) {
+  const b = $('of-bubble-txt');
+  if (!b) return;
+  if (!text) {
+    b.classList.remove('on');
+    if (girlSayTimer) { clearTimeout(girlSayTimer); girlSayTimer = null; }
+    return;
+  }
+  b.textContent = text;
+  b.classList.add('on');
+  girlSayAt = Date.now();
+  if (girlSayTimer) clearTimeout(girlSayTimer);
+  if (ms > 0) girlSayTimer = setTimeout(() => girlSay(''), ms);
+}
+
+function pickLine(kind) {
+  const list = GIRL_LINES[kind] || GIRL_LINES.IDLE;
+  return list[(Math.random() * list.length) | 0];
+}
+
 function setState(state) {
   S.lastState = state;
   const tag = $('sb-state');
@@ -289,6 +326,34 @@ function setState(state) {
   if (girl) girl.dataset.state = state;
   if (scene) scene.dataset.state = state;
   if (cap) cap.textContent = CAP_ZH[state] || state;
+
+  // 状态切换时冒一句话（工作态时长 2.5s 让它跟动画节奏匹配，
+  // 完成态 2s 更干脆，空闲态 3s 悠一点）。
+  // 用户主动点击触发的话（下面 attachGirlClick）会自己覆盖。
+  const durByState = { IDLE: 3000, THINKING: 2500, TOOL: 2500, DONE: 2000 };
+  girlSay(pickLine(state), durByState[state] || 2500);
+}
+
+/* 点击吉祥物 → 冒一句"打招呼"类的话，触发一个短暂的动画。
+   绑在 .girl-scene 而不是 .office 上，因为 hover/指针提示整个场景都算。
+   连续点击时 girlSay 会用最新的 timer 覆盖旧的（见上面的 clearTimeout）。 */
+function attachGirlClick() {
+  const scene = $('girl-scene');
+  if (!scene) return;
+  scene.addEventListener('click', (e) => {
+    // 点的是场景外的元素（比如 hl-hint）就不要冒气泡
+    if (!scene.contains(e.target)) return;
+    girlSay(pickLine('CLICK'), 2000);
+    // 顺便把人物"点头"一下 —— 用 dataset 触发一个 CSS class
+    const girl = $('pixel-girl');
+    if (girl) {
+      girl.classList.remove('girl-nod');
+      // 强制 reflow 让同一个 class 可以反复触发
+      void girl.offsetWidth;
+      girl.classList.add('girl-nod');
+      setTimeout(() => girl.classList.remove('girl-nod'), 700);
+    }
+  });
 }
 
 /* ---------- 计时 ---------- */
@@ -2547,7 +2612,8 @@ function demoReply(text) {
    启动
    ============================================================ */
 syncCursor();
-setState('IDLE');
+attachGirlClick();  // 吉祥物点击互动（冒气泡 + 点头）
+setState('IDLE');   // 里面会 girlSay 冒第一句"打招呼"（3 秒后消失）
 paintModelBar();
 loadCfg();        // 先把设置读回来（主题色 / 紧凑 / 动画 / Enter 行为…），再画界面动作
 renderTodos();

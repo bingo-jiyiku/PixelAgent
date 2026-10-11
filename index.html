@@ -82,10 +82,13 @@
             <div class="of-drawer"></div>
             <div class="of-drawer r"></div>
           </div>
-          <!-- 状态特效 -->
-          <div class="of-bubble"><i></i><i></i><i></i></div>
-          <div class="of-gear"><i></i></div>
-          <div class="of-stars"><i></i><i></i><i></i></div>
+        <!-- 状态特效 -->
+        <div class="of-bubble"><i></i><i></i><i></i></div>
+        <div class="of-gear"><i></i></div>
+        <div class="of-stars"><i></i><i></i><i></i></div>
+        <!-- 文字气泡（吉祥物"说话"用）：老板 2026-10-11 让"可以说话"，走的是
+             头顶冒字而不是 TTS 语音。renderer.js 里 addGirlSay() 负责填字+显隐。 -->
+        <div class="of-bubble-txt" id="of-bubble-txt" aria-live="polite"></div>
         </div>
         <div class="girl-cap" id="girl-cap">待机</div>
       </div>

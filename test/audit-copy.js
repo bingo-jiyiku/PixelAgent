@@ -47,7 +47,7 @@ const INTERNAL_KEEP = new Set([
 // 内部"词汇表"：消息标签 / 状态值 / 错误码 / 快捷键。
 // 这些字面量**不会单独显示给用户**（显示前都过 WHO_ZH / STATE_ZH / REASON_ZH / TH_ZH 翻译），
 // 但它们在源码里长得像英文标签，所以必须显式声明，否则工具会一直报噪音。
-const INTERNAL_TOKENS = new Set(('use strict,IDLE,THINKING,TOOL,DONE,SYS,ERR,IMG,YOU,PI,STOP,SHELL,' +
+const INTERNAL_TOKENS = new Set(('use strict,IDLE,THINKING,TOOL,DONE,CLICK,SYS,ERR,IMG,YOU,PI,STOP,SHELL,' +
   'BUSY,EMPTY,BAD_SEQ,NOT_FOUND,TRASH_FAILED,NO_WINDOW,CANCELED,EXPORT_FAILED,NOT_DIR,SPAWN_FAILED,' +
   'IMAGE_REJECTED,unknown,on,del,off,minimal,low,medium,high,xhigh,max,' +
   'NAME_TAKEN,NAME_EMPTY,html,md,json').split(','));

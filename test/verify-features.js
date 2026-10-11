@@ -1098,6 +1098,74 @@ app.whenReady().then(async () => {
     await js(`window.pixelAPI.sessions().then(function(r){return r.current;})`), origSeq);
   await typeIn('');
 
+  /* ================= 9. 吉祥物：去框 / 互动 / 气泡文字 =================
+     老板 2026-10-11：「形象不要有框框把吉祥物框住」、「希望吉祥物可以互动」，
+     「我希望吉祥物是可以说话的」（已确认走"头顶冒文字气泡"，不是 TTS）。
+     三条反向验证：
+       ① 故意把 .office 的 border 加回来，断言必须红
+       ② 故意把 click 事件的 girlSay 删掉，断言必须红
+       ③ 故意把 girlSay 里的 setClassList.add('on') 删掉，断言必须红 */
+
+  // 先确保欢迎页在（吉祥物只在这里）。走 btn-new 是最保险的方式：
+  // 会调 newSession → doNewSessionLocal → welcome.classList.remove('hidden')。
+  // doNewSessionLocal 里会 setState('IDLE') → 自动冒一个 IDLE 气泡（3s 后消失）。
+  // newSession 是 async（要先 IPC），所以等够时间让整条链跑完。
+  await js(`document.getElementById('btn-new').click()`);
+  await sleep(1500);
+  const girlInit = await js(`(function(){
+    var office = document.getElementById('pixel-girl');
+    var scene = document.getElementById('girl-scene');
+    var bubble = document.getElementById('of-bubble-txt');
+    if (!office || !scene || !bubble) return { ok:false };
+    var st = getComputedStyle(office);
+    return {
+      ok: true,
+      border: st.borderTopWidth + '/' + st.borderTopStyle,
+      cursor: st.cursor,
+      bubbleExists: !!bubble,
+      initialOn: bubble.classList.contains('on')
+    };
+  })()`);
+  console.log('  ℹ 吉祥物初始状态: ' + JSON.stringify(girlInit));
+  t('office 没有边框（border-top-width 应该是 0px）', girlInit.ok && girlInit.border.indexOf('0px') >= 0, true);
+  t('office 是可点的（cursor 应该不是 default）', girlInit.ok && girlInit.cursor !== 'default' && girlInit.cursor !== 'auto', true);
+  t('气泡元素存在', girlInit.ok && girlInit.bubbleExists, true);
+
+  // 等 IDLE 自动气泡消失（girlSay 3s 后移除 .on）
+  await sleep(3200);
+  const girlAfterIdle = await js(`document.getElementById('of-bubble-txt').classList.contains('on')`);
+  console.log('  ℹ IDLE 气泡自动消失后 .on 类: ' + girlAfterIdle);
+  t('IDLE 气泡 3s 后自动消失（.on 类被移掉）', !girlAfterIdle, true);
+
+  // 触发一次点击 → 冒气泡
+  await js(`(function(){
+    var scene = document.getElementById('girl-scene');
+    scene.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return 1;
+  })()`);
+  await sleep(250);
+  const girlAfterClick = await js(`(function(){
+    var bubble = document.getElementById('of-bubble-txt');
+    var office = document.getElementById('pixel-girl');
+    return {
+      text: bubble.textContent,
+      on: bubble.classList.contains('on'),
+      nod: office.classList.contains('girl-nod')
+    };
+  })()`);
+  console.log('  ℹ 点击后: ' + JSON.stringify(girlAfterClick));
+  t('点击后气泡里真的有字（不是空的）', girlAfterClick.text && girlAfterClick.text.length > 0, true);
+  t('点击后气泡显示出来了（.on 类）', girlAfterClick.on, true);
+  t('点击触发了点头动画（.girl-nod 类）', girlAfterClick.nod, true);
+
+  // 气泡 2s 后自动消失
+  await sleep(2400);
+  const girlAfterWait = await js(`(function(){
+    var bubble = document.getElementById('of-bubble-txt');
+    return { text: bubble.textContent, on: bubble.classList.contains('on') };
+  })()`);
+  t('点击气泡 2s 后自动淡出（.on 类被移掉）', !girlAfterWait.on, true);
+
   /* ================= 10. 本轮四件事 =================
      老板这轮的原话：
        「上下文怎么只有10万？上下文显示的是模型自己决定的还是你弄成十万的，
