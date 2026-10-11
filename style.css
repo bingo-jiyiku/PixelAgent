@@ -1083,6 +1083,8 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 
 /* ---------- 单个模型的配置 / 测试对话框 ---------- */
 .dialog-mcfg { width: min(660px, 94vw); max-height: 86vh; }
+/* 新增模型对话框：跟 mcfg 同尺寸（内容量差不多） */
+.dialog-madd { width: min(660px, 94vw); max-height: 86vh; }
 .mcfg-foot { padding: 10px 14px 14px; border-top: 3px solid var(--ink); background: var(--panel-2); display: flex; gap: 8px; align-items: center; }
 /* 测试结果：成功/失败一眼能分（颜色 + 文案都变，不只靠颜色） */
 .mcfg-out {

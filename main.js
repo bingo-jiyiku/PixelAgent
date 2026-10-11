@@ -541,6 +541,67 @@ ipcMain.handle('pi:model-set-config', (_e, sel) => {
   return { ok: !!(r && r.ok), applied: r && r.applied, droppedKeys: r && r.droppedKeys, cfg: r && r.cfg };
 });
 
+// 老板 2026-10-11：模型菜单要有"新增自定义模型"入口。
+// 直接把记录插进 .pi-agent/models.json，pi 下次 --list-models 就会看到它。
+// 结构参考现有 models.json：
+//   providers.<name>.{api, apiKey, baseUrl, models:[{id, contextWindow, maxTokens, input}]}
+// 规则：
+//   - provider 已存在：往 models 数组里追加，baseUrl/apiKey 只在**新填**时才覆盖
+//     （填了空值就不要把已有配置擦掉）
+//   - provider 不存在：新建整个对象，api 默认 openai-completions（pi 最常用的协议）
+//   - modelId 已存在：**拒收**（避免静默覆盖）
+//   - 写完把 modelsCache 置空 —— 否则 pi:models 会返回旧缓存，界面看不到新模型
+ipcMain.handle('pi:add-model', (_e, p) => {
+  const provider = String((p && p.provider) || '').trim();
+  const modelId = String((p && p.modelId) || '').trim();
+  const baseUrl = String((p && p.baseUrl) || '').trim();
+  const apiKey = String((p && p.apiKey) || '').trim();
+  const ctx = Number(p && p.contextWindow) || 0;
+  const max = Number(p && p.maxTokens) || 0;
+  if (!provider) return { ok: false, error: '服务商不能为空' };
+  if (!modelId) return { ok: false, error: '模型 ID 不能为空' };
+  if (ctx && (ctx <= 0 || !Number.isFinite(ctx))) return { ok: false, error: '上下文窗口要填正整数' };
+  if (max && (max <= 0 || !Number.isFinite(max))) return { ok: false, error: '最大输出要填正整数' };
+
+  const mf = path.join(AGENT_DIR, 'models.json');
+  const doc = readPiJson('models.json');
+  const provs = (doc.providers && typeof doc.providers === 'object') ? doc.providers : {};
+
+  if (!provs[provider]) {
+    // 新建 provider：api 默认 openai-completions（pi 里最通用的协议）
+    provs[provider] = { api: 'openai-completions', models: [] };
+    if (baseUrl) provs[provider].baseUrl = baseUrl;
+    if (apiKey) provs[provider].apiKey = apiKey;
+  } else {
+    if (!Array.isArray(provs[provider].models)) provs[provider].models = [];
+    // 只覆盖用户**填了**的字段 —— 空字符串不要动已有配置
+    if (baseUrl) provs[provider].baseUrl = baseUrl;
+    if (apiKey) provs[provider].apiKey = apiKey;
+  }
+  const prov = provs[provider];
+  // 重复检测：同名模型已在同 provider 里 ⇒ 拒收
+  if (prov.models.find((m) => m && m.id === modelId)) {
+    return { ok: false, error: '这个模型已经存在于 ' + provider + ' 下，换一个 ID 或者先去配置它' };
+  }
+
+  const m = { id: modelId };
+  if (ctx) m.contextWindow = ctx;
+  if (max) m.maxTokens = max;
+  // input 保留可选：不填就走 pi 默认（一般是 text）
+  if (Array.isArray(p && p.input) && p.input.length) m.input = p.input;
+  prov.models.push(m);
+
+  doc.providers = provs;
+  try {
+    fs.writeFileSync(mf, JSON.stringify(doc, null, 2), 'utf8');
+  } catch (e) {
+    return { ok: false, error: '写 models.json 失败: ' + e.message };
+  }
+  // 强制下次 pi:models 重跑 —— 否则缓存还在，界面看不到刚加的
+  modelsCache = null;
+  return { ok: true, provider, modelId };
+});
+
 ipcMain.handle('pi:model-test', async (_e, sel) => {
   const p = String((sel && sel.provider) || '');
   const m = String((sel && sel.model) || '');

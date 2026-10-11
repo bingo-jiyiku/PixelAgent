@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   modelInfo: (sel) => ipcRenderer.invoke('pi:model-info', sel),
   setModelConfig: (sel) => ipcRenderer.invoke('pi:model-set-config', sel),
   modelTest: (sel) => ipcRenderer.invoke('pi:model-test', sel),
+  // 老板 2026-10-11：新增自定义模型
+  addModel: (p) => ipcRenderer.invoke('pi:add-model', p),
 
   // 扩展清单
   agents: () => ipcRenderer.invoke('pi:agents'),

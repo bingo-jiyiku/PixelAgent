@@ -355,6 +355,7 @@
       <span id="mdl-count">—</span>
       <span class="mdl-hint" id="mdl-hint">点分组建名可折叠 · 行内可配置 / 测试</span>
       <span class="sb-spacer"></span>
+      <button class="px-btn" id="mdl-add" type="button">+ 新增模型</button>
       <button class="px-btn" id="mdl-collapse" type="button">全部收起</button>
       <button class="px-btn" id="mdl-default" type="button">恢复默认</button>
     </div>
@@ -405,6 +406,73 @@
       <span class="sb-spacer"></span>
       <button class="px-btn" id="mcfg-cancel" type="button">取消</button>
       <button class="px-btn primary" id="mcfg-save" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 新增自定义模型 ═══════════════ -->
+<!-- 老板 2026-10-11：模型菜单里要有「新增自定义模型」入口。
+     走主进程 IPC pi:add-model 直接写 .pi-agent/models.json，
+     写完主进程会清缓存，下次 pi --list-models 就能看到它。 -->
+<div class="mask hidden" id="mask-model-add">
+  <div class="win dialog dialog-madd">
+    <div class="win-bar">
+      <span class="win-ico" aria-hidden="true"></span>
+      <span class="win-name">新增模型</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="madd-x" type="button" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="dlg-body">
+      <div class="set-sec">这个新模型放在哪个服务商下</div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-provider">服务商</label>
+        <input class="set-in" id="madd-provider" type="text" list="madd-prov-list"
+               placeholder="已有服务商名或新建" autocomplete="off" spellcheck="false" />
+        <datalist id="madd-prov-list"></datalist>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-model">模型 ID</label>
+        <input class="set-in" id="madd-model" type="text"
+               placeholder="例如 gpt-4o" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-base">接入地址</label>
+        <input class="set-in" id="madd-base" type="text"
+               placeholder="https://...（新服务商必填，已有服务商留空保留原来的）"
+               autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-key">API Key</label>
+        <input class="set-in" id="madd-key" type="password"
+               placeholder="新服务商必填，已有服务商留空保留原来的"
+               autocomplete="off" spellcheck="false" />
+      </div>
+
+      <div class="set-sec">这个模型本身（可选）</div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-ctx">上下文窗口</label>
+        <input class="set-in" id="madd-ctx" type="number" min="0" step="1024"
+               placeholder="不填走 pi 兜底 128000" />
+        <span class="set-unit">词元</span>
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="madd-max">最大输出</label>
+        <input class="set-in" id="madd-max" type="number" min="0" step="1024"
+               placeholder="不填走 pi 默认" />
+        <span class="set-unit">词元</span>
+      </div>
+      <p class="dlg-tip">
+        新服务商会默认用 <code>openai-completions</code> 协议（pi 里最通用的）。
+        已有服务商留空的服务商会<b>保留原有配置</b>（不会把 key 擦掉）。
+      </p>
+      <p class="set-note" id="madd-note"></p>
+    </div>
+    <div class="dlg-foot mcfg-foot">
+      <span class="sb-spacer"></span>
+      <button class="px-btn" id="madd-cancel" type="button">取消</button>
+      <button class="px-btn primary" id="madd-save" type="button">添加</button>
     </div>
   </div>
 </div>

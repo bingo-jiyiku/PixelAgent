@@ -753,7 +753,8 @@ app.whenReady().then(async () => {
   const labelList = labels.labels || [];
   console.log('  ℹ 扫到 ' + labelList.length + ' 个标签位，排除 ' + (labels.skipped || []).length + ' 个内容位');
   console.log('  ℹ 排除的内容位: ' + JSON.stringify(Array.from(new Set(labels.skipped || []))));
-  const EN_OK = ['JSON', 'ESC', 'pi', 'PixelAgent', 'PIXELAGENT', 'PIXEL()', 'v1.0',
+  // API Key：业界通用技术术语，中文写「API 密钥」反而怪（老板原意就是让用户填这个）
+  const EN_OK = ['JSON', 'ESC', 'pi', 'PixelAgent', 'PIXELAGENT', 'PIXEL()', 'v1.0', 'API Key',
     '...', '?', '—', '□', '✕', '↻', '▾', '▶', '▼', '⚙', '■', '·', '#—', 'OK'];
   // 纯 ASCII 的短纯符号/数字（'#1'、'0.0s'、'--:--:--'）不算英文标签
   const isEnglishLabel = (s) => /^[\x20-\x7E]+$/.test(s) && /[A-Za-z]/.test(s) && EN_OK.indexOf(s) < 0;
@@ -1165,6 +1166,109 @@ app.whenReady().then(async () => {
     return { text: bubble.textContent, on: bubble.classList.contains('on') };
   })()`);
   t('点击气泡 2s 后自动淡出（.on 类被移掉）', !girlAfterWait.on, true);
+
+  /* ================= 9b. 新增自定义模型 =================
+     老板 2026-10-11：模型菜单要有"新增自定义模型"入口。
+     测的是 IPC 链路（写 models.json → pi --list-models 能看到 → 重复添加被拒）。
+     跑完必须**清理** —— 把刚加的模型从 models.json 里删掉，否则下次启动
+     pi 会看到一条测试残留。 */
+
+  const TEST_PROVIDER = 'verify-test-provider';
+  const TEST_MODEL = 'verify-test-model-xyz';
+  // 先把现有 models.json 备份（读回来，测试完了按原样写回）
+  const MJSON = path.join(__dirname, '..', '.pi-agent', 'models.json');
+  const mjsonBackup = fs.readFileSync(MJSON, 'utf8');
+
+  // 打开对话框
+  await js(`(function(){
+    document.getElementById('btn-model').click();
+    return 1;
+  })()`);
+  await sleep(500);
+  // 打开"新增模型"
+  await js(`(function(){
+    document.getElementById('mdl-add').click();
+    return 1;
+  })()`);
+  await sleep(300);
+  const maddOpen = await js(`(function(){
+    var m = document.getElementById('mask-model-add');
+    var dl = document.getElementById('madd-prov-list');
+    return {
+      open: !m.classList.contains('hidden'),
+      fields: ['madd-provider','madd-model','madd-base','madd-key','madd-ctx','madd-max']
+        .every(function(id){ return !!document.getElementById(id); }),
+      provOptions: dl ? dl.options.length : 0
+    };
+  })()`);
+  console.log('  ℹ 新增模型对话框: ' + JSON.stringify(maddOpen));
+  t('新增模型对话框打开了', maddOpen.open, true);
+  t('所有输入框都在（服务商/ID/base/key/ctx/max）', maddOpen.fields, true);
+  t('服务商 datalist 已经填了已有服务商', maddOpen.provOptions >= 1, true);
+
+  // 走 IPC 直接添加（避免依赖 UI 表单校验流程）
+  const addR1 = await js(`window.pixelAPI.addModel({
+    provider: ${JSON.stringify(TEST_PROVIDER)},
+    modelId: ${JSON.stringify(TEST_MODEL)},
+    baseUrl: 'https://verify-test.example/v1',
+    apiKey: 'sk-test-1234',
+    contextWindow: 128000,
+    maxTokens: 4096
+  })`);
+  console.log('  ℹ 新增模型（第 1 次）: ' + JSON.stringify(addR1));
+  t('新增模型 IPC 成功', addR1 && addR1.ok === true, true);
+
+  // 直接读文件确认写进去了
+  const doc = JSON.parse(fs.readFileSync(MJSON, 'utf8'));
+  const prov = doc.providers && doc.providers[TEST_PROVIDER];
+  t('models.json 里真的有这个 provider', !!prov, true);
+  const addedModel = prov && prov.models && prov.models.find((m) => m.id === TEST_MODEL);
+  t('models.json 里真的有这个模型', !!addedModel, true);
+  t('写入的 contextWindow 是对的', addedModel && addedModel.contextWindow, 128000);
+  t('写入的 maxTokens 是对的', addedModel && addedModel.maxTokens, 4096);
+
+  // 反向验证：重复添加同名模型应该被拒
+  const addR2 = await js(`window.pixelAPI.addModel({
+    provider: ${JSON.stringify(TEST_PROVIDER)},
+    modelId: ${JSON.stringify(TEST_MODEL)},
+    baseUrl: '',
+    apiKey: ''
+  })`);
+  console.log('  ℹ 重复添加: ' + JSON.stringify(addR2));
+  t('重复添加同名模型被拒（避免静默覆盖）', addR2 && addR2.ok === false, true);
+  t('拒绝原因提到了"已经存在"', addR2 && /已经存在|已存在/.test(addR2.error || ''), true);
+
+  // 反向验证：provider 空 → 拒
+  const addR3 = await js(`window.pixelAPI.addModel({ modelId: 'x' })`);
+  t('provider 为空被拒', addR3 && addR3.ok === false, true);
+
+  // 反向验证：modelId 空 → 拒
+  const addR4 = await js(`window.pixelAPI.addModel({ provider: 'p', modelId: '' })`);
+  t('modelId 为空被拒', addR4 && addR4.ok === false, true);
+
+  // 反向验证：非正整数上下文窗口 → 拒
+  const addR5 = await js(`window.pixelAPI.addModel({ provider: 'p', modelId: 'x', contextWindow: -1 })`);
+  t('负数上下文窗口被拒', addR5 && addR5.ok === false, true);
+
+  // 关闭对话框
+  await js(`document.getElementById('madd-cancel').click()`);
+  await sleep(100);
+  t('对话框能关', await js(`document.getElementById('mask-model-add').classList.contains('hidden')`), true);
+
+  // 清理：按原样写回 models.json
+  fs.writeFileSync(MJSON, mjsonBackup, 'utf8');
+  // ★ addModel 写完文件后清了 modelsCache，所以这里必须**主动重建一次**，
+  //   否则后面 [10] 段跑 api.modelInfo 时 hit 是 null（modelsCache 是 null），
+  //   mcfg-reported 就显示"pi 的表里没有这个模型" —— 断言会红。
+  //   注意：这次 api.models() 会走 runPiQuery 重新跑 --list-models，拿到干净表
+  //   （还原后的 models.json 里没有 verify-test-model 了）。
+  const rebuild = await js(`window.pixelAPI.models()`);
+  await sleep(500);
+  // 顺便把 renderer 缓存同步一下（避免 S.models 和主进程 cache 不一致）
+  if (rebuild && rebuild.ok && rebuild.models) {
+    await js(`(function(){ S.models = ${JSON.stringify(rebuild.models)}; S.modelsLoaded = true; return 1; })()`);
+  }
+  console.log('  ℹ 测试清理：models.json 已还原，主进程 + renderer 缓存已重建');
 
   /* ================= 10. 本轮四件事 =================
      老板这轮的原话：

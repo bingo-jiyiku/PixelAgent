@@ -1957,6 +1957,88 @@ async function openModelPicker() {
 
 function closeModelPicker() { $('mask-model').classList.add('hidden'); }
 
+/* ---------- 新增自定义模型 ----------
+   老板 2026-10-11：模型菜单要有"新增自定义模型"入口。
+   流程：
+     ① 打开对话框 → 填充服务商 datalist（从 S.models 现取，避免手写漂）
+     ② 保存 → 调 api.addModel → 主进程写 models.json → 清 modelsCache
+     ③ 主进程写完缓存清了，本地还得清一次：S.models=[]; S.modelsLoaded=false
+     ④ 重新走 openModelPicker 拉一次模型目录，界面就能看到新加的
+   主进程会拒绝的几种情况（renderer 直接显示主进程回的 error）：
+     - provider 或 modelId 空
+     - 同 provider 下已有同名 modelId（避免静默覆盖）
+     - 上下文窗口/最大输出不是正整数
+   服务商留空 base URL / apiKey 的行为：主进程只覆盖填了的字段，
+     空字符串不动已有配置 —— 用户想改 key，就把新值填进来；不填就保留。 */
+
+function maddNote(text, bad) {
+  const n = $('madd-note');
+  if (!n) return;
+  n.textContent = text || '';
+  n.style.color = bad ? 'var(--warn)' : '';
+}
+
+function fillMaddProviders() {
+  const dl = $('madd-prov-list');
+  if (!dl) return;
+  dl.innerHTML = '';
+  const names = new Set();
+  (S.models || []).forEach((m) => { if (m.provider) names.add(m.provider); });
+  // 也看看主进程 models.json 里的 provider（models 表里有的都在 S.models 里，
+  // 但兜底再加一次不亏）
+  names.forEach((name) => {
+    const o = document.createElement('option');
+    o.value = name;
+    dl.appendChild(o);
+  });
+}
+
+function openModelAdd() {
+  if (!api) return;
+  $('madd-provider').value = '';
+  $('madd-model').value = '';
+  $('madd-base').value = '';
+  $('madd-key').value = '';
+  $('madd-ctx').value = '';
+  $('madd-max').value = '';
+  maddNote('');
+  fillMaddProviders();
+  $('mask-model-add').classList.remove('hidden');
+  setTimeout(() => $('madd-provider').focus(), 50);
+}
+
+function closeModelAdd() { $('mask-model-add').classList.add('hidden'); }
+
+async function saveModelAdd() {
+  if (!api) return;
+  const provider = $('madd-provider').value.trim();
+  const modelId = $('madd-model').value.trim();
+  const baseUrl = $('madd-base').value.trim();
+  const apiKey = $('madd-key').value.trim();
+  const ctx = $('madd-ctx').value ? Number($('madd-ctx').value) : 0;
+  const max = $('madd-max').value ? Number($('madd-max').value) : 0;
+  if (!provider) { maddNote('服务商必填', true); return; }
+  if (!modelId) { maddNote('模型 ID 必填', true); return; }
+  const r = await api.addModel({ provider, modelId, baseUrl, apiKey, contextWindow: ctx, maxTokens: max });
+  if (!r || r.ok === false) {
+    maddNote('添加失败：' + ((r && r.error) || '未知原因'), true);
+    return;
+  }
+  // 清本地缓存，逼下一次 pi:models 重跑
+  S.models = [];
+  S.modelsLoaded = false;
+  // 也清一下模型菜单当前显示，然后重画
+  maddNote('已添加：' + provider + '/' + modelId);
+  setTimeout(async () => {
+    closeModelAdd();
+    // 强制刷新模型菜单：openModelPicker 会重新拉一次
+    if (!$('mask-model').classList.contains('hidden')) {
+      // modelsLoaded=false 会让 openModelPicker 重新走读取路径
+      await openModelPicker();
+    }
+  }, 500);
+}
+
 /* ============================================================
    通用输入框 / 确认框
    Electron 里 window.prompt 和 window.confirm 都不可用（会被直接忽略），
@@ -2233,7 +2315,7 @@ document.addEventListener('keydown', (e) => {
     //    最上面的配置框纹丝不动（用户按了 Esc 却像没反应）。
     //    ⇒ 别手写顺序，直接从 DOM 里挑：同层浮层 z-index 一样，
     //      DOM 里越靠后越在上面（"两张截图字节数完全相同"就是因为这个）。
-    const top = ['mask-input', 'mask', 'mask-model', 'mask-mcfg']
+    const top = ['mask-input', 'mask', 'mask-model', 'mask-mcfg', 'mask-model-add']
       .map((id) => $(id))
       .filter((m) => m && !m.classList.contains('hidden'))
       // 降序：DOM 里越靠后越在上面（z-index 相同），所以 [0] 就是最上面那一层。
@@ -2244,6 +2326,7 @@ document.addEventListener('keydown', (e) => {
       if (top.id === 'mask-input') closeInput(false);
       else if (top.id === 'mask-model') closeModelPicker();
       else if (top.id === 'mask-mcfg') closeModelConfig();
+      else if (top.id === 'mask-model-add') closeModelAdd();
       else closeSettings(true);
       return;
     }
@@ -2311,6 +2394,13 @@ $('mask-mcfg').addEventListener('click', (e) => { if (e.target === $('mask-mcfg'
 $('mcfg-save').addEventListener('click', saveModelConfig);
 $('mcfg-test').addEventListener('click', runModelTest);
 $('mcfg-default').addEventListener('click', setAsDefaultModel);
+
+// 新增自定义模型
+$('mdl-add').addEventListener('click', openModelAdd);
+$('madd-x').addEventListener('click', closeModelAdd);
+$('madd-cancel').addEventListener('click', closeModelAdd);
+$('madd-save').addEventListener('click', saveModelAdd);
+$('mask-model-add').addEventListener('click', (e) => { if (e.target === $('mask-model-add')) closeModelAdd(); });
 
 /* ---------- 点用量条 → 看上下文明细（把"这个数字从哪来"说清楚） ---------- */
 if ($('sb-usage')) {

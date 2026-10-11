@@ -34,7 +34,9 @@ const FILES = ['renderer.js', 'md.js', 'main.js', 'attach.js', 'parse.js', 'prel
 const CJK = /[\u3000-\u9fff\uff00-\uffef]/;
 
 // 用户看得见、但有意保留的专有名词
-const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'HTML']);
+// API Key：技术术语，业界通用叫法（中文写「API 密钥」反而怪），留着
+// openai-completions：pi 里的协议名，界面在提示语里会显示（"新服务商默认用它"）
+const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'HTML', 'API Key', 'openai-completions']);
 // 用户看不见的内部值：二进制魔数、mime、IPC/CLI 标识、路径片段、抽屉按钮的 props、事件键名
 const INTERNAL_KEEP = new Set([
   'Files', 'image/*', 'image/svg+xml',            // DataTransfer.types / mime
@@ -42,7 +44,8 @@ const INTERNAL_KEEP = new Set([
   'PIXELTODOS:',                                  // 自带 todo 扩展的 stdout 协议前缀
   'pixelAPI', 'toolResult', 'openDirectory', 'createDirectory', // IPC 名 / pi 事件字段 / 选目录 props
   '@earendil-works', 'E:/npm-global',             // 包名 / 本机 pi 安装路径
-  'Enter', 'Escape', 'ArrowDown', 'ArrowUp', 'Tab' // KeyboardEvent.key 值
+  'Enter', 'Escape', 'ArrowDown', 'ArrowUp', 'Tab', // KeyboardEvent.key 值
+  'var(--warn)'                                    // CSS 变量引用（内部值，不是文案）
 ]);
 // 内部"词汇表"：消息标签 / 状态值 / 错误码 / 快捷键。
 // 这些字面量**不会单独显示给用户**（显示前都过 WHO_ZH / STATE_ZH / REASON_ZH / TH_ZH 翻译），
