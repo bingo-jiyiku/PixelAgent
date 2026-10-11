@@ -10,10 +10,8 @@
 
 <!-- ═══════════════ 顶部标题栏（无边框窗口，自绘按钮） ═══════════════ -->
 <header class="topbar" id="titlebar">
-  <span class="tb-brand tb-drag">
-    <i class="bul sq-ink"></i>PIXELAGENT
-    <em class="tb-ver">v1.0</em>
-  </span>
+  <!-- 老板 2026-10-11：顶栏左边那些字（品牌名 / 版本号）不要了，极简。
+       会话号在中间、"智能体终端"在右边都留着（有信息量，删了反而空）。 -->
   <span class="tb-mid tb-drag">
     <span class="tb-cur" id="tb-cur">会话 #—</span>
   </span>
@@ -52,10 +50,10 @@
 
   <!-- ───── 中栏：消息时间线 ───── -->
   <main class="main">
-    <!-- 空状态：大标题 + 像素女孩（有消息后自动隐藏） -->
+    <!-- 空状态：像素女孩（有消息后自动隐藏）
+         老板 2026-10-11：删掉"复古像素终端 / PIXEL() 像素终端"那两行大字，
+         欢迎页直接就是场景 + 提示条，别再自己给自己标名字。 -->
     <div class="welcome" id="welcome">
-      <div class="hl-zh">复古像素终端</div>
-      <div class="hl-en">PIXEL() 像素终端</div>
       <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
         <!-- 办公场景：人物是老板给的形象（assets/girl.png，只去了白底没重画），
              桌椅/显示器/键盘都是 CSS 搭的；下半身被桌面挡住 → 读起来就是"坐着办公"。

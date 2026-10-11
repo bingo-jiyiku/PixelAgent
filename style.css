@@ -110,8 +110,8 @@ body {
   font-size: 11px;
   letter-spacing: 1px;
 }
-.tb-brand { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.tb-ver { font-style: normal; font-size: 9px; color: var(--lav); }
+/* 顶栏已去掉品牌名（老板 2026-10-11：不用自己标 PIXELAGENT v1.0），
+   中间会话号顶格，右边「智能体终端」+ 窗口按钮。 */
 .tb-mid { flex: 1 1 auto; display: flex; align-items: center; padding: 0 6px; min-width: 0; }
 .tb-cur {
   font-family: var(--f-tx); font-size: 18px; letter-spacing: 0;
@@ -234,16 +234,8 @@ body {
   gap: 14px; padding: 20px;
 }
 .welcome.hidden { display: none !important; }
-.hl-zh {
-  font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
-  font-weight: 900; font-size: 36px; letter-spacing: 4px; color: var(--ink);
-  text-shadow: 4px 4px 0 var(--lav);
-  text-align: center;
-}
-.hl-en {
-  font-family: var(--f-px); font-size: 12px; letter-spacing: 3px;
-  color: var(--muted); text-align: center;
-}
+/* 老板 2026-10-11：欢迎页大标题「复古像素终端 / PIXEL() 像素终端」删了，
+   .hl-zh / .hl-en 一并清掉；下面只剩吉祥物 + 提示条。 */
 .hl-hint { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .hl-hint span {
   font-size: 17px; color: var(--muted);
