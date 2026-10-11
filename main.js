@@ -266,10 +266,32 @@ function parseSession(file) {
   }
   const firstUser = out.msgs.find((m) => m.role === 'user');
   out.title = firstUser
-    ? (firstUser.text.replace(/\s+/g, ' ').slice(0, 42) ||
-       (firstUser.images ? '[图片 ×' + firstUser.images + ']' : ''))
+    ? (cleanTitle(firstUser.text) || (firstUser.images ? '[图片 ×' + firstUser.images + ']' : ''))
     : '(空会话)';
   return out;
+}
+
+/* 老板 2026-10-11 19:41："会话列表要根据用户输入的文本整理一下弄成会话名字，现在是代码"
+   之前直接用 firstUser.text.slice(0, 42)，用户输入 `<file_name>="E..."` 这种代码
+   就变成会话名了。这里做四步"整理"：
+   1. 去 HTML/XML 标签（<xxx>）—— 用户粘代码时常见
+   2. 去反引号 / 双引号 / 单引号包裹 —— 代码片段常见
+   3. 压缩空白
+   4. 超过 24 字截断 + 加省略号（42 字太长，列表里挤不下）
+   如果整理后长度 < 2 字（比如全是符号），退回到"[代码]"标记。 */
+function cleanTitle(raw) {
+  if (!raw) return '';
+  let s = String(raw);
+  // 1. 去 <...> 标签（贪婪匹配，一次吃掉）
+  s = s.replace(/<[^>]*>/g, '');
+  // 2. 去首尾反引号/引号
+  s = s.replace(/^[\s`"'']+/, '').replace(/[\s`"'']+$/, '');
+  // 3. 压缩空白
+  s = s.replace(/\s+/g, ' ').trim();
+  // 4. 截断
+  if (s.length > 24) s = s.slice(0, 24) + '…';
+  // 整理后太短（<2 字），说明原来全是符号 → 标记为代码
+  return s.length >= 2 ? s : '[代码]';
 }
 
 function listSessionSeqs() {

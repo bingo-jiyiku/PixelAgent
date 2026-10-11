@@ -79,16 +79,17 @@ app.whenReady().then(async () => {
       const b = e.getBoundingClientRect();
       return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height),
                bottom: Math.round(b.bottom), right: Math.round(b.right) }; };
-    // 老板 2026-10-11："桌上的换成键盘" → .of-monitor 已删除，不再量测
+    // 19:41 电脑加回来，显示器重新量测
     return { scene: pick('#girl-scene'), office: pick('#pixel-girl'), girl: pick('.of-girl'),
-             desk: pick('.of-desk'), kb: pick('.of-keyboard'), mug: pick('.of-mug') };
+             desk: pick('.of-desk'), mon: pick('.of-monitor'), scr: pick('.of-screen'),
+             kb: pick('.of-keyboard'), mug: pick('.of-mug') };
   })()`);
   console.log('\n== 几何量测 ==');
   for (const [k, v] of Object.entries(geo || {})) {
     if (!v) { console.log(`  ⚠ ${k}: 元素不存在`); continue; }
     console.log(`  ${k.padEnd(7)} x=${v.x} y=${v.y} w=${v.w} h=${v.h} right=${v.right} bottom=${v.bottom}`);
   }
-  const g = geo && geo.girl, d = geo && geo.desk;
+  const g = geo && geo.girl, d = geo && geo.desk, m = geo && geo.mon;
   if (g && d) {
     const ov = Math.min(g.bottom, d.bottom) - Math.max(g.y, d.y);
     console.log(`  ▪ 人物×桌子 垂直重叠 = ${ov}px  ${ov > 8 ? '✅ 桌面挡住下半身（读成坐姿）' : '❌ 重叠太少 → 还是站姿'}`);
@@ -98,6 +99,11 @@ app.whenReady().then(async () => {
     const deskTop = d.y;   // 桌顶 y 值
     const shown = deskTop - g.y;
     console.log(`  ▪ 露出上半身 = ${shown}px  ${shown >= 100 ? '✅ 露出充分（>=100px）' : '⚠ 露出偏少（<100px）'}`);
+  }
+  // 显示器不压脸：显示器右边和人物左边的水平重叠 < 40px
+  if (g && m) {
+    const ho = Math.min(g.right, m.right) - Math.max(g.x, m.x);
+    console.log(`  ▪ 显示器×人物 水平重叠 = ${ho}px  ${ho < 40 ? '✅ 不压脸' : '⚠ 显示器压到人物了'}`);
   }
 
   /* ---------- 2. 截图 + 像素自检 ---------- */

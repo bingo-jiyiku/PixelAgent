@@ -72,16 +72,37 @@
           <i class="of-book"></i><i class="of-book"></i><i class="of-book"></i>
         </div>
         <div class="of-plant"><i></i></div>
-        <!-- ③ 人物：往右挪一点，从桌上露出更多上半身（top:38, desk h:55 → 露 127px 高） -->
+        <!-- ③ 人物：往右挪 + 露出更多上半身（老板 2026-10-11）
+           left:95 让显示器（left:8 宽 80）不压脸，键盘（left:95 宽 100）在人物前面 -->
         <img class="of-girl" src="assets/girl.png" alt="">
         <!-- ④ 桌子：矮一截（90→55），把上半身露出来；顶边黑线告诉眼睛"人坐在这条线之上" -->
         <div class="of-desk"></div>
-        <!-- ⑤ 键盘：占桌面主要位置（原来 78 宽 → 130 宽），桌上"换成键盘"（老板 2026-10-11）
-           8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js） -->
+        <!-- ⑤ 显示器：屏幕上是敲代码动画（4 行代码循环打字 + 光标）
+           老板 2026-10-11 20:30 删了 → 19:41 加回来："要坐着要有之前那个电脑啊"
+           位置从 left:10 bottom:90 挪到 left:8 bottom:55（桌子矮了同步下移） -->
+        <div class="of-monitor">
+          <div class="of-screen">
+            <div class="of-code">
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+              <span class="of-cl"></span>
+            </div>
+            <div class="of-cursor"></div>
+            <div class="of-scan"></div>
+            <div class="of-dots"><i></i><i></i><i></i></div>
+            <div class="of-ok">✓</div>
+          </div>
+          <div class="of-mstand"></div>
+          <div class="of-mbase"></div>
+        </div>
+        <!-- ⑥ 键盘：8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js）
+           老板 2026-10-11："桌上的换成键盘" 后键盘占满桌面 → 19:41 电脑回来，
+           键盘从居中改到右侧 left:95，给显示器让位 -->
         <div class="of-keyboard">
           <i></i><i class="f-key"></i><i></i><i></i><i></i><i></i><i></i><i></i>
         </div>
-        <!-- ⑥ 桌面小物：马克杯（点击 → ☕ 气泡） -->
+        <!-- ⑦ 桌面小物：马克杯（点击 → ☕ 气泡） -->
         <div class="of-mug"><i></i></div>
         <!-- ⑦ 状态特效 -->
         <div class="of-bubble"><i></i><i></i><i></i></div>

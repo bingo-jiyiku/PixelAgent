@@ -295,6 +295,19 @@ body {
 .m.sys .who { background: var(--panel-3); }
 .m.sys .txt { color: var(--muted); }
 .m.user .who { background: var(--lav); }
+/* 老板 2026-10-11 19:41："我说的话用黑色背景一行都是，ai 输出的就用系统色"
+   - 用户消息：黑底 + 白字 + 占整行（.txt flex:1 已经默认占满剩余空间）
+   - AI 消息：保持系统色（--panel 白底 + --ink 黑字，见下面 .m.bot .bubble） */
+.m.user .txt {
+  flex: 1 1 auto;
+  background: var(--ink);
+  color: var(--panel);
+  border: 3px solid var(--ink);
+  padding: 11px 13px;
+  white-space: pre-wrap;
+  min-height: 24px;
+  word-break: break-word;
+}
 .m.bot .txt,
 .m.bot .bubble {
   display: block; align-self: flex-start; max-width: 100%; min-width: 0;
@@ -630,10 +643,13 @@ body {
    结果双马尾几乎占满人物框，椅背只在马尾与身体间的缝里露出来，
    在浅色墙面上就是两条惨白竖条 → 读成"背后贴了张白卡片"。
    坐姿由桌面挡下半身完成，不需要再画椅子。
-   新坐标：left:78 top:35 width:110 → 图片高约 150，露出 y=35-165=130px，
-   桌面 y=165 挡下半身 20px（>8px 断言 ✅），比原来多露 55px。 */
+   19:41 电脑加回来后：left 78→95，给显示器（left:8 宽 80）让位；
+   宽度 110→100（更紧凑，配合显示器+键盘三分布局）
+   新坐标：left:95 top:40 width:100 → 图片高 137（315:432 原图比例），
+   图底 y=177，桌面 y=165 挡下半身 12px（>8 ✅），露出上半身 125px（>100 ✅）。
+   显示器 x=8-88、人物 x=95-195，水平无重叠。 */
 .of-girl {
-  position: absolute; left: 78px; top: 35px; width: 110px;
+  position: absolute; left: 95px; top: 40px; width: 100px;
   z-index: 5; transform-origin: 50% 100%;
 }
 .office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
@@ -680,20 +696,116 @@ body {
   background: rgba(255, 240, 220, .3);
 }
 
-/* --- ⑤ 键盘：占桌面主要位置（老板 2026-10-11："桌上的换成键盘"）
-   原 78×14 → 新 130×18，键宽从 6 加到 12，视觉上是"大键盘"。
-   坐在桌顶线上（bottom:55 对应 y=165），居中于桌面。
-   8 键，IDLE 只 .f-key 闪，TOOL 全闪（测试约定，见 test/shot-girl.js） */
+/* --- ⑤ 显示器：屏幕上是敲代码动画 ---
+   老板 2026-10-11 20:30 删了 → 19:41 加回来："要坐着要有之前那个电脑啊"
+   位置从 left:10 bottom:90 → left:8 bottom:55（桌子矮了 90→55，同步下移）
+   宽度 70→80（键盘让到右侧后显示器可以稍宽）
+   水平不压人物：显示器 x=8-88，人物 x=95-195，无重叠 ✅ */
+.of-monitor { position: absolute; left: 8px; bottom: 55px; width: 80px; z-index: 9; }
+.of-screen {
+  position: relative; width: 80px; height: 60px; overflow: hidden;
+  background: #1a1510; border: 3px solid var(--ink);
+}
+/* 屏幕上的代码：4 行，每行是一条彩色横线（模拟代码行）
+   IDLE 态循环打字动画（width 0→目标值 --cl-w），TOOL 态加速，THINKING/DONE 隐藏
+   --cl-w 由 renderer.js triggerMonitorCycle() 在点击显示器时切换 */
+.of-code {
+  position: absolute; left: 5px; top: 5px; right: 5px; bottom: 5px;
+}
+.of-cl {
+  display: block;
+  height: 3px;
+  margin-bottom: 5px;
+  background: var(--lav);
+  opacity: .88;
+  border-radius: 0;
+  width: 0;
+}
+.office[data-state="IDLE"] .of-cl { animation: of-type 3.2s steps(1) infinite; }
+.office[data-state="TOOL"] .of-cl { animation: of-type .8s steps(1) infinite; }
+.of-cl:nth-child(1) { animation-delay: 0s;    background: var(--lav);    --cl-w: 34px; }
+.of-cl:nth-child(2) { animation-delay: .4s;   background: #8ab4c4;        --cl-w: 26px; }
+.of-cl:nth-child(3) { animation-delay: .8s;   background: var(--warn);    --cl-w: 44px; }
+.of-cl:nth-child(4) { animation-delay: 1.2s;  background: var(--lav);     --cl-w: 28px; }
+@keyframes of-type {
+  0%   { width: 0; opacity: 0; }
+  5%   { opacity: 1; }
+  15%  { width: calc(var(--cl-w) * 0.25); }
+  30%  { width: calc(var(--cl-w) * 0.55); }
+  45%  { width: calc(var(--cl-w) * 0.70); }
+  60%  { width: calc(var(--cl-w) * 0.60); }
+  75%  { width: calc(var(--cl-w) * 0.90); }
+  90%  { width: calc(var(--cl-w) * 0.85); }
+  100% { width: var(--cl-w); opacity: 1; }
+}
+.office[data-state="THINKING"] .of-cl,
+.office[data-state="DONE"] .of-cl { display: none; }
+
+/* 光标：跟随最后一行代码闪烁 */
+.of-cursor {
+  position: absolute; left: 46px; bottom: 6px; width: 3px; height: 6px;
+  background: var(--lav);
+  animation: of-cursor-blink 0.8s steps(2) infinite;
+  display: none;
+}
+.office[data-state="IDLE"] .of-cursor,
+.office[data-state="TOOL"] .of-cursor { display: block; }
+@keyframes of-cursor-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* 屏幕扫描线（装饰） */
+.of-scan {
+  position: absolute; left: 0; right: 0; height: 7px;
+  background: rgba(248, 176, 196, .2);
+  animation: of-scan 2.6s linear infinite;
+}
+@keyframes of-scan { from { top: -7px; } to { top: 100%; } }
+
+/* 三个点（THINKING / TOOL 态） */
+.of-dots {
+  position: absolute; left: 0; right: 0; bottom: 6px; display: none;
+  justify-content: center; gap: 4px;
+}
+.of-dots i { width: 5px; height: 5px; background: var(--lav); display: block; }
+.of-dots i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
+.of-dots i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
+@keyframes of-dot { 0%, 49% { opacity: .25; } 50%, 100% { opacity: 1; } }
+
+/* ✓ 完成标记（DONE 态） */
+.of-ok {
+  position: absolute; left: 0; right: 0; top: 10px; text-align: center; display: none;
+  font-family: var(--f-px); font-size: 16px; color: var(--lav);
+}
+.office[data-state="THINKING"] .of-dots,
+.office[data-state="TOOL"] .of-dots { display: flex; }
+.office[data-state="TOOL"] .of-scan { background: rgba(248, 176, 196, .45); animation-duration: 1s; }
+.office[data-state="DONE"] .of-ok { display: block; }
+
+/* 显示器支架 + 底座 */
+.of-mstand {
+  width: 14px; height: 8px; margin: 0 auto;
+  background: var(--panel-3); border: 2px solid var(--ink); border-top: none;
+}
+.of-mbase {
+  width: 40px; height: 4px; margin: 0 auto;
+  background: var(--panel-3); border: 2px solid var(--ink); border-top: none;
+}
+/* 显示器 hover 提示可点 */
+.office .of-monitor { transition: filter 100ms steps(2); }
+.office .of-monitor:hover { filter: brightness(1.12); }
+
+/* --- ⑥ 键盘：8 键，IDLE 只 .f-key 闪，TOOL 全闪 ---
+   老板 2026-10-11 20:30 键盘居中占满桌面 → 19:41 电脑回来后键盘挪到右侧
+   left:95 宽 100（原居中 left:50% 宽 130）；显示器 left:8 宽 80 在左，两者错开
+   键宽 12→10（键盘变窄，键不能太大） */
 .of-keyboard {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  bottom: 55px; width: 130px; height: 18px;
+  position: absolute; left: 95px; bottom: 55px; width: 100px; height: 16px;
   background: #d8c4a8; border: 3px solid var(--ink); z-index: 9;
   display: flex; gap: 2px; align-items: center; justify-content: center;
   transition: filter 100ms steps(2);
 }
 .of-keyboard:hover { filter: brightness(1.12); }
 .of-keyboard i {
-  width: 12px; height: 8px; background: var(--ink); flex: 0 0 auto;
+  width: 10px; height: 7px; background: var(--ink); flex: 0 0 auto;
 }
 /* 只让具名键 .f-key 闪（第 2 个键，index 1）；别用 nth-child 数位置 —— 静默走位。
    显式给非 f-key 键设 animation:none，防止任何继承/缓存让它们也动起来。 */
@@ -705,9 +817,9 @@ body {
 .office .of-keyboard i.typing-burst { animation: of-key .1s steps(2) 3; }
 @keyframes of-key { 0%, 49% { background: var(--ink); } 50%, 100% { background: var(--lav); } }
 
-/* --- ⑥ 桌面小物：马克杯（点击 → ☕ 气泡）—— 挪到右边，键盘居中后腾出右侧空间 --- */
+/* --- ⑦ 桌面小物：马克杯（点击 → ☕ 气泡）—— 挪到最右边，键盘和显示器都在左边 --- */
 .of-mug {
-  position: absolute; right: 20px; bottom: 55px; width: 18px; height: 20px;
+  position: absolute; right: 8px; bottom: 55px; width: 18px; height: 20px;
   background: var(--lav); border: 3px solid var(--ink); z-index: 9;
   transition: filter 100ms steps(2), transform 100ms steps(2);
 }
@@ -744,10 +856,10 @@ body {
   box-shadow: 0 -3px 0 #6a8a5a, 3px -2px 0 #7a9a6a, -3px -2px 0 #7a9a6a;
 }
 
-/* --- ⑧ 状态特效（位置跟着人物新坐标 left:78 top:35 走） --- */
-/* 思考气泡：贴在人物头部左上侧（人物头 x≈100-160 y≈40-75） */
+/* --- ⑧ 状态特效（位置跟着人物新坐标 left:95 top:35 走） --- */
+/* 思考气泡：贴在人物头部左上侧（人物头 x≈120-175 y≈40-75） */
 .of-bubble {
-  position: absolute; left: 60px; top: 22px; display: none;
+  position: absolute; left: 75px; top: 22px; display: none;
   gap: 3px; padding: 5px; background: var(--panel); border: 3px solid var(--ink); z-index: 10;
 }
 .of-bubble i { width: 5px; height: 5px; background: var(--lav); display: block; }
@@ -781,9 +893,9 @@ body {
   z-index: 1;
 }
 
-/* 齿轮：TOOL 态闪（跟随新人物坐标 left:78 挪到 left:55） */
+/* 齿轮：TOOL 态闪（跟随新人物坐标 left:95 挪到 left:72） */
 .of-gear {
-  position: absolute; left: 55px; top: 40px; width: 12px; height: 12px; display: none; z-index: 10;
+  position: absolute; left: 72px; top: 40px; width: 12px; height: 12px; display: none; z-index: 10;
   background: var(--ink);
   box-shadow: -6px 0 0 var(--ink), 6px 0 0 var(--ink), 0 -6px 0 var(--ink), 0 6px 0 var(--ink);
   animation: of-pulse .7s steps(2) infinite;
