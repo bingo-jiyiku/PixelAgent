@@ -872,11 +872,19 @@ body {
 
 /* ---------- 会话项操作（悬停才出现，不抢视觉） ---------- */
 .sess { position: relative; }
+/* 会话条右侧的 改名/导出/删除
+   ------------------------------------------------------------
+   这里不能用 position:absolute 把它盖在右上角 ——
+   .sess-name 只在**容器边缘**截断，长标题会一路钻到按钮底下，
+   字和按钮直接叠在一起（真机上就是这么花的）。
+   改成正常流里的 flex 项 + visibility 控制显隐：
+   空间**always 占着**，所以既不会重叠，鼠标划过也不会有布局抖动。 */
 .sess-ops {
-  display: none; position: absolute; right: 3px; top: 3px;
-  gap: 2px; z-index: 2;
+  display: flex; gap: 2px; flex: 0 0 auto; align-self: flex-start;
+  padding-top: 2px;
+  visibility: hidden;
 }
-.sess:hover .sess-ops, .sess.on .sess-ops { display: flex; }
+.sess:hover .sess-ops, .sess.on .sess-ops { visibility: visible; }
 .sess-op {
   font-family: var(--f-px); font-size: 6px; line-height: 1;
   padding: 3px 2px; cursor: pointer;

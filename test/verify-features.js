@@ -540,6 +540,51 @@ app.whenReady().then(async () => {
   // 收尾：把导出产物清掉，别在仓库里留垃圾
   try { fs.rmSync(tmpExportDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
 
+  /* ================= 5c. 会话条布局：按钮不能压住标题 ================= */
+  // 这条来自真机截图：`.sess-ops` 原来是 position:absolute 盖在右上角，
+  // 而标题只在容器边缘截断 —— 长标题直接钻到按钮底下，字和按钮叠在一起。
+  // 这类问题跑功能断言是看不出来的（DOM 结构完全正确），
+  // 只有量**几何**才发现得了，所以这里量 bounding box。
+  console.log('\n[5c] 会话条布局');
+  const overlap = await js(`(function(){
+    const rows = document.querySelectorAll('#session-list .sess');
+    const bad = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const name = r.querySelector('.sess-name');
+      const ops = r.querySelector('.sess-ops');
+      if (!name || !ops) continue;
+      const a = name.getBoundingClientRect();
+      const b = ops.getBoundingClientRect();
+      // visibility:hidden 也占位、也能量到真实盒子 —— 所以没 hover 的行照样能查
+      if (!b.width || !b.height) continue;
+      const hit = !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+      if (hit) bad.push(String(name.textContent || '').slice(0, 16));
+    }
+    return bad;
+  })()`);
+  console.log('  ℹ 疑似重叠的行: ' + JSON.stringify(overlap));
+  t('会话标题没有被操作按钮压住', JSON.stringify(overlap), '[]');
+  // 同时确认按钮**确实占着位置**（改成 visibility 之后不能变成完全不占位，
+  // 否则又会退回"盖在标题上"）
+  const opsBox = await js(`(function(){
+    const all = document.querySelector('#session-list .sess .sess-ops');
+    const off = document.querySelector('#session-list .sess:not(.on) .sess-ops');
+    const use = off || all;
+    if (!use) return null;
+    const r = use.getBoundingClientRect();
+    const cs = getComputedStyle(use);
+    return { w: Math.round(r.width), pos: cs.position, vis: cs.visibility, isCurrent: !off };
+  })()`);
+  console.log('  ℹ 操作按钮盒子: ' + JSON.stringify(opsBox));
+  t('操作按钮在正常流里（不是绝对定位）', opsBox && opsBox.pos, 'static');
+  t('操作按钮确实占位（宽度 > 0）', !!(opsBox && opsBox.w > 0), true);
+  if (opsBox && !opsBox.isCurrent) {
+    t('非当前会话默认隐藏按钮（visibility 而非不占位）', opsBox.vis, 'hidden');
+  } else {
+    t('只有当前会话时才无法验"非当前隐藏"，退而验它有盒子', !!(opsBox && opsBox.w > 0), true);
+  }
+
   /* ================= 6. AGENTS：真扩展清单 ================= */
   console.log('\n[6] AGENTS 扩展清单');
   await js(`document.querySelector('.rtab[data-tab="sub"]').click()`);
