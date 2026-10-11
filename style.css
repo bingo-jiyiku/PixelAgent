@@ -31,8 +31,8 @@
   --panel:   #ffffff;   /* 面板 / 卡片 */
   --panel-2: #f2f2f2;   /* 侧栏底 / 输入条 */
   --panel-3: #e4e4e0;   /* 分隔线 / 凹陷底 */
-  --lav:      #c381b5;  /* 薰衣草紫：强调 / 标题条 / 选中 */
-  --lav-deep: #a8669c;  /* 深紫：硬阴影 */
+  --lav:      #f8b0c4;  /* 粉：强调 / 标题条 / 选中 —— 老板 2026-10-11「默认粉色用吉祥物的发色」 */
+  --lav-deep: #d17590;  /* 深粉：硬阴影 */
   --ink:      #191510;  /* 近黑棕：描边 / 正文 */
   --muted:    #5c5348;  /* 次级说明 */
   --err:      #a3231b;
@@ -554,73 +554,67 @@ body {
    ------------------------------------------------------------
    人物是老板给的形象（assets/girl.png）——
    由 tools/make-girl.js 只做「去白底 + 裁边」，细节一个像素都没重画。
-   桌椅 / 显示器 / 键盘 / 马克杯都是 CSS 搭的。
 
-   为什么让桌面挡住下半身：原图是站姿。把桌面板压在她的裙摆之上，
-   视觉上立刻读成"坐着办公"，而不需要让任何模型重画一遍
-   （重画必然改掉发绳 / 蝴蝶结 / 裙褶这些细节，就不是"这个形象"了）。
+   ★ 老板 2026-10-11：「吉祥物放到左侧栏下方，常驻在那」
+   于是 .girl-scene 从 #welcome 搬到 .rail-left 底部，office 相应缩到 180×140。
+   rail 宽 236px、减去左右 padding 后 180px 刚好卡住；桌面物品重新排过：
+     - 显示器挡在人物身后左侧（人物 z-index 更高，读作"人坐在显示器前"）
+     - 键盘在右下（离女孩近，她伸手就能按到）
+     - 桌子挡下半身，视觉"坐着办公"（原图是站姿，这样避免重画）
+   原来的马克杯 / 书本 / 书架删了 —— 塞进 180px 里读不出细节，反而添乱。
 
    四态由 #pixel-girl(.office) / #girl-scene 的 data-state 驱动：
    IDLE / THINKING / TOOL / DONE
    ============================================================ */
-.girl-scene { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.girl-scene {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 8px 8px;
+  border-top: 3px solid var(--ink);
+  background: var(--panel);
+}
 .girl-cap {
-  font-family: var(--f-px); font-size: 9px; letter-spacing: 1px; color: var(--muted);
-  border: 2px solid var(--ink); background: var(--panel); padding: 3px 6px;
+  font-family: var(--f-px); font-size: 8px; letter-spacing: 1px; color: var(--muted);
+  border: 2px solid var(--ink); background: var(--panel-2); padding: 2px 5px;
 }
 /* 老板 2026-10-11：不要框把吉祥物框住。原来的 3px 黑框去掉，
-   场景靠墙(横向细条纹)和桌面(下方色块)自然收边，看起来更像"贴在页面上的画面"
+   场景靠墙（横向细条纹）和桌面（下方色块）自然收边，看起来更像"贴在页面上的画面"
    而不是"贴了张图"。overflow 仍然保留 —— 桌面挡下半身的定位靠它，
-   去掉的话动画/装饰会溢出到欢迎页面上。 */
+   去掉的话动画 / 装饰会溢出到 rail 里、跑到 kv 上。 */
 .office {
-  position: relative; width: 272px; height: 216px; overflow: hidden;
+  position: relative; width: 180px; height: 140px; overflow: hidden;
   background: var(--panel-2);
 }
-/* 可点：hover 时鼠标小手 + 场景轻微提亮，作为"可以点"的视觉提示。
-   点击时 renderer.js 会在 .of-bubble-txt 里冒一句话。 */
 .office { cursor: pointer; transition: filter 120ms steps(2); }
 .office:hover { filter: brightness(1.06); }
 .office:active { filter: brightness(1.12); }
 .of-wall {
   position: absolute; inset: 0;
-  background: repeating-linear-gradient(0deg, var(--panel-2) 0 9px, var(--panel-3) 9px 10px);
+  background: repeating-linear-gradient(0deg, var(--panel-2) 0 8px, var(--panel-3) 8px 9px);
 }
 
-/* --- 墙上：窗户 + 书架 --- */
+/* --- 墙上：窗户（唯一保留的墙面装饰）--- */
 .of-window {
-  position: absolute; left: 16px; top: 12px; width: 62px; height: 46px;
+  position: absolute; left: 8px; top: 6px; width: 40px; height: 26px;
   background: var(--lav); border: 3px solid var(--ink); overflow: hidden; z-index: 1;
 }
 .of-window::before, .of-window::after { content: ''; position: absolute; background: var(--ink); }
 .of-window::before { left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1px; }
 .of-window::after { top: 50%; left: 0; right: 0; height: 3px; margin-top: -1px; }
-.of-moon { position: absolute; left: 7px; top: 6px; width: 13px; height: 13px; background: var(--panel); border-radius: 50%; }
-.of-st { position: absolute; width: 4px; height: 4px; background: var(--panel); }
-.of-st.s1 { left: 8px; top: 29px; }
-.of-st.s2 { left: 36px; top: 7px; }
-.of-st.s3 { left: 45px; top: 31px; }
+.of-moon { position: absolute; left: 4px; top: 4px; width: 8px; height: 8px; background: var(--panel); border-radius: 50%; }
 
-.of-shelf { position: absolute; right: 16px; top: 20px; width: 64px; height: 6px;
-  background: var(--panel-3); border: 3px solid var(--ink); z-index: 1; }
-.of-shelf i { position: absolute; bottom: 6px; width: 9px; border: 2px solid var(--ink); }
-.of-shelf i:nth-child(1) { left: 3px;  height: 20px; background: var(--lav-deep); }
-.of-shelf i:nth-child(2) { left: 15px; height: 26px; background: var(--lav); }
-.of-shelf i:nth-child(3) { left: 27px; height: 16px; background: var(--warn); }
-.of-shelf i:nth-child(4) { left: 39px; height: 23px; background: var(--panel); }
-
-/* --- 人物（原图，未重画） --- */
+/* --- 人物（原图，未重画）--- */
 /*
    ★ 这里**故意没有椅背** —— 别再"好心"加回来。
-   踩过的坑：最初画了个 86×78 的椅背放在人物身后想强化"坐着"，
-   结果实测（tools/girl-profile.js 量轮廓）发现：她的双马尾最宽处几乎占满
-   整个人物框（311/315 px），椅背只在**马尾与身体之间的那两道缝**里露出来，
+   踩过的坑：最初画了个椅背放在人物身后想强化"坐着"，
+   结果 her 双马尾几乎占满整个人物框，椅背只在马尾与身体之间那道缝里露出来，
    在浅色墙面上就是两条惨白的竖条 → 读起来像"背后贴了张白卡片"。
-   而"坐姿"这件事其实已经由桌面挡住下半身完成了（实测垂直重叠 38px），
-   不需要再画椅子。少一个元素 = 少一处视觉噪音。
+   "坐姿"这件事其实已经由桌面挡住下半身完成了，不需要再画椅子。
+   少一个元素 = 少一处视觉噪音。
 */
 .of-girl {
-  position: absolute; left: 150px; bottom: 24px; width: 108px; margin-left: -54px;
-  z-index: 4; transform-origin: 50% 100%;
+  position: absolute; left: 90px; bottom: 52px; width: 90px; margin-left: -45px;
+  z-index: 5; transform-origin: 50% 100%;
 }
 .office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
 @keyframes of-breathe { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-2px); } }
@@ -641,41 +635,40 @@ body {
   75% { transform: rotate(4deg); }
 }
 
-/* --- 桌子（挡住下半身 → 坐姿） --- */
+/* --- 桌子（挡住下半身 → 坐姿）--- */
 .of-desk {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 64px; z-index: 6;
-  /* 比墙面(#f2f2f2 / #e4e4e0)略深一档，桌面才不会和墙"糊"成一片 */
+  position: absolute; left: 0; right: 0; bottom: 0; height: 40px; z-index: 8;
   background: #dbd8d1; border-top: 4px solid var(--ink);
 }
-.of-desk::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 8px;
+.of-desk::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 6px;
   background: var(--panel-2); border-bottom: 3px solid var(--ink); }
-.of-drawer { position: absolute; left: 16px; bottom: 9px; width: 62px; height: 28px;
+.of-drawer { position: absolute; left: 12px; bottom: 6px; width: 54px; height: 22px;
   background: var(--panel-2); border: 3px solid var(--ink); }
-.of-drawer.r { left: auto; right: 16px; }
-.of-drawer::after { content: ''; position: absolute; left: 50%; top: 9px; width: 18px; height: 5px;
-  margin-left: -9px; background: var(--ink); }
+.of-drawer.r { left: auto; right: 12px; }
+.of-drawer::after { content: ''; position: absolute; left: 50%; top: 7px; width: 14px; height: 4px;
+  margin-left: -7px; background: var(--ink); }
 
-/* --- 桌面物品 --- */
-.of-monitor { position: absolute; left: 6px; bottom: 64px; width: 84px; z-index: 8; }
-.of-screen { position: relative; width: 84px; height: 54px; overflow: hidden;
+/* --- 显示器（挡在人物身后左侧，只露上半截屏幕）--- */
+.of-monitor { position: absolute; left: 8px; bottom: 40px; width: 64px; z-index: 3; }
+.of-screen { position: relative; width: 64px; height: 42px; overflow: hidden;
   background: #241d16; border: 3px solid var(--ink); }
-.of-l1, .of-l2, .of-l3 { position: absolute; height: 5px; background: var(--lav); opacity: .92; }
-.of-l1 { left: 8px; top: 10px; width: 40px; }
-.of-l2 { left: 8px; top: 21px; width: 26px; }
-.of-l3 { left: 8px; top: 32px; width: 48px; }
-.of-scan { position: absolute; left: 0; right: 0; height: 9px; background: rgba(195, 129, 181, .3); animation: of-scan 2.6s linear infinite; }
-@keyframes of-scan { from { top: -9px; } to { top: 100%; } }
-/* 「正在处理」的三个点必须**居中**：原来 left:9 靠左，在暗屏上像两块碎屑 */
-.of-dots { position: absolute; left: 0; right: 0; bottom: 8px; display: none;
-  justify-content: center; gap: 5px; }
-.of-dots i { width: 5px; height: 5px; background: var(--lav); display: block; }
+.of-l1, .of-l2, .of-l3 { position: absolute; height: 4px; background: var(--lav); opacity: .92; }
+.of-l1 { left: 6px; top: 8px; width: 32px; }
+.of-l2 { left: 6px; top: 17px; width: 22px; }
+.of-l3 { left: 6px; top: 26px; width: 40px; }
+.of-scan { position: absolute; left: 0; right: 0; height: 7px; background: rgba(248, 176, 196, .3); animation: of-scan 2.6s linear infinite; }
+@keyframes of-scan { from { top: -7px; } to { top: 100%; } }
+/* 「正在处理」的三个点必须**居中**：靠左的话在暗屏上像两块碎屑 */
+.of-dots { position: absolute; left: 0; right: 0; bottom: 5px; display: none;
+  justify-content: center; gap: 4px; }
+.of-dots i { width: 4px; height: 4px; background: var(--lav); display: block; }
 .of-dots i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
 .of-dots i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
 @keyframes of-dot { 0%, 49% { opacity: .25; } 50%, 100% { opacity: 1; } }
-.of-ok { position: absolute; left: 0; right: 0; top: 14px; text-align: center; display: none;
-  font-family: var(--f-px); font-size: 20px; color: var(--lav); }
-.of-mfoot { width: 14px; height: 8px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); border-top: none; }
-.of-mbase { width: 42px; height: 5px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); }
+.of-ok { position: absolute; left: 0; right: 0; top: 8px; text-align: center; display: none;
+  font-family: var(--f-px); font-size: 14px; color: var(--lav); }
+.of-mfoot { width: 12px; height: 6px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); border-top: none; }
+.of-mbase { width: 34px; height: 4px; margin: 0 auto; background: var(--panel-3); border: 3px solid var(--ink); }
 
 .office[data-state="THINKING"] .of-l1,
 .office[data-state="THINKING"] .of-l2,
@@ -688,14 +681,14 @@ body {
 .office[data-state="DONE"] .of-l3 { display: none; }
 .office[data-state="THINKING"] .of-dots,
 .office[data-state="TOOL"] .of-dots { display: flex; }
-.office[data-state="TOOL"] .of-scan { background: rgba(195, 129, 181, .5); animation-duration: 1s; }
+.office[data-state="TOOL"] .of-scan { background: rgba(248, 176, 196, .5); animation-duration: 1s; }
 .office[data-state="DONE"] .of-ok { display: block; }
 
-/* 键盘：宽度按桌面留白收紧（80px），两侧要留出书本和杯子的位置 */
-.of-keyboard { position: absolute; left: 150px; bottom: 64px; width: 80px; height: 15px; margin-left: -40px;
-  background: var(--panel-2); border: 3px solid var(--ink); z-index: 8;
-  display: flex; gap: 3px; align-items: center; justify-content: center; }
-.of-keyboard i { width: 6px; height: 5px; background: var(--ink); }
+/* --- 键盘（人物右手可及的位置，桌面右端）--- */
+.of-keyboard { position: absolute; left: 110px; bottom: 40px; width: 56px; height: 12px;
+  background: var(--panel-2); border: 3px solid var(--ink); z-index: 6;
+  display: flex; gap: 2px; align-items: center; justify-content: center; }
+.of-keyboard i { width: 5px; height: 4px; background: var(--ink); }
 /* IDLE 只让**这一个具名键**闪。
    原来写的是 `i:nth-child(2)` —— 靠数位置认键，以后往键盘里加一个键、
    或在前面插一个元素，闪的就变成旁边那个，而且**不会有任何报错**（静默走位）。
@@ -705,78 +698,65 @@ body {
 .office[data-state="TOOL"] .of-keyboard i:nth-child(odd) { animation-delay: .35s; }
 @keyframes of-key { 0%, 49% { background: var(--ink); } 50%, 100% { background: var(--lav); } }
 
-/* 桌面右侧：马克杯（靠边）+ 两本平放的书。三者不叠 —— 键盘 110..190 / 书 196..222 / 杯 236..254 */
-.of-mug { position: absolute; right: 12px; bottom: 64px; width: 18px; height: 16px; z-index: 8;
-  background: var(--lav); border: 3px solid var(--ink); }
-.of-mug::after { content: ''; position: absolute; right: -7px; top: 3px; width: 6px; height: 7px;
-  border: 3px solid var(--ink); border-left: none; }
-.of-books { position: absolute; right: 44px; bottom: 64px; width: 26px; z-index: 8; }
-.of-books i { display: block; height: 7px; border: 3px solid var(--ink); }
-.of-books i:first-child { background: var(--lav-deep); width: 26px; }
-.of-books i:last-child { background: var(--warn); width: 22px; }
-
 /* --- 状态特效 --- */
-/* 气泡：贴着头的**右侧**（原来在头顶正上方 176px 处，飘在空墙上看不出是"对谁说的"） */
-.of-bubble { position: absolute; left: 196px; bottom: 152px; display: none;
-  gap: 4px; padding: 6px; background: var(--panel); border: 3px solid var(--ink); z-index: 9; }
-.of-bubble i { width: 6px; height: 6px; background: var(--lav); display: block; }
+/* 思考气泡（三个小点）：贴在人物头部左上侧。
+   rail 宽度只有 180，气泡太靠右会被 overflow:hidden 裁掉 —— 所以放在**左侧**、
+   正好落在窗户的右边（窗户 x:8-48，气泡 x:56 起，中间留 8px 缓冲）。 */
+.of-bubble { position: absolute; left: 56px; bottom: 100px; display: none;
+  gap: 3px; padding: 5px; background: var(--panel); border: 3px solid var(--ink); z-index: 9; }
+.of-bubble i { width: 5px; height: 5px; background: var(--lav); display: block; }
 .of-bubble i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
 .of-bubble i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
 .office[data-state="THINKING"] .of-bubble { display: flex; }
 
 /* --- 文字气泡：吉祥物"说话" --- */
 /* 老板 2026-10-11 让吉祥物"可以说话"，走的是头顶冒文字气泡（不是 TTS）。
-   定位在人物的**左上**——右上已经有原生的 of-bubble（三个小点），齿轮，
-   再摆一个会挤；左上墙是空的（窗户在 left:16 但只到 78，气泡从 8 开始到
-   90 左右，中间隔着窗户的右边）。三角尾巴在气泡右下侧，指向人物头部。
+   定位在人物头部**右上方**——左边已经有原生的 of-bubble（三个小点），
+   再摆一个会挤；右上墙面（x>90、y<10）是空的（人物头顶最高只到 y=18，
+   星星在 x:142-162 那一带）。三角尾巴在气泡底部，向下指人物。
    淡入淡出走 opacity，不动 transform —— 动画用 steps(2) 保持 95 像素风。 */
 .of-bubble-txt {
-  position: absolute; left: 8px; bottom: 168px; z-index: 10;
-  max-width: 84px; padding: 4px 6px;
-  font-family: 'Microsoft YaHei', 'SimHei', sans-serif; font-size: 11px; line-height: 1.3;
+  position: absolute; left: 150px; bottom: 118px; z-index: 10;
+  max-width: 26px; padding: 3px 4px;
+  font-family: 'Microsoft YaHei', 'SimHei', sans-serif; font-size: 10px; line-height: 1.2;
   color: var(--ink); background: var(--panel); border: 3px solid var(--ink);
   opacity: 0; pointer-events: none;
   transition: opacity 140ms steps(3);
 }
 .of-bubble-txt.on { opacity: 1; }
-/* 尾巴：一个小三角，从气泡右下边斜向下指人物 */
+/* 尾巴：一个小三角，从气泡底边斜向下指人物 */
 .of-bubble-txt::after {
-  content: ''; position: absolute; right: 10px; bottom: -9px;
-  width: 0; height: 0;
-  border-left: 6px solid transparent; border-right: 6px solid transparent;
-  border-top: 9px solid var(--ink);
-}
-.of-bubble-txt::before {
-  content: ''; position: absolute; right: 12px; bottom: -5px;
+  content: ''; position: absolute; right: 6px; bottom: -7px;
   width: 0; height: 0;
   border-left: 4px solid transparent; border-right: 4px solid transparent;
-  border-top: 6px solid var(--panel);
+  border-top: 7px solid var(--ink);
+}
+.of-bubble-txt::before {
+  content: ''; position: absolute; right: 8px; bottom: -4px;
+  width: 0; height: 0;
+  border-left: 3px solid transparent; border-right: 3px solid transparent;
+  border-top: 4px solid var(--panel);
   z-index: 1;
 }
 
-/* 齿轮：放在人物右侧的空墙上。
-   踩过三次坑，最后定成这样：
-   ① 原来 left:40/bottom:158 —— 正好压在窗户上，像个黑十字；
-   ② 原来只有 4 根齿条、没有本体 → 渲出来就是"+"，不像齿轮；
-   ③ 加了本体之后**旋转**反而更糊：12px 的小东西转到 45° 时四条齿把四角填满，
-      放大看就是一坨黑方块（角度是随机的，截图经常正好撞上那一帧）。
-   ⇒ 定稿：不转，改成**脉冲**（95 风格本来就爱用"闪"而不是"平滑动"），
-      尺寸放大到本体 14px + 四齿各 7px，中间掏 6px 的孔 —— 齿轮形状清清楚楚。 */
-.of-gear { position: absolute; left: 212px; bottom: 94px; width: 14px; height: 14px; display: none; z-index: 9;
+/* 齿轮：只在小状态切换时闪（TOOL 态）。
+   尺寸压到 10×10 + 四齿各 5px，rail 内才不会显脏；不旋转、只脉冲，
+   原因跟 272 版一样 —— 小东西转到 45° 时四条齿把四角填满、放大看是黑块。 */
+.of-gear { position: absolute; left: 62px; bottom: 74px; width: 10px; height: 10px; display: none; z-index: 9;
   background: var(--ink);
-  box-shadow: -7px 0 0 var(--ink), 7px 0 0 var(--ink), 0 -7px 0 var(--ink), 0 7px 0 var(--ink);
+  box-shadow: -5px 0 0 var(--ink), 5px 0 0 var(--ink), 0 -5px 0 var(--ink), 0 5px 0 var(--ink);
   animation: of-pulse .7s steps(2) infinite; }
-.of-gear::before { content: ''; position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; background: var(--panel-3); }
+.of-gear::before { content: ''; position: absolute; left: 3px; top: 3px; width: 4px; height: 4px; background: var(--panel-3); }
 @keyframes of-pulse { 0%, 49% { transform: scale(1); } 50%, 100% { transform: scale(1.14); } }
 .office[data-state="TOOL"] .of-gear { display: block; }
 
-/* 星星：只撒在人物头顶那一小片（原来的框 108px 宽、右端顶到书架，
-   最左最右两颗飘到窗户和书架上方 → 读起来像墙上的随机装饰） */
-.of-stars { position: absolute; left: 108px; width: 72px; bottom: 174px; height: 16px; display: none; z-index: 9; }
-.of-stars i { position: absolute; width: 8px; height: 8px; background: var(--warn);
-  box-shadow: -4px 0 0 var(--warn), 4px 0 0 var(--warn), 0 -4px 0 var(--warn), 0 4px 0 var(--warn); }
+/* 星星：DONE 态撒在人物头顶右上方（x:142-162，避开左侧窗户 x:8-48 和人物 x:45-135）。
+   最左最右各飘一点，中间那颗高一点 —— 三颗错位才像"撒"，排齐反而呆。 */
+.of-stars { position: absolute; left: 142px; width: 20px; bottom: 122px; height: 14px; display: none; z-index: 9; }
+.of-stars i { position: absolute; width: 6px; height: 6px; background: var(--warn);
+  box-shadow: -3px 0 0 var(--warn), 3px 0 0 var(--warn), 0 -3px 0 var(--warn), 0 3px 0 var(--warn); }
 .of-stars i:nth-child(1) { left: 0; top: 4px; animation: of-pop .9s steps(2) infinite; }
-.of-stars i:nth-child(2) { left: 50%; top: -4px; animation: of-pop .9s steps(2) .25s infinite; }
+.of-stars i:nth-child(2) { left: 50%; top: -3px; animation: of-pop .9s steps(2) .25s infinite; }
 .of-stars i:nth-child(3) { right: 0; top: 4px; animation: of-pop .9s steps(2) .5s infinite; }
 @keyframes of-pop { 0%, 49% { transform: scale(.6); opacity: .6; } 50%, 100% { transform: scale(1); opacity: 1; } }
 .office[data-state="DONE"] .of-stars { display: block; }

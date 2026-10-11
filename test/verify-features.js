@@ -1107,10 +1107,9 @@ app.whenReady().then(async () => {
        ② 故意把 click 事件的 girlSay 删掉，断言必须红
        ③ 故意把 girlSay 里的 setClassList.add('on') 删掉，断言必须红 */
 
-  // 先确保欢迎页在（吉祥物只在这里）。走 btn-new 是最保险的方式：
-  // 会调 newSession → doNewSessionLocal → welcome.classList.remove('hidden')。
-  // doNewSessionLocal 里会 setState('IDLE') → 自动冒一个 IDLE 气泡（3s 后消失）。
-  // newSession 是 async（要先 IPC），所以等够时间让整条链跑完。
+  // ★ 老板 2026-10-11：吉祥物从 welcome 搬到左栏常驻后，测试不再依赖"welcome 在"。
+  //   这里点 btn-new 只是为了让 setState('IDLE') 走一遍 → 自动冒 IDLE 气泡（3s 后消失）。
+  //   btn-new 会调 newSession → doNewSessionLocal（IPC 异步），所以等够时间让整条链跑完。
   await js(`document.getElementById('btn-new').click()`);
   await sleep(1500);
   const girlInit = await js(`(function(){

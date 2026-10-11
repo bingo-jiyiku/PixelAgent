@@ -373,7 +373,7 @@ function syncCursor() {
   cursor.style.left = (16 + w) + 'px';
 }
 input.addEventListener('input', () => { syncCursor(); updatePalette(); });
-input.addEventListener('focus', () => { cursor.style.background = '#a8669c'; });
+input.addEventListener('focus', () => { cursor.style.background = '#d17590'; }); // 主色深一档（跟 --lav-deep 一致，见 style.css）
 input.addEventListener('blur', () => { cursor.style.background = '#5c5348'; });
 
 /* ---------- 打字机尾部光标 ---------- */

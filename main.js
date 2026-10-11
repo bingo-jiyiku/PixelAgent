@@ -64,7 +64,7 @@ const CFG_DEFAULTS = {
 };
 // 主题色：两档（主色 / 硬阴影色）成对给，改一个变量就能整体换皮
 const ACCENTS = {
-  lav:   { name: '薰衣草紫', main: '#c381b5', deep: '#a8669c' },
+  lav:   { name: '发色粉',   main: '#f8b0c4', deep: '#d17590' }, // 老板 2026-10-11：默认粉色用吉祥物发色
   teal:  { name: '青瓷',     main: '#4f9c93', deep: '#3d7d76' },
   amber: { name: '琥珀',     main: '#c08a2e', deep: '#9a6c1f' },
   rose:  { name: '玫瑰',     main: '#c96a7e', deep: '#a04f61' }
