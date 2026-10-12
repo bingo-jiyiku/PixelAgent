@@ -14,13 +14,30 @@ const path = require('path');
 // pi 包的入口文件（package.json 里 bin.pi 指向 dist/bundle/cli.js）
 const PI_CLI_REL = ['node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js'];
 
-// ---------- 找 node：不能用 electron 自带的 node，必须是系统里的真 node ----------
+// ---------- 找 node ----------
+// 开发模式：不能用 electron 自带的 node，必须是系统里的真 node（见下）。
+// 打包版例外：pi 内核捆绑在 resources/pi/ 下时，直接拿 Electron 自己的可执行文件
+// 以「Node 模式」跑（spawn 时注入 ELECTRON_RUN_AS_NODE=1，见 locate()）——
+// 省掉再捆一份 80MB 的 node.exe。实测 Electron 44 内置 Node v24.21 满足
+// pi 的要求（>=22.19），`electron.exe cli.js --version` 真机验证通过。
+const IS_ELECTRON = !!process.versions.electron;
+
+// 打包版里 pi 内核的 cli.js（extraResources：vendor/pi/node_modules → resources/pi/node_modules）
+function bundledPiCli() {
+  if (!IS_ELECTRON) return null;
+  const res = process.resourcesPath || path.join(path.dirname(process.execPath), 'resources');
+  const p = path.join(res, 'pi', 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js');
+  try { return fs.existsSync(p) ? p : null; } catch (e) { return null; }
+}
+
 function findNode() {
   // 1) 允许环境变量直接指定
   if (process.env.PIXELAGENT_NODE && fs.existsSync(process.env.PIXELAGENT_NODE)) {
     return process.env.PIXELAGENT_NODE;
   }
-  // 2) 扫 PATH 找 node.exe / node
+  // 2) 打包版：Electron exe 就是 node（locate() 会补 ELECTRON_RUN_AS_NODE）
+  if (IS_ELECTRON && bundledPiCli()) return process.execPath;
+  // 3) 扫 PATH 找 node.exe / node
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
@@ -29,17 +46,20 @@ function findNode() {
       if (fs.existsSync(p)) return p;
     }
   }
-  // 3) 兜底：直接叫 node（靠 PATH 让系统自己解析）
+  // 4) 兜底：直接叫 node（靠 PATH 让系统自己解析）
   return 'node';
 }
 
-// ---------- 找 pi 的 cli.js：npm 全局前缀里翻 ----------
+// ---------- 找 pi 的 cli.js：捆绑内核优先，再翻 npm 全局前缀 ----------
 function findPiCli() {
   // 1) 环境变量直连
   if (process.env.PIXELAGENT_PI_CLI && fs.existsSync(process.env.PIXELAGENT_PI_CLI)) {
     return process.env.PIXELAGENT_PI_CLI;
   }
-  // 2) 已知前缀 + npm 配置前缀
+  // 2) 打包版自带内核（对方机器多半没装过 pi，只能靠它）
+  const bundled = bundledPiCli();
+  if (bundled) return bundled;
+  // 3) 已知前缀 + npm 配置前缀
   const prefixes = [
     process.env.npm_config_prefix,
     'E:/npm-global',
@@ -64,11 +84,14 @@ function findPiCli() {
   return null;
 }
 
-// 对外暴露：把定位结果缓存起来，也方便测试脚本打印
+// 对外暴露：把定位结果缓存起来，也方便测试脚本打印。
+// env：spawn pi 子进程时要**额外**注入的环境变量 ——
+// 打包版 node=Electron exe，必须带 ELECTRON_RUN_AS_NODE=1 才会以纯 Node 跑。
 function locate() {
   const node = findNode();
   const cli = findPiCli();
-  return { node, cli };
+  const env = (IS_ELECTRON && node === process.execPath) ? { ELECTRON_RUN_AS_NODE: '1' } : {};
+  return { node, cli, env };
 }
 
 /**
@@ -106,14 +129,14 @@ function buildArgs(opts) {
  * @param {string[]} [opts.attachments] 附件的绝对路径（图片/文本），会以 @path 形式传给 pi
  * @param {string} opts.sessionFile   会话文件路径（多轮记忆靠它）
  * @param {boolean} [opts.noSession]  true = 不留会话（单次问答）
- * @param {string} [opts.agentDir]    pi 配置目录（PI_CODING_AGENT_DIR），用于跟终端里的 pi 隔离
+ * @param {string} [opts.agentDir]    pi 配置目录（PI_CODING_AGENT_DIR）；2026-10-11 起传全局 ~/.pi/agent 与终端 pi 互通
  * @param {(ev:object)=>void} opts.onEvent  每解析出一行 JSON 事件就回调
  * @param {(s:string, d:any)=>void} [opts.onState] 状态回调（THINKING/TOOL/DONE...）
  * @param {(info:object)=>void} [opts.onExit] 进程结束回调
  * @returns {{child: object, abort: ()=>void}}
  */
 function ask(opts) {
-  const { node, cli } = locate();
+  const { node, cli, env: nodeEnv } = locate();
   if (!cli) {
     const err = new Error('找不到 pi 的入口文件 cli.js（请设置环境变量 PIXELAGENT_PI_CLI）');
     if (opts.onExit) opts.onExit({ code: -1, error: err.message });
@@ -130,8 +153,8 @@ function ask(opts) {
 
   if (opts.onState) opts.onState('THINKING', '启动 pi');
 
-  const env = Object.assign({}, process.env, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
-  // 配置目录隔离：不共用终端里那份 ~/.pi/agent，免得互相抢锁
+  const env = Object.assign({}, process.env, nodeEnv || {}, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
+  // 配置目录：传全局 ~/.pi/agent = 与终端 pi 互通（扩展/凭据/会话同一份）
   if (opts.agentDir) env.PI_CODING_AGENT_DIR = opts.agentDir;
 
   const child = spawn(node, args, {

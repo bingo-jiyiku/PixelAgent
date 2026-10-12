@@ -23,3 +23,8 @@ node_modules/
 
 # 吉祥物原图素材：tools/make-girl.js 的输入，产品只用抠好的 assets/girl.png
 assets/girl-src.png
+
+# 打包产物与内核缓存：vendor/pi 是 fetch-kernel.js 拉的 pi 内核（可重建），
+# dist-app 是 electron-builder 输出
+vendor/
+dist-app/
