@@ -15,6 +15,7 @@ const fs = require('fs');
 const bridge = require('./pi-bridge');
 const { saveAttachments } = require('./attach');
 const { pathNotes } = require('./path-notes');
+const { pendingPackages, mergeExtPackages } = require('./ext-seed');
 
 let win = null;          // 主窗口
 let job = null;          // 当前正在跑的 pi 子进程（支持"停止"）
@@ -55,10 +56,14 @@ const ATT_DIR = IS_PACK ? path.join(USER_DIR, 'attachments') : path.join(APP_DIR
 const AGENT_DIR = IS_PACK
   ? path.join(homeDir(), '.pixelagent', 'agent')
   : path.join(homeDir(), '.pi', 'agent');
+// 资源根目录：打包版 = resources/（extraResources 都落在这里）。
+// PIXELAGENT_RES 是测试钩子（probe-extseed 用它指向 vendor/，不打安装包
+// 也能把"资源→播种→pi 加载"整条链路跑一遍）。默认走 resourcesPath。
+const RES_DIR = process.env.PIXELAGENT_RES || process.resourcesPath;
 // 自带扩展（给 pi 补一个 todo 工具，否则右栏 TODOS tab 永远是空的）
 // 打包版：pi 是独立子进程读不了 asar —— 扩展必须放 extraResources（resources/ext/）
-const TODO_EXT = (IS_PACK && process.resourcesPath)
-  ? path.join(process.resourcesPath, 'ext', 'todo.ts')
+const TODO_EXT = (IS_PACK && RES_DIR)
+  ? path.join(RES_DIR, 'ext', 'todo.ts')
   : path.join(APP_DIR, 'ext', 'todo.ts');
 // 本应用的配置：工作目录 + 会话别名
 const CONFIG_FILE = IS_PACK ? path.join(USER_DIR, 'pixelagent.json') : path.join(APP_DIR, '.pixelagent.json');
@@ -267,6 +272,75 @@ function ensureAgentDir() {
   agentDirState.ready = ok;
   agentDirState.error = ok ? '' : '还没有模型配置 —— 在启动引导里填接入地址和 API Key 就能用';
   return agentDirState;
+}
+
+// ---------- 捆绑扩展播种（老板 2026-10-12：「让新用户下载安装就可以直接用」） ----------
+// pi 的 npm 扩展平时装在 ~/.pi/agent/npm，由 settings.json 的 packages 登记。
+// 新用户 / 公司机器的 ~/.pixelagent/agent 是空的 ⇒ 一个扩展都没有 ——
+// 这就是"新机器很笨、不会上网"的根因（pi-web-access 没装上）。
+// 打包版把扩展闭包塞进 resources/ext-npm（tools/pack-extensions.js 打的），
+// 首次运行播种进 agent 目录：
+//   · 逐包 tmp+rename 拷（中断不留半包）；
+//   · settings.json **只加性**合并 packages，其它键一根头发都不碰（ext-seed.js）；
+//   · USER_DIR/.ext-seeded.json 记"确保过在盘上"的包 —— 用户后来用 pi remove
+//     卸掉某个，下次启动不会又被播种回来（没这个标记就会）。
+// 只在打包版跑：开发版 AGENT_DIR 就是全局 ~/.pi/agent，扩展本来就在。
+let extSeedDone = null;
+function seedBundledExtensions() {
+  if (extSeedDone) return extSeedDone;
+  if (!IS_PACK || !RES_DIR) { extSeedDone = Promise.resolve(); return extSeedDone; }
+  extSeedDone = (async () => {
+    const bundle = path.join(RES_DIR, 'ext-npm');
+    let manifest = null;
+    try { manifest = JSON.parse(fs.readFileSync(path.join(bundle, 'pixelagent-extensions.json'), 'utf8')); }
+    catch (e) { return; }   // 老安装包没带扩展库：静默跳过，todo.ts 那条路不受影响
+    const want = Array.isArray(manifest.packages) ? manifest.packages : [];   // 扩展源（合进 settings）
+    const copyList = Array.isArray(manifest.copy) ? manifest.copy : [];       // 全部顶层包（含 200+ 依赖）
+    if (!want.length) return;
+    const markerFile = path.join(USER_DIR, '.ext-seeded.json');
+    let seeded = [];
+    try { seeded = JSON.parse(fs.readFileSync(markerFile, 'utf8')).packages || []; } catch (e) { /* 首次 */ }
+    const pending = pendingPackages(want, seeded);
+    if (!pending.length) return;
+    console.log('[pixelagent] 首次运行：播种捆绑扩展 ' + pending.join(' '));
+    const nmDst = path.join(AGENT_DIR, 'npm', 'node_modules');
+    // ① 拷盘：copyList 是完整闭包（只拷扩展名会漏依赖，新机器上当场 Cannot find module）。
+    //    逐包 tmp+rename：中断不留半包；已存在的跳过（用户自己装过/老用户带过来的）。
+    const failed = [];
+    for (const name of copyList) {
+      const from = path.join(bundle, 'node_modules', name);
+      const to = path.join(nmDst, name);
+      if (fs.existsSync(to)) continue;
+      try {
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        const tmp = to + '.seeding-' + process.pid;
+        fs.cpSync(from, tmp, { recursive: true });
+        fs.renameSync(tmp, to);
+      } catch (e) { failed.push(name); console.log('[pixelagent] 扩展播种失败 ' + name + ': ' + e.message); }
+    }
+    // ② settings.json 只合**扩展源真的在盘上**的（合并一个拷坏的包，pi 加载时当场报错）
+    const done = pending.filter((src) =>
+      fs.existsSync(path.join(nmDst, src.replace(/^npm:/, ''), 'package.json')));
+    if (done.length) {
+      const setFile = path.join(AGENT_DIR, 'settings.json');
+      let settings = {};
+      try { settings = JSON.parse(fs.readFileSync(setFile, 'utf8')); } catch (e) { /* 没有就新建 */ }
+      try {
+        fs.writeFileSync(setFile, JSON.stringify(mergeExtPackages(settings, done), null, 2), 'utf8');
+      } catch (e) { console.log('[pixelagent] settings.json 写不进：' + e.message); }
+    }
+    // ③ 标记：有失败就不写 —— 下次启动会重试（自愈），别把半成品记成"播种完成"
+    if (!failed.length) {
+      try {
+        fs.writeFileSync(markerFile, JSON.stringify(
+          { app: manifest.app || '', packages: seeded.concat(done), at: new Date().toISOString() }, null, 2), 'utf8');
+      } catch (e) { /* 标记写不进就下次再试，顶多重拷一遍 */ }
+      console.log('[pixelagent] 捆绑扩展播种完成：' + done.join(' '));
+    } else {
+      console.log('[pixelagent] 有 ' + failed.length + ' 个包没播上，下次启动重试');
+    }
+  })();
+  return extSeedDone;
 }
 
 // ============================================================
@@ -1082,6 +1156,9 @@ ipcMain.handle('pi:ask', async (_e, payload) => {
 
   // 先把还在跑的查询（--list-models / pi list …）等干净，再起对话 —— 见 drainPiQueries 的说明
   await drainPiQueries();
+  // 首次运行的扩展播种（190MB 拷贝）可能还在后台跑 —— 等它，别让第一句话
+  // 跑在一个"设置里还没登记扩展"的 agent 目录上（那样这一轮就等于没扩展）。
+  if (extSeedDone) await extSeedDone;
 
   // 老板 2026-10-12：「设置里面增加用户画像」—— 画像写给 AI 看。
   // 每个会话只在第一轮带一次：pi 的 session 文件持续追加，带过模型就记得，
@@ -1686,6 +1763,7 @@ ipcMain.handle('app:open-update-page', () => {
 
 app.whenReady().then(() => {
   ensureAgentDir();     // 探测全局 pi 配置（~/.pi/agent）是否就绪
+  seedBundledExtensions();   // 后台播种捆绑扩展（190MB 拷贝，不阻塞启动；pi:ask 会等它）
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

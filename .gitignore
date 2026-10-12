@@ -28,3 +28,11 @@ assets/girl-src.png
 # dist-app 是 electron-builder 输出
 vendor/
 dist-app/
+# dist-app 被批量删除护栏拦下时，改名留的备份（同样可重建）
+/dist-app.old-*
+
+# 开发草稿：tools/_*.png 抠图中间产物、_ext-closure.json 闭包演算输出、
+# ext-closure.js 是 pack-extensions.js 的原型（逻辑已并入，勿再改它）
+tools/_*
+# 临时备份文件（如 style.css.bak-20261011-pixdark）
+*.bak-*

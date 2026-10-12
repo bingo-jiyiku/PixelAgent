@@ -1,15 +1,16 @@
 {
   "name": "pixelagent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "复古像素终端风桌面AI助手：Electron 前端 + pi 后端流式对话",
   "main": "main.js",
   "author": "DSH",
   "scripts": {
     "start": "electron .",
     "dist:kernel": "node tools/fetch-kernel.js",
-    "dist": "node tools/fetch-kernel.js && electron-builder --win nsis",
-    "dist:all": "node tools/fetch-kernel.js && electron-builder --win nsis portable",
-    "test": "node test/fixtures/load-image.js && node test/md.test.js && node test/parse.test.js && node test/pal.test.js && node test/bridge.test.js && node test/attach.test.js && node test/pathnotes.test.js && node test/audit-copy.js",
+    "pack:ext": "node tools/pack-extensions.js",
+    "dist": "node tools/fetch-kernel.js && node tools/pack-extensions.js && electron-builder --win nsis && node tools/verify-dist.js",
+    "dist:all": "node tools/fetch-kernel.js && node tools/pack-extensions.js && electron-builder --win nsis portable && node tools/verify-dist.js",
+    "test": "node test/fixtures/load-image.js && node test/md.test.js && node test/parse.test.js && node test/pal.test.js && node test/bridge.test.js && node test/attach.test.js && node test/pathnotes.test.js && node test/extseed.test.js && node test/audit-copy.js",
     "test:fixtures": "node test/fixtures/load-image.js",
     "test:md": "node test/md.test.js",
     "test:parse": "node test/parse.test.js",
@@ -36,7 +37,8 @@
     "probe:esc": "electron test/probe-esc.js",
     "shot:welcome": "electron test/shot-welcome.js",
     "probe:migration": "electron test/probe-migration.js",
-    "probe:exportfmt": "electron test/probe-exportfmt.js && electron test/probe-exportfmt.js --keep"
+    "probe:exportfmt": "electron test/probe-exportfmt.js && electron test/probe-exportfmt.js --keep",
+    "probe:extseed": "electron test/probe-extseed.js"
   },
   "license": "MIT",
   "build": {
@@ -47,18 +49,20 @@
       "output": "dist-app",
       "buildResources": "build"
     },
-    "files": [
-      "main.js",
-      "pi-bridge.js",
-      "attach.js",
-      "preload.js",
-      "renderer.js",
-      "md.js",
-      "parse.js",
-      "pal.js",
-      "index.html",
-      "style.css",
-      "assets/**/*",
+  "files": [
+    "main.js",
+    "pi-bridge.js",
+    "attach.js",
+    "path-notes.js",
+    "ext-seed.js",
+    "preload.js",
+    "renderer.js",
+    "md.js",
+    "parse.js",
+    "pal.js",
+    "index.html",
+    "style.css",
+    "assets/**/*",
       "!test", "!tools", "!shots", "!variants", "!vendor", "!dist-app",
       "!.sessions", "!.attachments", "!.pi", "!.pi-agent", "!.impeccable", "!.bak",
       "!.git", "!.gitignore", "!.pixelagent.json",
@@ -67,6 +71,8 @@
     "extraResources": [
       { "from": "vendor/pi/node_modules", "to": "pi/node_modules" },
       { "from": "ext", "to": "ext" },
+      { "from": "vendor/ext-npm/node_modules", "to": "ext-npm/node_modules" },
+      { "from": "vendor/ext-npm/pixelagent-extensions.json", "to": "ext-npm/pixelagent-extensions.json" },
       { "from": "build/icon.ico", "to": "icon.ico" }
     ],
     "win": {

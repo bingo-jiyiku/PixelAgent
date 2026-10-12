@@ -50,6 +50,20 @@ function main() {
   const ver = installedVersion();
   console.log('[kernel] 目标版本：' + PKG + (ver ? '@' + ver : '（本机没找到全局安装，装最新）'));
 
+  // 已就绪就跳过：版本一致 + cli.js 在。
+  // 不跳的话每次构建都 rmSync 一万个文件再重装 —— 又慢又没意义，
+  // 本机沙箱还会拦这种批量删除（SAFE_DELETE_BULK_CONFIRM_REQUIRED），构建直接挂。
+  const vendoredPkg = path.join(VENDOR, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json');
+  const vendoredCli = path.join(VENDOR, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js');
+  if (ver && fs.existsSync(vendoredPkg) && fs.existsSync(vendoredCli)) {
+    let vv = '';
+    try { vv = JSON.parse(fs.readFileSync(vendoredPkg, 'utf8')).version || ''; } catch (e) { /* 读不出就重装 */ }
+    if (vv === ver) {
+      console.log('[kernel] 已就绪（' + PKG + '@' + vv + '），跳过重装');
+      return;
+    }
+  }
+
   fs.rmSync(VENDOR, { recursive: true, force: true });
   fs.mkdirSync(VENDOR, { recursive: true });
 
