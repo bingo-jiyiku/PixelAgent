@@ -13,7 +13,7 @@ const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const bridge = require('./pi-bridge');
-const { saveAttachments } = require('./attach');
+const { saveAttachments, saveFiles } = require('./attach');
 const { pathNotes } = require('./path-notes');
 const { pendingPackages, mergeExtPackages } = require('./ext-seed');
 
@@ -1429,6 +1429,22 @@ ipcMain.handle('pi:stat-file', (_e, p) => {
   };
 });
 
+// ---------- 虚拟文件落盘（拖进来/粘进来但拿不到磁盘路径的文件） ----------
+// 老板 2026-10-12 23:5x「为什么不能直接把文件拖进去」：Electron 32+ 删了 File.path，
+// 而且微信/QQ/浏览器里拖出来的文件本来就只有内容、没有后端路径。renderer 试完
+// webUtils.getPathForFile 仍拿不到路径时，把内容传到这里落进附件目录 ——
+// 回来就是一个普通路径附件，后面 pi 那套 @file 内联完全不用改。
+// 复用 attach.js 的 saveFiles（同一个消毒/防穿越/限额纪律，别另起一套）。
+ipcMain.handle('pi:save-file', (_e, payload) => {
+  const p = payload || {};
+  const r = saveFiles([{ name: p.name, mime: p.mime, bytes: p.bytes, dataUrl: p.dataUrl }], ATT_DIR);
+  if (!r.saved.length) {
+    return { ok: false, reason: (r.rejected[0] && r.rejected[0].reason) || '落盘失败' };
+  }
+  const s = r.saved[0];
+  return { ok: true, path: s.path, name: s.name, size: s.bytes, mime: s.mime };
+});
+
 // 扩展名 → mime（只覆盖常见的；认不出的返回 ''，renderer 按非图片路径走，无妨）
 function mimeFromExt(ext) {
   const e = String(ext || '').toLowerCase();
@@ -1728,8 +1744,11 @@ function verNewer(a, b) {
 }
 
 let updateCache = null;   // 启动后只查一次，重复调用直接给缓存
-ipcMain.handle('app:check-update', () => {
-  if (updateCache) return updateCache;
+// force=true 绕过缓存：渲染层的周期复检要用它 —— 启动时没网会把 ok:false
+// 永久缓存在这里（这轮会话再也查不出更新），周期复检必须能重来一次。
+ipcMain.handle('app:check-update', (_e, opts) => {
+  const force = !!(opts && opts.force);
+  if (updateCache && !force) return updateCache;
   updateCache = new Promise((resolve) => {
     const done = (r) => { updateCache = Promise.resolve(r); resolve(r); };
     const req = https.get({

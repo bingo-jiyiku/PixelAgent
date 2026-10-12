@@ -165,6 +165,108 @@ app.whenReady().then(async () => {
   const visMark = await js(`document.getElementById('kv-vis').textContent`);
   console.log('  ℹ 状态栏视觉能力标记: ' + visMark);
 
+  /* ================= 2b. 非图片附件：拖进来 / 选进来 =================
+     ★ 老板 2026-10-12 23:5x「为什么不能直接把文件拖进去」：拖一个 PDF 进来
+       被报「这份文件拿不到磁盘路径，附不上去」。
+       真根因：Electron 32+ **删掉了非标准属性 File.path**（探针实测 44.7.0：
+       'path' in File.prototype === false），而老代码 `if (!file.path) 报错`
+       于是**恒成立** —— 拖进来 / 用「+ 附件」选 / 粘贴 的非图片附件**一条都进不来**，
+       而且那句"把它存到磁盘再拖进来"完全是骂人（用户本来就是从磁盘拖的）。
+     ★ 为什么验收里一直是绿的（这才是这一段存在的理由）：
+       上面 [2] 的附件用例喂的是 image/png，走 FileReader，**根本不碰 file.path**。
+       非图片这条路零覆盖 —— 典型的"测试全绿、真机必红"。
+     两条路各验一条，**每条都先把前提量出来**（不量的话两条可能都在测同一分支）：
+       A) 虚拟文件（微信/QQ/网页里拖出来的：有内容、无磁盘路径）→ 读内容落盘；
+       B) 真实落盘文件（资源管理器拖/点选）→ pathForFile 拿**原路径**，零拷贝。 */
+  console.log('\n[2b] 非图片附件：拖/选进来的 PDF');
+  const attBefore = fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0;
+  const VIRT_BYTES = '%PDF-1.4\nvirtual-from-app\n';
+  const virtR = await js(`(function(){
+    var s = ${JSON.stringify(VIRT_BYTES)};
+    var bytes = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+    var f = new File([bytes], '梦甜甜&Fan江山印6栋6-4平面布置3.pdf', { type: 'application/pdf' });
+    // 前提：这确实是个**没有磁盘路径**的虚拟文件（否则下面测的不是那条退路）
+    var premise = window.pixelAPI.pathForFile(f);
+    window.__pixel.attachments = []; renderAtt();
+    addAttachment(f);
+    return new Promise(function(res){
+      setTimeout(function(){
+        var a = window.__pixel.attachments[0] || null;
+        res({ premise: premise, n: window.__pixel.attachments.length,
+              name: a ? a.name : 'NONE', path: a ? a.path : 'NONE', size: a ? a.size : -1,
+              log: (document.getElementById('log') || {}).textContent || '' });
+      }, 1000);
+    });
+  })()`);
+  console.log('  ℹ 虚拟文件：pathForFile 前提=' + JSON.stringify(virtR.premise) +
+    ' → 附件 ' + virtR.n + ' 条，path=' + JSON.stringify(virtR.path));
+  t('前提：这份虚拟文件确实拿不到磁盘路径（否则下面的断言在空转）', virtR.premise, '');
+  t('虚拟文件被附上了（不再被"拿不到磁盘路径"挡住）', virtR.n, 1);
+  t('界面上显示的是用户原名（& 符号原样）', virtR.name, '梦甜甜&Fan江山印6栋6-4平面布置3.pdf');
+  t('虚拟文件落到了磁盘上（有了真实路径）', virtR.path !== 'NONE' && fs.existsSync(virtR.path), true);
+  t('落盘内容一个字节不差',
+    virtR.path !== 'NONE' && fs.existsSync(virtR.path) ? fs.readFileSync(virtR.path, 'utf8') : 'NONE', VIRT_BYTES);
+  t('落盘名留住 .pdf（pi 认扩展名）', /\.pdf$/.test(path.basename(virtR.path)), true);
+  t('落盘文件在附件目录里',
+    path.dirname(path.resolve(virtR.path)), path.resolve(ATT_DIR));
+  t('落盘文件名不含路径分隔（防穿越）', /[\\/]/.test(path.basename(virtR.path)), false);
+  t('附件目录确实多了一个文件',
+    (fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0) - attBefore, 1);
+  // 老那句"拿不到磁盘路径"的文案必须**彻底不再出现** —— 它是这次 bug 的脸
+  t('报错日志里不再有"拿不到磁盘路径"', virtR.log.indexOf('拿不到磁盘路径') < 0, true);
+
+  // B) 真实落盘文件：用调试协议把真文件塞进附件选择器（等价于资源管理器拖/点选）
+  const REAL_FIXTURE = path.join(__dirname, '_vf-real-attach.pdf');
+  fs.writeFileSync(REAL_FIXTURE, Buffer.from('%PDF-1.4\nreal-on-disk\n'));
+  const attBefore2 = fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0;
+  win.webContents.debugger.attach('1.3');
+  await win.webContents.debugger.sendCommand('DOM.enable');
+  const vfDoc = await win.webContents.debugger.sendCommand('DOM.getDocument', { depth: -1 });
+  const vfNode = await win.webContents.debugger.sendCommand('DOM.querySelector', {
+    nodeId: vfDoc.root.nodeId, selector: '#file-picker'
+  });
+  t('找到附件选择器节点（找不到的话下面这条是空转）', !!(vfNode && vfNode.nodeId > 0), true);
+  await js(`window.__pixel.attachments = []; renderAtt(); true`);
+  await win.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
+    nodeId: vfNode.nodeId, files: [REAL_FIXTURE]
+  });
+  await sleep(800);
+  const realR = await js(`(function(){ var a = window.__pixel.attachments[0] || null;
+    return { n: window.__pixel.attachments.length, name: a ? a.name : 'NONE', path: a ? a.path : 'NONE' }; })()`);
+  const attAfter2 = fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0;
+  try { win.webContents.debugger.detach(); } catch (e) { /* ignore */ }
+  console.log('  ℹ 真实文件：附件 ' + realR.n + ' 条，path=' + JSON.stringify(realR.path));
+  t('真实落盘文件被附上（「+ 附件」这条路也是通的）', realR.n, 1);
+  t('走的是**原路径**（零拷贝，不是复制进附件目录）',
+    path.resolve(realR.path), path.resolve(REAL_FIXTURE));
+  t('真实文件没被多复制一份到附件目录', attAfter2, attBefore2);
+  try { fs.rmSync(REAL_FIXTURE, { force: true }); } catch (e) { /* ignore */ }
+
+  // C) 粘贴非图片文件：老代码 `&& !f.path` 会把它**静默**丢掉（连提示都没有）
+  const pasteR = await js(`(function(){
+    window.__pixel.attachments = []; renderAtt();
+    var s = ${JSON.stringify(VIRT_BYTES)};
+    var bytes = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+    var dt = new DataTransfer();
+    dt.items.add(new File([bytes], 'pasted.pdf', { type: 'application/pdf' }));
+    var ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    // 前提：合成事件里真的带上了 files（不然这条是空转）
+    var sawFiles = !!(ev.clipboardData && ev.clipboardData.items && ev.clipboardData.items.length);
+    document.dispatchEvent(ev);
+    return new Promise(function(res){
+      setTimeout(function(){
+        var a = window.__pixel.attachments[0] || null;
+        res({ sawFiles: sawFiles, n: window.__pixel.attachments.length, path: a ? a.path : 'NONE' });
+      }, 1000);
+    });
+  })()`);
+  t('前提：合成粘贴事件里带了文件（否则下面这条空转）', pasteR.sawFiles, true);
+  t('粘贴的虚拟文件也能附上（不再被静默丢掉）', pasteR.n, 1);
+  t('粘贴的那份也真落到盘上了', pasteR.path !== 'NONE' && fs.existsSync(pasteR.path), true);
+  await js(`window.__pixel.attachments = []; renderAtt(); true`);   // 清干净，别污染后面的图
+
   /* ================= 3. 端到端：带图发出去，pi 请求里要有 image 块 ================= */
   console.log('\n[3] 端到端：附件 → 落盘 → pi 收到 image 块');
   await js(`(function(){ window.__probe = [];` +
@@ -979,6 +1081,140 @@ app.whenReady().then(async () => {
   })()`);
   t('没更新时气泡徽章都不出现（ok:false / hasUpdate:false）', negR && negR.bubbleOff && negR.badgeHidden, true);
   await js(`girlSay(''); document.getElementById('sb-update').classList.add('hidden');`);   // 复原，别污染后面的截图
+
+  /* ---- 8c. 更新提醒必须**周期性**重复，不是启动提一次就没了（老板 2026-10-12 23:5x：
+     「我希望用户没更新时，像素会时不时的就气泡提醒用户，而不是启动提醒一次就没了」）----
+     周期行为只能靠把 10 分钟压成几百毫秒来验 —— 走 window.__pixelUpdate 这个口。
+     五条，缺一不可（只有 ①② 的话，"一直骚扰"和"再也不提"两种错都验不出来）：
+       ① 周期值本身要合理（太小=骚扰，太大=等于没有）；
+       ② 有新版本：到点**再冒一次泡**，且复检要 force（绕过主进程缓存）——
+          启动没网会把 ok:false 永久缓存住，不 force 这一整轮会话就再也查不出更新；
+       ③ 已是最新：复检一次就**自己收摊**（停周期 + 收徽章），不许继续骚扰；
+       ④ 这轮没网（ok:false）：不打扰、也不放弃复检（下轮再试）；
+       ⑤ 渲染层传了 force 还得主进程认（那条只能源码级查，见下）。 */
+  const updEvery = await js(`window.__pixelUpdate.every`);
+  t('周期值合理（≥1 分钟、≤30 分钟，别太吵也别等于没有）',
+    updEvery >= 60000 && updEvery <= 30 * 60000, true);
+
+  // ★ 关掉后台定时器节流再验周期。
+  //   为什么必须关：Electron 的 webPreferences.backgroundThrottling 默认 true ——
+  //   窗口不在前台时 setInterval 会被压到 ~1 秒一次。这些用例靠"几百毫秒里 tick 了几次"
+  //   来判周期性，被节流就会**假红**（我第一版就是这么红的：460ms 只 tick 了 2 次，
+  //   而理论是 3 次）。产品在真实会话里窗口是聚焦的，不受这条影响 —— 所以这是**测试环境的噪音**，
+  //   不该拿它当产品缺陷，也不该靠"把等待时间拉长到 2 秒"来绕（那只会让测试变慢又变脆）。
+  win.webContents.setBackgroundThrottling(false);
+
+  // ② 有新版本 → 到点重复提醒 + force 复检
+  const loopOn = await js(`(function(){
+    window.__pixelUpdate.stop();
+    girlSay(''); document.getElementById('sb-update').classList.add('hidden');
+    var calls = 0, forces = [];
+    var fakeApi = {
+      checkAppUpdate: function(force){ calls++; forces.push(!!force);
+        return Promise.resolve({ ok: true, hasUpdate: true, latest: 'v9.9.9' }); },
+      openUpdatePage: function(){}
+    };
+    window.__pixelUpdate.start(fakeApi, 120);
+    return new Promise(function(res){ setTimeout(function(){
+      var b = document.getElementById('of-bubble-txt');
+      res({ calls: calls, allForced: forces.length > 0 && forces.every(function(x){ return x; }),
+            bubbleOn: b.classList.contains('on'), hasVer: /v9\\.9\\.9/.test(b.textContent),
+            running: window.__pixelUpdate.running(),
+            badgeOn: !document.getElementById('sb-update').classList.contains('hidden') });
+    }, 700); });
+  })()`);
+  console.log('  ℹ 周期提醒：700ms / 间隔 120ms → 复检 ' + loopOn.calls +
+    ' 次（≥3 说明周期性成立），气泡=' + loopOn.bubbleOn);
+  t('到点会**重复**提醒（700ms 内至少复检 3 次）', loopOn.calls >= 3, true);
+  t('复检走 force（绕过主进程缓存，补"启动没网就再查不出"的缺口）', loopOn.allForced, true);
+  t('重复提醒时气泡又冒出来（带版本号）', loopOn.bubbleOn && loopOn.hasVer, true);
+  t('重复提醒时周期还在跑', loopOn.running, true);
+  t('重复提醒时徽章亮着', loopOn.badgeOn, true);
+
+  // ③ 已是最新 → 自己收摊，别一直骚扰
+  const loopOff = await js(`(function(){
+    window.__pixelUpdate.stop();
+    girlSay(''); document.getElementById('sb-update').classList.add('hidden');
+    var calls = 0;
+    var fakeApi = { checkAppUpdate: function(){ calls++;
+        return Promise.resolve({ ok: true, hasUpdate: false, latest: 'v0.0.1' }); }, openUpdatePage: function(){} };
+    window.__pixelUpdate.start(fakeApi, 100);
+    return new Promise(function(res){ setTimeout(function(){
+      res({ calls: calls, running: window.__pixelUpdate.running(),
+            badgeHidden: document.getElementById('sb-update').classList.contains('hidden'),
+            bubbleOff: !document.getElementById('of-bubble-txt').classList.contains('on') });
+    }, 600); });
+  })()`);
+  console.log('  ℹ 已是最新：复检 ' + loopOff.calls + ' 次后 running=' + loopOff.running + '（应收摊成 false）');
+  t('确认已是最新前确实复检过', loopOff.calls >= 1, true);
+  t('确认已是最新时周期自己停掉（不继续骚扰）', loopOff.running, false);
+  t('确认已是最新时不再冒泡/亮徽章', loopOff.bubbleOff && loopOff.badgeHidden, true);
+
+  // ④ 这轮没网 → 不打扰、也不放弃复检
+  const loopNoNet = await js(`(function(){
+    window.__pixelUpdate.stop();
+    girlSay(''); document.getElementById('sb-update').classList.add('hidden');
+    var calls = 0;
+    var fakeApi = { checkAppUpdate: function(){ calls++; return Promise.resolve({ ok: false }); }, openUpdatePage: function(){} };
+    window.__pixelUpdate.start(fakeApi, 100);
+    return new Promise(function(res){ setTimeout(function(){
+      res({ calls: calls, running: window.__pixelUpdate.running(),
+            bubbleOff: !document.getElementById('of-bubble-txt').classList.contains('on'),
+            badgeHidden: document.getElementById('sb-update').classList.contains('hidden') });
+    }, 600); });
+  })()`);
+  console.log('  ℹ 没网：复检 ' + loopNoNet.calls + ' 次，running=' + loopNoNet.running + '（应继续=true）');
+  t('没网时继续复检、不放弃（启动没网那次全靠它补）',
+    loopNoNet.calls >= 2 && loopNoNet.running === true, true);
+  t('没网时什么都不冒（不打扰）', loopNoNet.bubbleOff && loopNoNet.badgeHidden, true);
+  await js(`window.__pixelUpdate.stop(); girlSay(''); document.getElementById('sb-update').classList.add('hidden'); true`);
+  t('stop() 能把周期彻底停掉', await js(`window.__pixelUpdate.running()`), false);
+
+  // ⑤ 启动那条**链路本身**：查一次 → 冒泡 → 起周期。
+  //    为什么要单独验：上面 ①②③④ 都是直接调 start/stop 验"周期本身对不对"，
+  //    而"逻辑写对了、启动时根本没接上"是另一种错（症状同样是"提醒再也不出现"）。
+  //    三种启动情形的决策表，缺一条都可能漏接线：
+  const boot = await js(`(function(){
+    function mk(r, reject){
+      return { checkAppUpdate: function(){ return reject ? Promise.reject(new Error('offline')) : Promise.resolve(r); },
+               openUpdatePage: function(){} };
+    }
+    function reset(){ window.__pixelUpdate.stop(); girlSay('');
+      document.getElementById('sb-update').classList.add('hidden'); }
+    var b = document.getElementById('of-bubble-txt');
+    var out = {};
+    reset();
+    window.__pixelUpdate.bootstrap(mk({ ok: true, hasUpdate: true, latest: 'v9.9.9' }));
+    return new Promise(function(done){ setTimeout(function(){
+      out.hasUpdate = { bubble: b.classList.contains('on'), running: window.__pixelUpdate.running() };
+      reset();
+      window.__pixelUpdate.bootstrap(mk({ ok: true, hasUpdate: false, latest: 'v0.0.1' }));
+      setTimeout(function(){
+        out.upToDate = { bubble: b.classList.contains('on'), running: window.__pixelUpdate.running(),
+                         badgeHidden: document.getElementById('sb-update').classList.contains('hidden') };
+        reset();
+        window.__pixelUpdate.bootstrap(mk(null, true));   // 没网：查这事直接 reject
+        setTimeout(function(){
+          out.offline = { bubble: b.classList.contains('on'), running: window.__pixelUpdate.running() };
+          reset();
+          done(out);
+        }, 250);
+      }, 250);
+    }, 350); });
+  })()`);
+  console.log('  ℹ 启动决策表: ' + JSON.stringify(boot));
+  t('启动·有新版本：冒泡 + 起周期',
+    boot.hasUpdate.bubble === true && boot.hasUpdate.running === true, true);
+  t('启动·已是最新：不冒泡、不起周期（绝不打扰）',
+    boot.upToDate.bubble === false && boot.upToDate.running === false && boot.upToDate.badgeHidden === true, true);
+  t('启动·没网（reject）：不冒泡但**起周期**（等复检把缺口补上）',
+    boot.offline.bubble === false && boot.offline.running === true, true);
+
+  // ⑥ 渲染层传了 force，主进程得认；不然①②全是空转（只能源码级查：
+  //    要行为化就得发两次真请求再观察有没有第二次网络调用，那个不可观测）
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  t('主进程 app:check-update 支持 force 绕缓存（源码级）',
+    /app:check-update[\s\S]{0,300}force/.test(mainSrc), true);
 
   /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
      原来的 bug：文档级 keydown 只有 mask-input / mask-model 两支，

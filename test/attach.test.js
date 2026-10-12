@@ -195,6 +195,96 @@ t('stripExt 全是扩展名不返回空', A.stripExt('.png'), 'img');
 t('stripExt 空返回 img', A.stripExt(''), 'img');
 t('stripExt 中文', A.stripExt('截图.png'), '截图');
 
+/* ============================================================
+   15. saveFiles —— 非图片附件落盘（老板 2026-10-12「为什么不能直接把文件拖进去」）
+   ------------------------------------------------------------
+   为什么不能拿图片那套凑合：saveAttachments 会跑 probeImage 体检，非图片一律被
+   当"认不出图片格式"拒掉。老板拖进来的是 PDF，走它必然被拒，理由还驴唇不对马嘴。
+   ============================================================ */
+const saveF = (list) => A.saveFiles(list, TMP);
+const PDF_BYTES = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n', 'utf8');
+
+/* 15.1 bytes 落盘：内容要对、扩展名要跟原名（.pdf 必须留住 —— pi 认扩展名） */
+const rf1 = saveF([{ name: '梦甜甜&Fan江山印6栋6-4平面布置3.pdf', mime: 'application/pdf', bytes: PDF_BYTES }]);
+t('saveFiles 存下来了', at(rf1.saved, 0).path ? true : false, true);
+t('saveFiles 内容字节数对', at(rf1.saved, 0).bytes, PDF_BYTES.length);
+t('saveFiles 落盘内容一模一样',
+  at(rf1.saved, 0).path ? fs.readFileSync(at(rf1.saved, 0).path).equals(PDF_BYTES) : false, true);
+t('saveFiles 扩展名留住 .pdf', /\.pdf$/.test(path.basename(at(rf1.saved, 0).path || '')), true);
+t('saveFiles 名字里的 & 没有泄漏到磁盘名', /&/.test(path.basename(at(rf1.saved, 0).path || '')), false);
+t('saveFiles 回给界面的是用户原名', at(rf1.saved, 0).name, '梦甜甜&Fan江山印6栋6-4平面布置3.pdf');
+t('saveFiles 中文名保留在磁盘名里', /梦甜甜/.test(path.basename(at(rf1.saved, 0).path || '')), true);
+
+/* 15.2 mime 优先于原名扩展名（原名可能骗人） */
+const rf2 = saveF([{ name: 'x.txt', mime: 'application/pdf', bytes: PDF_BYTES }]);
+t('saveFiles mime 优先 → .pdf', /\.pdf$/.test(path.basename(at(rf2.saved, 0).path || '')), true);
+
+/* 15.3 认不出的 mime → 沿用原扩展名（别把 .docx/.xlsx 这类丢掉） */
+const rf3 = saveF([{ name: '报表.xlsx', mime: 'application/octet-stream', bytes: PDF_BYTES }]);
+t('saveFiles 陌生 mime 沿用 .xlsx', /\.xlsx$/.test(path.basename(at(rf3.saved, 0).path || '')), true);
+
+/* 15.4 目录穿越：名字带 ../ 和盘符都必须还落在目标目录里 */
+const rf4 = saveF([
+  { name: '../../evil.pdf', mime: 'application/pdf', bytes: PDF_BYTES },
+  { name: 'C:\\Windows\\evil2.pdf', mime: 'application/pdf', bytes: PDF_BYTES },
+  { name: '..\\..\\evil3.pdf', mime: 'application/pdf', bytes: PDF_BYTES }
+]);
+t('saveFiles 穿越 3 条都存了下来', rf4.saved.length, 3);
+t('saveFiles 穿越 第一条仍在目录内', path.dirname(path.resolve(at(rf4.saved, 0).path || '.')) === path.resolve(TMP), true);
+t('saveFiles 穿越 第二条仍在目录内', path.dirname(path.resolve(at(rf4.saved, 1).path || '.')) === path.resolve(TMP), true);
+t('saveFiles 穿越 第三条仍在目录内', path.dirname(path.resolve(at(rf4.saved, 2).path || '.')) === path.resolve(TMP), true);
+t('saveFiles 穿越 文件名里没有路径分隔', /[\\/]/.test(path.basename(at(rf4.saved, 0).path || '')), false);
+
+/* 15.5 不该悄悄吞：空内容 / 没有内容 / 超限 都要**带原因**拒掉 */
+const rf5 = saveF([
+  { name: 'empty.pdf', mime: 'application/pdf', bytes: Buffer.alloc(0) },
+  { name: 'nocontent.pdf', mime: 'application/pdf' },
+  null
+]);
+t('saveFiles 三条都拒了', rf5.saved.length, 0);
+t('saveFiles 拒的条数对', rf5.rejected.length, 3);
+tc('空格原因说清是空的', rs(at(rf5.rejected, 0)), '空');
+tc('没内容原因说清没内容', rs(at(rf5.rejected, 1)), '没有内容');
+t('null 条目也带原因', String(rs(at(rf5.rejected, 2))).length > 0, true);
+
+const rf6 = saveF([{ name: 'huge.pdf', mime: 'application/pdf', bytes: Buffer.allocUnsafe(A.MAX_FILE_BYTES + 1024) }]);
+t('saveFiles 超限被拒', rf6.saved.length, 0);
+tc('saveFiles 超限原因带上限', rs(at(rf6.rejected, 0)), '上限');
+t('saveFiles 超限原因说清上限是 50M', rs(at(rf6.rejected, 0)).indexOf('50MB') >= 0, true);
+
+/* 15.6 dataUrl 形式也要能存（兼容路径，别只支持 bytes） */
+const rf7 = saveF([{ name: 'd.pdf', mime: 'application/pdf', dataUrl: 'data:application/pdf;base64,' + PDF_BYTES.toString('base64') }]);
+t('saveFiles 认 dataUrl', at(rf7.saved, 0).bytes, PDF_BYTES.length);
+t('saveFiles dataUrl 内容对',
+  at(rf7.saved, 0).path ? fs.readFileSync(at(rf7.saved, 0).path).equals(PDF_BYTES) : false, true);
+
+/* 15.7 fileExt 纯函数边界 */
+t('fileExt 认图片 mime', A.fileExt('a', 'image/png'), 'png');
+t('fileExt 认 pdf mime', A.fileExt('a', 'application/pdf'), 'pdf');
+t('fileExt 认 Office 长 mime', A.fileExt('a', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), 'docx');
+t('fileExt text/plain 给 txt 而不是 plain', A.fileExt('a', 'text/plain'), 'txt');
+t('fileExt 无扩展名文件靠 mime 补上', A.fileExt('报告', 'application/pdf'), 'pdf');
+t('fileExt 不认识就用原名', A.fileExt('a.docx', 'application/octet-stream'), 'docx');
+t('fileExt 大小写归一', A.fileExt('a.PDF', ''), 'pdf');
+t('fileExt 都没有给 bin', A.fileExt('noext', 'application/octet-stream'), 'bin');
+t('fileExt 无 mime 无扩展名给 bin', A.fileExt('', ''), 'bin');
+t('fileExt 长怪 mime 不硬猜', A.fileExt('', 'application/x-weirdlongsubtype'), 'bin');
+
+/* 15.8 stripAnyExt 边界（不返回空、只去一个） */
+t('stripAnyExt 去 pdf', A.stripAnyExt('a.pdf'), 'a');
+t('stripAnyExt 只去末尾一个', A.stripAnyExt('a.tar.gz'), 'a.tar');
+t('stripAnyExt 无扩展名原样', A.stripAnyExt('abc'), 'abc');
+t('stripAnyExt 别返回空串', A.stripAnyExt('.pdf'), 'file');
+
+/* 15.9 🔴 漂移守卫：renderer 那边的 50MB 和这里必须同一个数
+   （同一个数字两处各写一遍 = 迟早漂；漂了不会有任何报错，只会让"界面放行、主进程拒收"
+     这种最难查的症状出现。核心逻辑那个 `const MAX_FILE_BYTES = …` 直接解析来比。） */
+const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8');
+const mm = /const MAX_FILE_BYTES\s*=\s*([0-9*\s]+);/.exec(rendererSrc);
+const rendererMax = mm ? String(mm[1]).split('*').reduce((a, b) => a * Number(String(b).trim()), 1) : NaN;
+t('renderer 的 MAX_FILE_BYTES 解析到了', Number.isFinite(rendererMax), true);
+t('renderer 与 attach.js 的 50MB 上限一致', rendererMax, A.MAX_FILE_BYTES);
+
 /* ---------- 清理 ---------- */
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* ignore */ }
 

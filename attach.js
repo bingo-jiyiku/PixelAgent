@@ -24,6 +24,9 @@ const fs = require('fs');
 const path = require('path');
 
 const MAX_ATTACH_BYTES = 16 * 1024 * 1024;
+// 非图片附件的上限（和 renderer 里 MAX_FILE_BYTES 必须一致 —— 那边是给用户看的门，
+// 这里是最后一道防线。verify-features 里有一条断言专门盯这两个数别漂）。
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 const MIME_EXT = {
   'image/png': 'png',
@@ -227,7 +230,125 @@ function saveAttachments(list, dir) {
   return { saved: saved, rejected: rejected };
 }
 
+// 常见**非图片** mime → 扩展名。
+// ★ 为什么必须有这张表（而不是靠"从 mime 反推"）：MIME_EXT 只管图片，
+//   于是 application/pdf 会被当成"不认识的 mime"，一路滑到按文件名猜；
+//   而 Office 那串 application/vnd.openxmlformats-… 反推出来是
+//   `.vndopenxmlformats` 这种垃圾。pi 认扩展名，扩展名错了等于把文件弄坏。
+const FILE_MIME_EXT = {
+  'application/pdf': 'pdf',
+  'application/json': 'json',
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+  'application/octet-stream': '',            // 就是不认识：交给文件名/兜底，别硬猜
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/csv': 'csv',
+  'text/html': 'html',
+  'text/xml': 'xml',
+  'application/xml': 'xml',
+  'text/javascript': 'js',
+  'application/javascript': 'js',
+  'text/yaml': 'yaml'
+};
+
+/**
+ * 非图片附件的扩展名，优先级：图片 mime → 常见文档 mime → 原文件名 → 从 mime 反推（从紧）→ bin。
+ *
+ * ★ 为什么不能只按 mime：PDF/Office 的 mime 五花八门（application/pdf、
+ *   application/vnd.openxmlformats-officedocument.wordprocessingml.document…），
+ *   而且 **pi 读文件主要认扩展名** —— 落盘时把 .pdf 弄丢就等于把文件弄坏，
+ *   用户会收到一段"看不懂这是啥"的乱码而不是他的 PDF。
+ * ★ 为什么从 mime 反推要「从紧」（只收 2-5 个纯字母数字）：宽松匹配会把
+ *   `text/plain` 推成 `.plain`、把 Office 长 mime 推成 `.vndopenxmlformats`。
+ */
+function fileExt(name, mime) {
+  const m = String(mime || '').toLowerCase();
+  if (MIME_EXT[m]) return MIME_EXT[m];
+  if (FILE_MIME_EXT[m]) return FILE_MIME_EXT[m];
+  const byName = /\.([A-Za-z0-9]{1,8})$/.exec(String(name || ''));
+  if (byName) return byName[1].toLowerCase();
+  const m2 = /^[a-z]+\/([a-z0-9]+)$/.exec(m);
+  if (m2 && m2[1].length >= 2 && m2[1].length <= 5) return m2[1];
+  return 'bin';
+}
+
+// 去掉末尾任意扩展名（saveFiles 要用：原名 report.pdf 先去掉 .pdf 再按算出来的 ext 拼，
+// 否则会拼成 report.pdf.pdf）。attach.js 里那个 stripExt 只认图片扩展名，不够用。
+function stripAnyExt(s) {
+  return String(s || '').replace(/\.[A-Za-z0-9]{1,8}$/, '') || 'file';
+}
+
+/**
+ * 把**任意文件**写盘：saveAttachments 之外的另一条路。
+ *
+ * ★ 为什么不复用 saveAttachments：
+ *   那个函数是为图片写的 —— 它跑 probeImage 体检，非图片一律被当"认不出图片格式（前 8 字节 …）"
+ *   拒掉。老板拖进来的 PDF 走它必然被拒，而且理由还是"图片有问题"，纯属驴唇不对马嘴。
+ *
+ * 入参每个是 { name, mime, bytes|dataUrl }：
+ *   · bytes   —— Uint8Array / Buffer（renderer 走 file.arrayBuffer() 拿到的，首选，不用 base64）
+ *   · dataUrl —— 兼容 base64 dataURL
+ * 返回值同 saveAttachments：{ saved:[{path,bytes,mime,kind,name}], rejected:[{name,reason}] }
+ */
+function saveFiles(list, dir) {
+  const saved = [];
+  const rejected = [];
+  if (!Array.isArray(list) || !list.length) return { saved: saved, rejected: rejected };
+  try { fs.mkdirSync(dir, { recursive: true }); }
+  catch (e) { return { saved: saved, rejected: [{ name: '(全部)', reason: '目录建不出来: ' + e.message }] }; }
+
+  for (const it of list) {
+    const nm = (it && it.name) || 'file';
+    if (!it) { rejected.push({ name: nm, reason: '空条目' }); continue; }
+
+    let buf = null;
+    if (it.bytes && typeof it.bytes.length === 'number') {
+      try { buf = Buffer.from(it.bytes); }
+      catch (e) { rejected.push({ name: nm, reason: '内容解不开: ' + e.message }); continue; }
+    } else if (typeof it.dataUrl === 'string') {
+      const m = /^data:([a-z0-9.+/-]+)?;base64,([\s\S]*)$/i.exec(it.dataUrl);
+      if (!m) { rejected.push({ name: nm, reason: '不是 base64 dataURL' }); continue; }
+      try { buf = Buffer.from(m[2], 'base64'); }
+      catch (e) { rejected.push({ name: nm, reason: 'base64 解不开' }); continue; }
+    } else {
+      rejected.push({ name: nm, reason: '没有内容（bytes / dataUrl 都没有）' });
+      continue;
+    }
+
+    if (!buf.length) { rejected.push({ name: nm, reason: '内容是空的' }); continue; }
+    if (buf.length > MAX_FILE_BYTES) {
+      rejected.push({ name: nm, reason: '超过 ' + Math.round(MAX_FILE_BYTES / 1048576) + 'MB 上限（实际 ' + (buf.length / 1048576).toFixed(1) + 'MB）' });
+      continue;
+    }
+
+    const ext = fileExt(nm, it.mime);
+    const fname = (Date.now() + '-' + Math.random().toString(36).slice(2, 7) + '-' + stripAnyExt(safeBase(nm)))
+      .slice(0, 80) + '.' + ext;
+    const full = path.join(dir, fname);
+
+    if (path.dirname(path.resolve(full)) !== path.resolve(dir)) {
+      rejected.push({ name: nm, reason: '文件名不合法（解析后跑出了附件目录）' });
+      continue;
+    }
+
+    try { fs.writeFileSync(full, buf); }
+    catch (e) { rejected.push({ name: nm, reason: '写盘失败: ' + e.message }); continue; }
+
+    // name 给的是**用户原名**（含 & 之类），磁盘名是消毒过的那个 —— 界面上要显示原名
+    saved.push({ path: full, bytes: buf.length, mime: String(it.mime || ''), kind: 'file', name: nm });
+  }
+
+  return { saved: saved, rejected: rejected };
+}
+
 module.exports = {
-  saveAttachments, probeImage, pngProblem, kindOf, crc32,
-  safeBase, stripExt, MAX_ATTACH_BYTES, MIME_EXT
+  saveAttachments, saveFiles, probeImage, pngProblem, kindOf, crc32,
+  safeBase, stripExt, stripAnyExt, fileExt, MAX_ATTACH_BYTES, MAX_FILE_BYTES, MIME_EXT
 };

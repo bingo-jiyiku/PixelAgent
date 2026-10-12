@@ -4,7 +4,7 @@
 // ============================================================
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('pixelAPI', {
   // 发一轮话：payload 可以是字符串，也可以是 {text, images:[{name,dataUrl}]}
@@ -29,6 +29,18 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   // 老板 2026-10-12：拖 .html 进窗口时浏览器只给 file:// 路径、不给 File 对象，
   // 用这个 IPC 补 name/size/mime，再走同一套附件把关
   statFile: (p) => ipcRenderer.invoke('pi:stat-file', p),
+
+  // ★ 老板 2026-10-12 23:5x「为什么不能直接把文件拖进去」——根因：Electron 32+ 删掉了
+  // 非标准属性 File.path，非图片附件（PDF 等）恒拿不到磁盘路径，全被那句
+  // 「这份文件拿不到磁盘路径」挡下。官方替代是 webUtils.getPathForFile（同步）。
+  // 实测：真实落盘文件（拖拽/点选）经 contextBridge 传进来仍能拿回真路径；
+  // 虚拟文件（微信/QQ/网页里拖出来的，只有内容没有后端）返回 '' —— 那种走 saveFile 退路。
+  pathForFile: (f) => {
+    try { return webUtils.getPathForFile(f) || ''; } catch (e) { return ''; }
+  },
+  // 虚拟文件的退路：内容交给主进程落进附件目录，回来就有一个普通路径附件了。
+  // 传 Uint8Array（结构化克隆）而不是 base64 —— 大文件少一层 33% 膨胀和字符串转换。
+  saveFile: (payload) => ipcRenderer.invoke('pi:save-file', payload),
   pickDir: () => ipcRenderer.invoke('pi:pick-dir'),
   setWorkDir: (dir) => ipcRenderer.invoke('pi:set-workdir', dir),
 
@@ -66,7 +78,8 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   info: () => ipcRenderer.invoke('pi:info'),
 
   // 应用自身的更新检查（GitHub Release 比对版本号）+ 打开下载页
-  checkAppUpdate: () => ipcRenderer.invoke('app:check-update'),
+  // force=true 绕过主进程缓存 —— 渲染层周期复检用（启动没网时缓存里是 ok:false）
+  checkAppUpdate: (force) => ipcRenderer.invoke('app:check-update', { force: !!force }),
   openUpdatePage: () => ipcRenderer.invoke('app:open-update-page'),
 
   // 设置：读 / 写 / 恢复默认

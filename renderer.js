@@ -423,10 +423,16 @@ function girlSay(text, ms, onClick, sticky) {
 //   ② 状态栏徽章：常驻，气泡收起了也随时能点。
 // 抽成具名函数是为了让验收能喂**真实形状**的返回（{ok,hasUpdate,latest}）——
 // 以前的断言是直接调 girlSay 模拟，IPC→handler→这条真实链路反而没被覆盖过。
+const UPDATE_BUBBLE_MS = 30000;          // 气泡挂多久（够看完、不至于赖着不走）
+const UPDATE_REMIND_EVERY_MS = 10 * 60 * 1000;   // 没更新就每 10 分钟再提一次
+let updateLoop = null;
+let updateLatest = '';
+
 function showUpdateReminder(r, api) {
-  if (!r || !r.ok || !r.hasUpdate) return;
+  if (!r || !r.ok || !r.hasUpdate) return false;
   const latest = String(r.latest || '');
-  girlSay('发现新版本 ' + latest + '，点我去更新', 30000, () => {
+  updateLatest = latest;
+  girlSay('发现新版本 ' + latest + '，点我去更新', UPDATE_BUBBLE_MS, () => {
     if (api && api.openUpdatePage) api.openUpdatePage();
   }, true);
   const badge = $('sb-update');
@@ -436,6 +442,52 @@ function showUpdateReminder(r, api) {
     badge.classList.remove('hidden');
     badge.onclick = () => { if (api && api.openUpdatePage) api.openUpdatePage(); };
   }
+  return true;
+}
+
+// 收摊：确认没有待更新（或用户已经更新过）—— 停周期、收徽章、（挂着的是更新气泡就）收气泡。
+function stopUpdateReminder() {
+  if (updateLoop) { clearInterval(updateLoop); updateLoop = null; }
+  const badge = $('sb-update');
+  if (badge) badge.classList.add('hidden');
+  // 只有更新气泡是粘性的（见 girlSay 的 sticky），所以这里能安全地按粘性判断
+  if (girlSaySticky) girlSay('');
+}
+
+// ★ 老板 2026-10-12 23:5x：「我希望用户没更新时，像素会时不时的就气泡提醒用户，
+//   而不是启动提醒一次就没了」——启动那次之外，再加一条周期复检：有新版本就再冒一次泡；
+//   确认已经是最新就收摊，别一直骚扰。
+//   为什么周期里要 **force 重查**（而不是复用启动那次的结果）：
+//   主进程的 app:check-update 带缓存（updateCache），**启动时没网 ⇒ 缓存里就是 ok:false，
+//   这一整轮会话再也查不出更新** —— 周期重查正好把这个缺口补上：装了新版本/新发版
+//   能在最迟 10 分钟后的复检里被发现。
+//   everyMs 可传小值 —— 验收脚本靠它把 10 分钟压成几百毫秒，不用真等。
+function startUpdateReminderLoop(api, everyMs) {
+  if (updateLoop) clearInterval(updateLoop);
+  const period = everyMs > 0 ? everyMs : UPDATE_REMIND_EVERY_MS;
+  updateLoop = setInterval(() => {
+    if (!api || !api.checkAppUpdate) return;
+    api.checkAppUpdate(true).then((r) => {
+      if (!r || !r.ok) return;               // 这轮没网/超时：不打扰，也不收摊（下轮再试）
+      if (!r.hasUpdate) { stopUpdateReminder(); return; }
+      showUpdateReminder(r, api);            // 还有新版本：再提醒一次
+    }).catch(() => { /* 静默：提醒失败绝不能反过来烦人 */ });
+  }, period);
+}
+
+// 启动那一次检查 + 决定要不要起周期。抽成具名函数是为了让验收能喂假 api
+// 把这张**决策表**整条验掉 —— 否则"周期逻辑写对了、但启动时根本没调它"
+// 这种错在验收里是绿的（三处接线漏一处，症状是"提醒再也不出现"）。
+//   查成了且有新版本 → 冒泡 + 起周期
+//   查成了且已是最新   → 收摊（不起周期，绝不打扰）
+//   没查成（没网/超时）→ 不起泡但**要起周期**：主进程那份结果是带缓存的，
+//                        启动没网会把 ok:false 焊在缓存里，只有周期里的 force 重查能救回来
+function bootstrapUpdateCheck(api) {
+  api.checkAppUpdate().then((r) => {
+    if (r && r.ok && !r.hasUpdate) { stopUpdateReminder(); return; }
+    showUpdateReminder(r, api);
+    startUpdateReminderLoop(api);
+  }).catch(() => { startUpdateReminderLoop(api); });
 }
 
 function pickLine(kind) {
@@ -748,9 +800,20 @@ function setUsage(usage, modelName) {
    这里要提前用当前模型的 images 能力给出警告，别让用户以为 AI 眼瞎。
    ============================================================ */
 const MAX_ATT_BYTES = 16 * 1024 * 1024;
-// 非图片附件上限放得更宽：走「路径直传」不经 base64，不发大也没 IPC 负担；
-// 真正的约束是模型上下文 —— 附件超大时 pi 会把内容内联进 prompt，模型读不读得下是它的事
+// 非图片附件上限放得更宽。**两种通路**：
+//   · 有磁盘路径的（资源管理器拖/点选）→ 路径直传，不经 base64，多大都不额外开销；
+//   · 虚拟文件（微信/QQ/网页里的，没路径）→ 只能读内容经 IPC 落盘，这时 50MB 是真在拷字节。
+// 真正的约束其实是模型上下文 —— 附件超大时 pi 会把内容内联进 prompt，
+// 模型读不读得下是它的事；这里只挡"明显不该塞进来的巨型文件"。
+// ★ 这个数必须和 attach.js 的 MAX_FILE_BYTES 一致（那边是最后一道防线），
+//   attach.test.js 里有一条断言直接解析这行源码比对，防止两处漂开。
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+// 附件 id：原来三处各写一遍同样的拼法（图片 / 路径直传 / 虚拟文件落盘），
+// 抽出来免得加一条新通路就漏一次（id 撞了会让「✕ 移除」误删同名的另一条）
+function attId() {
+  return 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+}
 
 // 附件徽章文字：取扩展名大写（note.pdf → PDF、main.js → JS），没扩展名叫「文件」
 function extBadge(name) {
@@ -780,7 +843,7 @@ function addAttachment(file) {
     r.onload = () => {
       S.attLoading = Math.max(0, S.attLoading - 1);
       S.attachments.push({
-        id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        id: attId(),
         name: file.name || ('pasted-' + Date.now() + '.png'),
         size: file.size,
         mime: file.type || 'image/png',
@@ -792,29 +855,66 @@ function addAttachment(file) {
     return;
   }
 
-  // ── 非图片（PDF/文本/代码/Office…）：按路径直传 ──
-  // Electron 的 File 带 .path（资源管理器复制粘贴/拖拽/点选都有）；
-  // 从网页里粘出来的文件没有路径，这种 attach 不了，得说清楚别静默吞
-  if (!file.path) {
-    addMsg('err', 'ERR', '这份文件拿不到磁盘路径，附不上去（' + esc(file.name || '未知') + '）—— 把它存到磁盘再拖进来或用「+ 附件」选');
-    return;
-  }
-  if (file.size === 0) {
+  // ── 非图片（PDF/文本/代码/Office…）：优先按路径直传 ──
+  // ★ 老板 2026-10-12 23:5x「为什么不能直接把文件拖进去」——根因不是"这种文件不支持"，
+  //   是 Electron 32+ **删掉了非标准属性 File.path**（探针实测 44.7.0：'path' in f === false，
+  //   f.path === undefined）。老代码 `if (!file.path) 报错` 于是**恒成立** ——
+  //   从资源管理器拖 PDF 进来、用「+ 附件」选、复制粘贴的文件，一条都进不来；
+  //   那句"存到磁盘再拖进来"更是驴唇不对马嘴，用户本来就是从磁盘拖的。
+  //   官方替代是 webUtils.getPathForFile（preload 暴露成 api.pathForFile；
+  //   探针实测：真实落盘文件经 contextBridge 传进去仍能拿回真路径，虚拟文件返回 ''）。
+  if (!file.size) {
     addMsg('err', 'ERR', '这份文件是空的（' + esc(file.name || '未知') + '）');
     return;
   }
   if (file.size > MAX_FILE_BYTES) {
-    addMsg('err', 'ERR', '文件太大（' + fmtBytes(file.size) + '，上限 50M）');
+    addMsg('err', 'ERR', '文件太大（' + fmtBytes(file.size) + '，上限 ' + fmtBytes(MAX_FILE_BYTES) + '）');
     return;
   }
-  S.attachments.push({
-    id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-    name: file.name || file.path.split(/[\\/]/).pop() || 'file',
-    size: file.size,
-    mime: file.type || '',
-    path: file.path
-  });
-  renderAtt();
+
+  const diskPath = (api && api.pathForFile) ? (api.pathForFile(file) || '') : '';
+  if (diskPath) {
+    S.attachments.push({
+      id: attId(),
+      name: file.name || diskPath.split(/[\\/]/).pop() || 'file',
+      size: file.size,
+      mime: file.type || '',
+      path: diskPath
+    });
+    renderAtt();
+    return;
+  }
+
+  // 真拿不到路径：微信/QQ/Outlook/浏览器里拖出来的是**虚拟文件** —— 有内容、没有后端路径。
+  // 退路是把内容读出来交给主进程落进附件目录，回来就是一个普通路径附件。
+  // 关键认知：拿不到**路径**不等于拿不到**文件**，所以别再让用户"存到磁盘再拖一次"。
+  if (!api || !api.saveFile) {
+    addMsg('err', 'ERR', '这个版本附不了这种文件（' + esc(file.name || '未知') + '），用「+ 附件」按钮选它');
+    return;
+  }
+  const vName = file.name || 'file';
+  S.attLoading += 1;
+  file.arrayBuffer()
+    .then((buf) => api.saveFile({ name: vName, mime: file.type || '', bytes: new Uint8Array(buf) }))
+    .then((r) => {
+      S.attLoading = Math.max(0, S.attLoading - 1);
+      if (!r || r.ok === false) {
+        addMsg('err', 'ERR', '这份文件存不下来（' + esc(vName) + '）：' + esc((r && r.reason) || '未知原因'));
+        return;
+      }
+      S.attachments.push({
+        id: attId(),
+        name: r.name || vName,
+        size: r.size,
+        mime: r.mime || file.type || '',
+        path: r.path
+      });
+      renderAtt();
+    })
+    .catch((e) => {
+      S.attLoading = Math.max(0, S.attLoading - 1);
+      addMsg('err', 'ERR', '这份文件读不出来（' + esc(vName) + '）：' + esc(String((e && e.message) || e)));
+    });
 }
 
 function renderAtt() {
@@ -875,8 +975,10 @@ document.addEventListener('paste', (e) => {
     if (it.kind !== 'file') continue;
     const f = it.getAsFile && it.getAsFile();
     if (!f) continue;
-    // 图片直接收；非图片必须有磁盘路径（资源管理器复制的文件有，网页里粘的没有）
-    if (!/^image\//.test(f.type || '') && !f.path) continue;
+    // 原来这里还有 `&& !f.path` 一道闸：非图片、又没磁盘路径的直接 continue。
+    // 两个问题：① File.path 在 Electron 44 恒为 undefined ⇒ **所有**粘贴进来的非图片
+    // 文件都被静默丢掉（连句提示都没有，最难查的那种"没反应"）；
+    // ② 现在没路径也能走"读内容落盘"那条退路，没必要再拦。addAttachment 自己会说清楚。
     addAttachment(f); got++;
   }
   // 只在真的吃到了附件时才阻止默认行为，
@@ -998,6 +1100,9 @@ filePicker.type = 'file';
 filePicker.accept = '';   // 不限类型：PDF/文本/代码/Office 都行，addAttachment 里分类把关
 filePicker.multiple = true;
 filePicker.style.display = 'none';
+// 给个 id：验收要能把**真实落盘文件**塞进来（CDP 的 DOM.setFileInputFiles 按选择器找节点），
+// 页面里 input[type=file] 不止一个，靠 querySelectorAll 顺序猜迟早会指错元素。
+filePicker.id = 'file-picker';
 document.body.appendChild(filePicker);
 filePicker.addEventListener('change', () => {
   Array.prototype.slice.call(filePicker.files || []).forEach(addAttachment);
@@ -1484,6 +1589,19 @@ window.__pixelMcfg = () => ({ sel: MCFG.sel, testing: MCFG.testing, hasInfo: !!M
 // 而面板还不关。doAbort 里有 `if (!S.busy) return`，测试时没在跑就什么都看不出来，
 // 所以计数器必须放在 busy 判断**之前**，否则这条 bug 永远测不到。
 window.__pixelAborts = 0;
+// 更新提醒三件套 + 周期值。为什么要暴露：
+//   "没更新时会时不时再提醒"是**时间行为**，只能靠验收把 10 分钟压成几百毫秒来验；
+//   再把 show/stop 单独拿出来，就能脱离"启动时恰好查到什么"验边界。
+//   （girlSay 的粘性是首屏时序 bug 的根因，所以粘性也必须在验收里能被反向验证。）
+window.__pixelUpdate = {
+  show: (r, fakeApi) => showUpdateReminder(r, fakeApi),
+  start: (fakeApi, everyMs) => startUpdateReminderLoop(fakeApi, everyMs),
+  stop: () => stopUpdateReminder(),
+  bootstrap: (fakeApi) => bootstrapUpdateCheck(fakeApi),
+  every: UPDATE_REMIND_EVERY_MS,
+  bubbleMs: UPDATE_BUBBLE_MS,
+  running: () => !!updateLoop
+};
 
 if (api) api.onMsg(onMsg);
 
@@ -3491,7 +3609,10 @@ if (api) {
   // 启动后台悄悄查一次 GitHub Release：有新版本 → **像素冒泡说出来**（老板 2026-10-12：
   // "检查更新的提醒我希望是由像素那边说出来提醒"），状态栏徽章作为兜底。
   // 没网/超时/还没发过 Release 都静默（ok:false），绝不打扰使用。
-  api.checkAppUpdate().then((r) => showUpdateReminder(r, api)).catch(() => {});
+  // ★ 老板 2026-10-12 23:5x：只有启动这一次不够（"启动提醒一次就没了"）——
+  //   这条链路（查一次 → 冒泡 → 起周期）抽成 bootstrapUpdateCheck 了，
+  //   好让验收喂假 api 把整张决策表验掉（见 verify-features 的 8c）。
+  bootstrapUpdateCheck(api);
   api.files().then((r) => {
     if (r && r.items) { S.fileCache = r.items; S.fileDir = r.dir; }
   }).catch(() => {});
