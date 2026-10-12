@@ -831,8 +831,21 @@ function addAttachment(file) {
     return;
   }
 
+  // ★ 进来的东西有**两种形状**，必须分开对待（这是 2026-10-12 深夜差点漏掉的坑）：
+  //   ① 真 File/Blob（拖拽 / 粘贴 / 点选）：有 size/type 和 arrayBuffer/slice，磁盘路径要靠 pathForFile 问；
+  //   ② 「调用方已经解析好路径的普通对象」{name,size,type,path}：
+  //      **HTML 拖拽**（Chromium 只给 text/uri-list，不给 File 对象）走的就是这种，
+  //      由 addAttachmentFromPath 用 statFile 补齐后交过来。
+  //   ⚠ 我第一版重写这里时只想着第①种：于是第②种的 `file.path` 被无视、
+  //     还去调 `file.arrayBuffer()`（普通对象没有这个方法）⇒ **拖 .html 进来直接报"读不出来"**。
+  //     而测试当时全绿 —— 因为 uri-list 这条路**一条断言都没有**（零覆盖 = 静默坏掉）。
+  const isBlob = typeof file.arrayBuffer === 'function';
+  const givenPath = (typeof file.path === 'string' && file.path) ? file.path : '';
+
   // ── 图片：走 dataURL（要出缩略图 + 发前体检，防 pi 静默丢图） ──
-  if (/^image\//.test(file.type || '')) {
+  // 只有真 Blob 才能 readAsDataURL —— 普通对象（HTML 拖拽过来的那些）走下面按路径走，
+  // 否则 `new FileReader().readAsDataURL(plainObj)` 会**抛异常**到事件监听器外面去。
+  if (/^image\//.test(file.type || '') && isBlob) {
     if (file.size > MAX_ATT_BYTES) {
       addMsg('err', 'ERR', '图片太大（' + fmtBytes(file.size) + '，上限 16M）');
       return;
@@ -872,7 +885,10 @@ function addAttachment(file) {
     return;
   }
 
-  const diskPath = (api && api.pathForFile) ? (api.pathForFile(file) || '') : '';
+  // 路径从哪来，按形状分两支：
+  //   · 普通对象（HTML 拖拽）→ 调用方（statFile）已经给了解析好的真路径，直接用，别再问；
+  //   · 真 File → 问 webUtils.getPathForFile（见上面的长注释：Electron 32+ 删了 File.path）
+  const diskPath = givenPath || ((api && api.pathForFile) ? (api.pathForFile(file) || '') : '');
   if (diskPath) {
     S.attachments.push({
       id: attId(),
@@ -888,6 +904,12 @@ function addAttachment(file) {
   // 真拿不到路径：微信/QQ/Outlook/浏览器里拖出来的是**虚拟文件** —— 有内容、没有后端路径。
   // 退路是把内容读出来交给主进程落进附件目录，回来就是一个普通路径附件。
   // 关键认知：拿不到**路径**不等于拿不到**文件**，所以别再让用户"存到磁盘再拖一次"。
+  // 但这条退路**必须先有内容可读**（isBlob）—— 普通对象既没路径又没 Blob，就是真没法附，
+  // 老老实实说一句，而不是让 `file.arrayBuffer()` 抛出去（那会变成谁也看不懂的报错）。
+  if (!isBlob) {
+    addMsg('err', 'ERR', '这份东西既没有磁盘路径也没有内容，附不上去（' + esc(file.name || '未知') + '）');
+    return;
+  }
   if (!api || !api.saveFile) {
     addMsg('err', 'ERR', '这个版本附不了这种文件（' + esc(file.name || '未知') + '），用「+ 附件」按钮选它');
     return;

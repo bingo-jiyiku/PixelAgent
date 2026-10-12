@@ -265,6 +265,102 @@ app.whenReady().then(async () => {
   t('前提：合成粘贴事件里带了文件（否则下面这条空转）', pasteR.sawFiles, true);
   t('粘贴的虚拟文件也能附上（不再被静默丢掉）', pasteR.n, 1);
   t('粘贴的那份也真落到盘上了', pasteR.path !== 'NONE' && fs.existsSync(pasteR.path), true);
+
+  // D) HTML 拖拽那条路（老板 2026-10-12 早先：「有一些文件它还是没办法拉进去，比如 Html 的」）
+  //    Chromium 对 .html/.htm **不给 File 对象**，只在 `text/uri-list` 里留 file:// 地址，
+  //    所以那条路走的是 addAttachmentFromPath：statFile 补 name/size/mime 后交给 addAttachment。
+  //    ★ 它的入参是**普通对象** {name,size,type,path}，不是真 File。
+  //    这段断言是 2026-10-13 补的 —— 起因是老板问"我说的问题都做完了吗"，
+  //    我去查覆盖，发现**这条路一条断言都没有**；一验就抓到：我前一天重写 addAttachment 时
+  //    把普通对象当真 File，去调 `file.arrayBuffer()`（不存在）⇒ 拖 .html 进来报「读不出来」，
+  //    而全套验收照样全绿。**零覆盖 = 静默坏掉**，尤其是自己刚重写过的分支。
+  // 先造一个真实的 .html 夹具
+  const REAL_HTML = path.join(__dirname, '_vf-real-attach.html');
+  fs.writeFileSync(REAL_HTML, '<!doctype html><title>拖拽夹具</title><p>hello</p>\n');
+  const htmlUri = 'file:///' + REAL_HTML.replace(/\\/g, '/');
+  const attBefore3 = fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0;
+  const uriR = await js(`(function(){
+    window.__pixel.attachments = []; renderAtt();
+    var log = document.getElementById('log');
+    var before = log ? log.textContent.length : 0;
+    var dt = new DataTransfer();
+    dt.setData('text/uri-list', ${JSON.stringify(htmlUri)});
+    var ev = new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true });
+    // 前提：Chromium 对 .html 确实**不给 File 对象**（只给 uri-list）—— 这正是这条路存在的理由
+    var premise = { types: Array.prototype.slice.call(dt.types), nFiles: dt.files.length };
+    window.dispatchEvent(ev);
+    return new Promise(function(res){ setTimeout(function(){
+      var a = window.__pixel.attachments[0] || null;
+      res({ premise: premise, n: window.__pixel.attachments.length,
+            name: a ? a.name : 'NONE', path: a ? a.path : 'NONE',
+            log: log ? log.textContent.slice(before) : '' });
+    }, 900); });
+  })()`);
+  console.log('  ℹ uri-list 拖拽：types=' + JSON.stringify(uriR.premise.types) +
+    ' files=' + uriR.premise.nFiles + ' → 附件 ' + uriR.n + ' 条，path=' + JSON.stringify(uriR.path) +
+    ' 日志=' + JSON.stringify(uriR.log.slice(0, 80)));
+  t('前提：本次拖拽没有 File 对象、只有 uri-list（否则这段在空转）',
+    uriR.premise.nFiles === 0 && uriR.premise.types.indexOf('text/uri-list') >= 0, true);
+  t('HTML 拖进来被附上了（普通对象这条路没被"真 File 假设"撞坏）', uriR.n, 1);
+  t('HTML 走的是**原路径**（statFile 给的那条，不是复制件）', path.resolve(uriR.path), path.resolve(REAL_HTML));
+  t('HTML 附件没有多复制一份到附件目录',
+    (fs.existsSync(ATT_DIR) ? fs.readdirSync(ATT_DIR).length : 0) - attBefore3, 0);
+  // ★ 这条要盯的是"**任何**错误文案都不许出现"，不能只 grep 某一句 ——
+  //   我第一版只 grep '读不出来'，结果打回旧写法（普通对象当真 File）时它照样绿：
+  //   那条路被 isBlob 守卫接住、报的是另一句话。只查一句的断言等于给 bug 留后门。
+  t('HTML 拖拽没冒任何错误文案（附不上/读不出来/没有内容 一个都不许有）',
+    uriR.log.indexOf('附不上去') < 0 && uriR.log.indexOf('读不出来') < 0 &&
+    uriR.log.indexOf('没有内容') < 0 && uriR.log.indexOf('拿不到') < 0, true);
+
+  // D2) 负例：uri-list 给的是网页链接 / 不存在的本地路径 —— 必须**说人话地拒**，不能静默、也不能抛
+  const uriNeg = await js(`(function(){
+    window.__pixel.attachments = []; renderAtt();
+    var log = document.getElementById('log');
+    var before = log ? log.textContent.length : 0;
+    function drop(u){
+      var dt = new DataTransfer();
+      dt.setData('text/uri-list', u);
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }
+    drop('https://github.com/bingo-jiyiku/PixelAgent');
+    drop('file:///E:/这个路径根本不存在/不存在.txt');
+    return new Promise(function(res){ setTimeout(function(){
+      var t = log ? log.textContent.slice(before) : '';
+      res({ n: window.__pixel.attachments.length, said: t,
+            linkHint: t.indexOf('链接或网页内容') >= 0, readHint: t.indexOf('读不到这个文件') >= 0 });
+    }, 900); });
+  })()`);
+  console.log('  ℹ uri-list 负例：附件 ' + uriNeg.n + ' 条，说了链接提示=' + uriNeg.linkHint +
+    ' / 读不到提示=' + uriNeg.readHint);
+  t('网页链接拖进来：附不上且**说清是链接**（不是静默、不是崩）',
+    uriNeg.n === 0 && uriNeg.linkHint, true);
+  t('不存在的本地路径：说清"读不到这个文件"', uriNeg.readHint, true);
+
+  // D3) uri-list 给的是**图片**：图片拖拽一般会带 File 对象，但这条要验我新加的 `isBlob` 守卫
+  //     （图片分支以前只看 mime，普通对象进去会被 readAsDataURL 抛异常到监听器外面）
+  const pngUri = 'file:///' + String(IMG.path).replace(/\\/g, '/');
+  const uriImg = await js(`(function(){
+    window.__pixel.attachments = []; renderAtt();
+    var log = document.getElementById('log');
+    var before = log ? log.textContent.length : 0;
+    var dt = new DataTransfer();
+    dt.setData('text/uri-list', ${JSON.stringify(pngUri)});
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    return new Promise(function(res){ setTimeout(function(){
+      var a = window.__pixel.attachments[0] || null;
+      var t = log ? log.textContent.slice(before) : '';
+      res({ n: window.__pixel.attachments.length, path: a ? a.path : 'NONE',
+            thumb: !!(a && a.dataUrl), log: t });
+    }, 900); });
+  })()`);
+  console.log('  ℹ uri-list 图片：附件 ' + uriImg.n + ' 条，缩略图=' + uriImg.thumb + '（按路径附 = 无缩略图，已知取舍）');
+  t('uri-list 图片也被附上（isBlob 守卫生效：没缩略图但没崩）',
+    uriImg.n === 1 && uriImg.thumb === false, true);
+  t('uri-list 图片走的是原路径', path.resolve(uriImg.path), path.resolve(IMG.path));
+  t('uri-list 图片没有抛异常（日志里没有出错的文案）',
+    uriImg.log.indexOf('读不出来') < 0 && uriImg.log.indexOf('附不了') < 0, true);
+  try { fs.rmSync(REAL_HTML, { force: true }); } catch (e) { /* ignore */ }
+
   await js(`window.__pixel.attachments = []; renderAtt(); true`);   // 清干净，别污染后面的图
 
   /* ================= 3. 端到端：带图发出去，pi 请求里要有 image 块 ================= */
