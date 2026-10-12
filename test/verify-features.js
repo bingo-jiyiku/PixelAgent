@@ -917,43 +917,68 @@ app.whenReady().then(async () => {
 
   /* ---- 8b. 应用更新提醒（老板 2026-10-12：客户机器要有新版本提示）----
      链路：启动时 api.checkAppUpdate() → 主进程读 GitHub Release 公开 API
-     → 有新版本时**像素冒泡说出来**（老板 2026-10-12 19:xx 明确要求"由像素那边说出来"，
-       气泡可点、点开下载页）+ 状态栏徽章兜底。
+     → 有新版本时**像素冒泡说出来** + 状态栏徽章兜底。
      真网络部分不可控（GitHub 可达性/有没有发过 Release 都不确定），
      这里只验行为断言，不验网络结果：
        ① IPC 能调通、返回结构合法（不抛异常就是胜利）；
        ② 徽章默认隐藏（平时绝不打扰）；
-       ③ 模拟"有更新"的返回 → 徽章真的出现、版本号真的填进去；
-       ④ 像素气泡能带 onClick 冒出来（点了真的执行 + 收起）。 */
+       ③ 用**真实形状**的返回驱动 showUpdateReminder（老板 2026-10-12 23:xx：
+         「启动了不会主动告诉用户有新更新啊」——老断言直接调 girlSay 模拟，
+         IPC→handler→showUpdateReminder 这条真实链路反而没覆盖过）：
+         气泡带版本号冒出来 + 可点 + 徽章亮；
+       ④ **粘性**：启动招呼/状态闲聊（setState）不许盖掉更新气泡——
+         这是本次 bug 的根因（闲聊和更新气泡抢同一个气泡位，后到者赢）；
+       ⑤ 负例：ok:false / hasUpdate:false → 什么都不冒（绝不打扰）。 */
   const updR = await js(`window.pixelAPI.checkAppUpdate()`);
   console.log('  ℹ 更新检查返回: ' + JSON.stringify(updR));
   t('更新检查 IPC 调通且返回合法结构', updR && typeof updR.ok === 'boolean', true);
   t('更新徽章默认隐藏（没更新时绝不打扰）',
     await js(`document.getElementById('sb-update').classList.contains('hidden')`), true);
-  await js(`(function(){
-    var badge = document.getElementById('sb-update');
-    document.getElementById('sb-update-ver').textContent = 'v9.9.9';
-    badge.classList.remove('hidden');
-    return 1; })()`);
-  t('有更新时徽章显示且带版本号',
-    await js(`(function(){
-      return !document.getElementById('sb-update').classList.contains('hidden')
-        && document.getElementById('sb-update-ver').textContent === 'v9.9.9';
-    })()`), true);
-  // ④ 像素冒泡（girlSay 的 onClick 参数）：冒出来 → 点了执行回调 → 自动收起
-  const sayR = await js(`(function(){
-    var clicked = 0;
-    girlSay('发现新版本 v9.9.9，点我去更新', 12000, function(){ clicked = 1; });
+
+  // ③ 真实形状驱动（喂 {ok:true,hasUpdate:true,latest:'v9.9.9'}，openUpdatePage 用假 api 记点击）
+  const remR = await js(`(function(){
+    var opened = 0;
+    var fakeApi = { openUpdatePage: function(){ opened = 1; } };
+    showUpdateReminder({ ok: true, hasUpdate: true, latest: 'v9.9.9' }, fakeApi);
     var b = document.getElementById('of-bubble-txt');
-    var shown = b.classList.contains('on') && /v9.9.9/.test(b.textContent) && b.style.pointerEvents === 'auto';
-    b.click();
-    var gone = !b.classList.contains('on') && b.onclick === null && clicked === 1;
-    return { shown: shown, gone: gone };
+    var badge = document.getElementById('sb-update');
+    var shown = b.classList.contains('on') && /v9\.9\.9/.test(b.textContent) && b.style.pointerEvents === 'auto';
+    var badgeOn = !badge.classList.contains('hidden')
+      && document.getElementById('sb-update-ver').textContent === 'v9.9.9';
+    b.click();   // 点气泡 → 回调执行 + 收起
+    var afterClick = !b.classList.contains('on') && opened === 1;
+    // 再演一次用于后面的粘性断言（上面点掉了）
+    showUpdateReminder({ ok: true, hasUpdate: true, latest: 'v9.9.9' }, fakeApi);
+    return { shown: shown, badgeOn: badgeOn, afterClick: afterClick };
   })()`);
-  console.log('  ℹ 像素更新气泡: ' + JSON.stringify(sayR));
-  t('更新提醒由像素气泡说出（文案带版本号、可点）', sayR && sayR.shown, true);
-  t('点气泡执行回调并自动收起（不会挂着一个可点气泡）', sayR && sayR.gone, true);
-  await js(`document.getElementById('sb-update').classList.add('hidden')`);   // 复原，别污染后面的截图
+  console.log('  ℹ showUpdateReminder: ' + JSON.stringify(remR));
+  t('有更新时像素气泡说出（带版本号、可点、徽章同亮）', remR && remR.shown && remR.badgeOn, true);
+  t('点气泡打开下载页并自动收起', remR && remR.afterClick, true);
+
+  // ④ 粘性：状态闲聊不许盖更新气泡（本次 bug 根因的反向断言）
+  const stickyR = await js(`(function(){
+    showUpdateReminder({ ok: true, hasUpdate: true, latest: 'v9.9.9' }, { openUpdatePage: function(){} });
+    setState('THINKING');   // 状态切换的闲聊以前会把它换成"在跑…"
+    setState('IDLE');
+    var b = document.getElementById('of-bubble-txt');
+    return b.classList.contains('on') && /v9\.9\.9/.test(b.textContent);
+  })()`);
+  t('更新气泡粘性：状态闲聊盖不掉它（本次 bug 的根因）', stickyR, true);
+
+  // ⑤ 负例：查不到/已是最新 → 什么都不冒
+  //    注意先复位徽章：③ 点亮后徽章是常驻的（点气泡也不会收回它，设计如此），
+  //    不复位的话这里查"仍隐藏"永远是红的——那是测试没回到基线，不是产品错。
+  const negR = await js(`(function(){
+    girlSay('');   // 先收掉上面的气泡
+    document.getElementById('sb-update').classList.add('hidden');   // 复位到"平时"状态
+    showUpdateReminder({ ok: false }, {});
+    showUpdateReminder({ ok: true, hasUpdate: false, latest: 'v0.2.0' }, {});
+    var b = document.getElementById('of-bubble-txt');
+    var badge = document.getElementById('sb-update');
+    return { bubbleOff: !b.classList.contains('on'), badgeHidden: badge.classList.contains('hidden') };
+  })()`);
+  t('没更新时气泡徽章都不出现（ok:false / hasUpdate:false）', negR && negR.bubbleOff && negR.badgeHidden, true);
+  await js(`girlSay(''); document.getElementById('sb-update').classList.add('hidden');`);   // 复原，别污染后面的截图
 
   /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
      原来的 bug：文档级 keydown 只有 mask-input / mask-model 两支，

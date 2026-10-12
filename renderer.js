@@ -375,11 +375,12 @@ const MONITOR_SNIPPETS = [
 // 用户连续点击时想让人看到最新的；状态自动切换时若离上一条很近，就覆盖。
 let girlSayAt = 0;
 let girlSayTimer = null;
+let girlSaySticky = false;   // 粘性气泡挂着时为 true：状态闲聊不盖它（见 girlSay）
 
 // 吉祥物"说话"。第三个参数 onClick 可选（老板 2026-10-12：
 // "检查更新的提醒我希望是由像素那边说出来提醒"）—— 带上它气泡就可点，
 // 点了执行回调并收起（例如打开下载页）。没带就跟以前一样纯展示。
-function girlSay(text, ms, onClick) {
+function girlSay(text, ms, onClick, sticky) {
   const b = $('of-bubble-txt');
   if (!b) return;
   if (!text) {
@@ -387,6 +388,7 @@ function girlSay(text, ms, onClick) {
     b.onclick = null;
     b.style.pointerEvents = '';
     b.style.cursor = '';
+    girlSaySticky = false;
     if (girlSayTimer) { clearTimeout(girlSayTimer); girlSayTimer = null; }
     return;
   }
@@ -405,7 +407,35 @@ function girlSay(text, ms, onClick) {
   b.style.cursor = onClick ? 'pointer' : '';
   girlSayAt = Date.now();
   if (girlSayTimer) clearTimeout(girlSayTimer);
+  // 粘性气泡（目前只有更新提醒用）：挂着的时候，状态切换的闲聊不许盖它
+  // （老板 2026-10-12 23:xx：「启动了不会主动告诉用户有新更新」——根因就是
+  //  更新气泡和启动招呼/状态闲聊抢同一个气泡位，后到者赢，更新消息被换掉
+  //  或被招呼的 3 秒计时器提前收掉）。点击收起和显式 girlSay('') 都会解除粘性。
+  girlSaySticky = !!sticky;
   if (ms > 0) girlSayTimer = setTimeout(() => girlSay(''), ms);
+}
+
+// 有新版本时像素主动开口（老板 2026-10-12 23:xx：「我刚刚启动了像素，
+// 不会主动告诉用户有新更新啊」）。两条通道：
+//   ① 像素气泡：30 秒 + **粘性**——启动招呼和状态闲聊不许盖它（见 girlSay
+//      的 sticky 参数；根因就是这些闲聊和更新气泡抢同一个气泡位，后到者赢，
+//      更新消息被换掉或被招呼的 3 秒计时器提前收掉）。点了直接开下载页。
+//   ② 状态栏徽章：常驻，气泡收起了也随时能点。
+// 抽成具名函数是为了让验收能喂**真实形状**的返回（{ok,hasUpdate,latest}）——
+// 以前的断言是直接调 girlSay 模拟，IPC→handler→这条真实链路反而没被覆盖过。
+function showUpdateReminder(r, api) {
+  if (!r || !r.ok || !r.hasUpdate) return;
+  const latest = String(r.latest || '');
+  girlSay('发现新版本 ' + latest + '，点我去更新', 30000, () => {
+    if (api && api.openUpdatePage) api.openUpdatePage();
+  }, true);
+  const badge = $('sb-update');
+  if (badge) {
+    const ver = $('sb-update-ver');
+    if (ver) ver.textContent = latest;
+    badge.classList.remove('hidden');
+    badge.onclick = () => { if (api && api.openUpdatePage) api.openUpdatePage(); };
+  }
 }
 
 function pickLine(kind) {
@@ -435,8 +465,12 @@ function setState(state) {
   // 状态切换时冒一句话（工作态时长 2.5s 让它跟动画节奏匹配，
   // 完成态 2s 更干脆，空闲态 3s 悠一点）。
   // 用户主动点击触发的话（下面 attachGirlClick）会自己覆盖。
+  // 粘性气泡（更新提醒）挂着时，IDLE/THINKING/TOOL 的闲聊不许盖它——
+  // 老板 2026-10-12：「启动了不会主动告诉用户有新更新」，根因就是这些闲聊
+  // 和更新气泡抢同一个位置。DONE 放行：一轮干完的反馈比提醒 nag 重要，
+  // 而且盖了之后状态栏徽章还在，更新信息不丢。
   const durByState = { IDLE: 3000, THINKING: 2500, TOOL: 2500, DONE: 2000 };
-  girlSay(pickLine(state), durByState[state] || 2500);
+  if (!(girlSaySticky && state !== 'DONE')) girlSay(pickLine(state), durByState[state] || 2500);
 }
 
 /* 点击分区互动 —— 老板 2026-10-11 18:54「点击可交互的」
@@ -3457,21 +3491,7 @@ if (api) {
   // 启动后台悄悄查一次 GitHub Release：有新版本 → **像素冒泡说出来**（老板 2026-10-12：
   // "检查更新的提醒我希望是由像素那边说出来提醒"），状态栏徽章作为兜底。
   // 没网/超时/还没发过 Release 都静默（ok:false），绝不打扰使用。
-  api.checkAppUpdate().then((r) => {
-    if (r && r.ok && r.hasUpdate) {
-      // ① 像素说：可点气泡，点了直接开下载页（12 秒后自己收起）
-      girlSay('发现新版本 ' + r.latest + '，点我去更新', 12000, () => {
-        if (api.openUpdatePage) api.openUpdatePage();
-      });
-      // ② 状态栏徽章照旧（气泡会消失，徽章留着，随时能点）
-      const badge = $('sb-update');
-      if (badge) {
-        $('sb-update-ver').textContent = r.latest;
-        badge.classList.remove('hidden');
-        badge.onclick = () => api.openUpdatePage();
-      }
-    }
-  }).catch(() => {});
+  api.checkAppUpdate().then((r) => showUpdateReminder(r, api)).catch(() => {});
   api.files().then((r) => {
     if (r && r.items) { S.fileCache = r.items; S.fileDir = r.dir; }
   }).catch(() => {});

@@ -56,7 +56,7 @@ if (!process.env.PIXELAGENT_EXT_FORCE) {
     console.log('✅ 已就绪（vendor/ext-npm：v' + appPkg.version + ' / ' + enabled.length + ' 个扩展），跳过重打');
     process.exit(0);
   }
-  if (prev) console.log('⚠ 已捆绑产物与当前不一致（v' + prev.app + ' → v' + appPkg.version + '），重新打包…');
+  if (prev) console.log('ℹ 版本号变了（v' + prev.app + ' → v' + appPkg.version + '），看闭包要不要重打…');
 }
 
 // ② 真实闭包
@@ -85,6 +85,32 @@ while (queue.length) {
 const OPTIONAL_PLATFORM = /^@ast-grep\/(cli|napi)-(?!win32-x64)/;
 const realMiss = unresolved.filter((u) => !OPTIONAL_PLATFORM.test(u.split(' ')[0]));
 if (realMiss.length) fail('有依赖解析不到，打进去会是坏的：\n  ' + realMiss.join('\n  '));
+
+// 第二条守卫：只有**版本号**变了、扩展清单和闭包顶层集合都没变（发新版 bump
+// version 的典型场景）→ 只把 manifest 的 app 字段原位改掉，不重打。
+// 没有这条，每次发新版都要手动改名 vendor/ext-npm 躲批量删除护栏。
+// 依赖内容真变了（同集合不同版本）要重捆时：PIXELAGENT_EXT_FORCE=1。
+// ⚠ 位置有讲究：必须在 rmSync **之前**（闭包②已经算完，顶层集合现成），
+//   插到 byTop 后面就永远轮不到——rmSync 在 byTop 前面就炸了。
+if (!process.env.PIXELAGENT_EXT_FORCE && fs.existsSync(OUT_DIR)) {
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'pixelagent-extensions.json'), 'utf8')); } catch (e) {}
+  const nmRoot0 = path.join(NPM_DIR, 'node_modules');
+  const copyNow = [...new Set([...closure].map((d) => path.relative(nmRoot0, d).split(path.sep)[0]))].sort();
+  if (prev && JSON.stringify(prev.packages) === JSON.stringify(enabled)
+      && JSON.stringify((prev.copy || []).slice().sort()) === JSON.stringify(copyNow)) {
+    fs.writeFileSync(path.join(OUT_DIR, 'pixelagent-extensions.json'), JSON.stringify({
+      app: appPkg.version,
+      packages: enabled,
+      copy: copyNow,
+      note: prev.note || 'PixelAgent 捆绑的 pi 扩展；首次运行播种到 ~/.pixelagent/agent/npm。'
+    }, null, 2));
+    console.log('✅ 扩展闭包没变（只版本号 v' + prev.app + ' → v' + appPkg.version +
+      '，' + copyNow.length + ' 个顶层包），manifest 原位更新，跳过重打');
+    process.exit(0);
+  }
+  console.log('⚠ 扩展清单或闭包变了（v' + (prev ? prev.app : '?') + ' → v' + appPkg.version + '），整树重打…');
+}
 
 // ③④ 拷贝（剪枝 + 硬链接去重）
 if (fs.existsSync(OUT_DIR)) {
@@ -159,6 +185,7 @@ for (const d of closure) {
   if (!byTop.has(top)) byTop.set(top, []);
   byTop.get(top).push(d);
 }
+
 console.log('闭包 ' + closure.size + ' 个目录 / ' + byTop.size + ' 个顶层包，开拷…');
 for (const [top, dirs] of byTop) {
   for (const d of dirs) {

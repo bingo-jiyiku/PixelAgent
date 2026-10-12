@@ -1,6 +1,6 @@
 {
   "name": "pixelagent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "复古像素终端风桌面AI助手：Electron 前端 + pi 后端流式对话",
   "main": "main.js",
   "author": "DSH",
@@ -49,34 +49,68 @@
       "output": "dist-app",
       "buildResources": "build"
     },
-  "files": [
-    "main.js",
-    "pi-bridge.js",
-    "attach.js",
-    "path-notes.js",
-    "ext-seed.js",
-    "preload.js",
-    "renderer.js",
-    "md.js",
-    "parse.js",
-    "pal.js",
-    "index.html",
-    "style.css",
-    "assets/**/*",
-      "!test", "!tools", "!shots", "!variants", "!vendor", "!dist-app",
-      "!.sessions", "!.attachments", "!.pi", "!.pi-agent", "!.impeccable", "!.bak",
-      "!.git", "!.gitignore", "!.pixelagent.json",
-      "!*.png", "!*.jpg", "!*.bin", "!*.bak*", "!nul", "!README.md"
+    "files": [
+      "main.js",
+      "pi-bridge.js",
+      "attach.js",
+      "path-notes.js",
+      "ext-seed.js",
+      "preload.js",
+      "renderer.js",
+      "md.js",
+      "parse.js",
+      "pal.js",
+      "index.html",
+      "style.css",
+      "assets/**/*",
+      "!test",
+      "!tools",
+      "!shots",
+      "!variants",
+      "!vendor",
+      "!dist-app",
+      "!.sessions",
+      "!.attachments",
+      "!.pi",
+      "!.pi-agent",
+      "!.impeccable",
+      "!.bak",
+      "!.git",
+      "!.gitignore",
+      "!.pixelagent.json",
+      "!*.png",
+      "!*.jpg",
+      "!*.bin",
+      "!*.bak*",
+      "!nul",
+      "!README.md"
     ],
     "extraResources": [
-      { "from": "vendor/pi/node_modules", "to": "pi/node_modules" },
-      { "from": "ext", "to": "ext" },
-      { "from": "vendor/ext-npm/node_modules", "to": "ext-npm/node_modules" },
-      { "from": "vendor/ext-npm/pixelagent-extensions.json", "to": "ext-npm/pixelagent-extensions.json" },
-      { "from": "build/icon.ico", "to": "icon.ico" }
+      {
+        "from": "vendor/pi/node_modules",
+        "to": "pi/node_modules"
+      },
+      {
+        "from": "ext",
+        "to": "ext"
+      },
+      {
+        "from": "vendor/ext-npm/node_modules",
+        "to": "ext-npm/node_modules"
+      },
+      {
+        "from": "vendor/ext-npm/pixelagent-extensions.json",
+        "to": "ext-npm/pixelagent-extensions.json"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.ico"
     },
     "nsis": {
