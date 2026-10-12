@@ -363,6 +363,50 @@ app.whenReady().then(async () => {
 
   await js(`window.__pixel.attachments = []; renderAtt(); true`);   // 清干净，别污染后面的图
 
+  /* ================= 2c. 用户画像：真的进第一轮 prompt，而且只进一次 =================
+     ★ 老板 2026-10-12「设置里面增加用户画像」。这条为什么要验：
+       注入**只在每个会话的第一轮**发生，靠 main.js 里一个模块级标记（profileInjectedFor）去重。
+       这种"只发生一次 + 靠状态去重"的代码最容易**静默**坏掉 ——
+       坏了的唯一表现就是"画像没带进去"，而模型照样答得像模像样、界面上一点异常都看不出来。
+     ★ 为什么先 newSession：注入名额是按 session 文件记的，新会话会把标记清掉
+       （main.js 的 `profileInjectedFor = null`）。不新建会话的话，这个名额可能已经被
+       本轮别的地方用掉了，断言就变成空转 —— 我不赌顺序，直接把前提做出来。 */
+  const profNew = await js(`window.pixelAPI.newSession()`);
+  console.log('  ℹ 画像验证用的新会话: ' + JSON.stringify(profNew));
+  const cfgBak = await js(`window.pixelAPI.cfg()`);
+  const bakName = (cfgBak && cfgBak.cfg && cfgBak.cfg.userName) || '';
+  const bakProf = (cfgBak && cfgBak.cfg && cfgBak.cfg.userProfile) || '';
+  console.log('  ℹ 老板原来的画像设置：称呼=' + JSON.stringify(bakName) + ' 画像=' + JSON.stringify(bakProf) + '（跑完会还回去）');
+  await js(`window.pixelAPI.setCfg({ userName: '称呼甲', userProfile: '画像乙：做跨境电商' })`);
+  await js(`(function(){ window.__exitSeen = 0;
+    window.pixelAPI.onMsg(function(m){ if (m && m.kind === 'exit') window.__exitSeen = 1; }); return true; })()`);
+
+  const profUsersExpr = `window.pixelAPI.history().then(function(h){
+    return (h && h.msgs ? h.msgs : []).filter(function(m){ return m.role === 'user'; })
+      .map(function(m){ return String(m.text || ''); }); })`;
+  const askProf = await js(`window.pixelAPI.ask('只回复两个字：收到')`);
+  t('画像轮：新会话第一轮 ask 被受理', !!(askProf && askProf.ok), true);
+
+  let profUser = '';
+  for (let i = 0; i < 25; i++) {          // 最多等 ~35 秒（pi 启动 + 落盘）
+    await sleep(1400);
+    const us = await js(`(function(){ return ${profUsersExpr}; })()`);
+    if (us && us.length) { profUser = us[us.length - 1]; break; }
+  }
+  console.log('  ℹ 第一轮 user 消息开头: ' + JSON.stringify(String(profUser).slice(0, 70)));
+  t('画像进了第一轮：带上了"怎么称呼他"', profUser.indexOf('怎么称呼他') >= 0, true);
+  t('画像进了第一轮：称呼内容在里面', profUser.indexOf('称呼甲') >= 0, true);
+  t('画像进了第一轮：画像正文在里面', profUser.indexOf('画像乙') >= 0, true);
+  // 起止标记很重要：没有标记的话，模型会以为用户真的开口说了"以下是关于你服务对象的信息…"
+  t('画像块有明确起止标记（不会被误当成用户说的话）',
+    profUser.indexOf('用户画像') >= 0 && profUser.indexOf('画像结束') >= 0, true);
+
+  // 等这一轮跑完再走 —— 不然 [3] 的 ask 会撞上 BUSY，变成"测试自己把产品测红"
+  for (let i = 0; i < 45; i++) { await sleep(1000); if (await js(`window.__exitSeen`)) break; }
+  t('画像轮跑完了（否则下面 [3] 会因为 BUSY 假红）', await js(`window.__exitSeen`), 1);
+  // 设置还回去 —— 绝不能把老板自己的画像覆盖成测试值
+  await js(`window.pixelAPI.setCfg({ userName: ${JSON.stringify(bakName)}, userProfile: ${JSON.stringify(bakProf)} })`);
+
   /* ================= 3. 端到端：带图发出去，pi 请求里要有 image 块 ================= */
   console.log('\n[3] 端到端：附件 → 落盘 → pi 收到 image 块');
   await js(`(function(){ window.__probe = [];` +
@@ -457,6 +501,13 @@ app.whenReady().then(async () => {
   }
   t('会话文件里本轮新增的 user 消息带 image 块', imgOk, true);
   t('本轮 user 消息条数真的 +1（不是拿了旧数据）', userDelta > 0, true);
+  // 画像"只带一次"就在这一轮验：2c 已经在同一个会话里发过一轮、用掉了注入名额，
+  // 所以 [3] 这轮的 prompt 里**不该**再有画像 —— 顺带证明不会每轮都白烧 token。
+  const lastUserTxt = await js(`(function(){ return (${countUsers}).then(function(us){
+    var m = us && us.length ? us[us.length - 1] : null; return m ? String(m.text || '') : 'NONE'; }); })()`);
+  console.log('  ℹ 第二轮 user 消息开头: ' + JSON.stringify(String(lastUserTxt).slice(0, 50)));
+  t('画像只在第一轮带一次（第二轮不再重复烧 token）', String(lastUserTxt).indexOf('怎么称呼他') < 0, true);
+  t('前提：第二轮确实抓到了消息（否则上面那条是空转）', String(lastUserTxt) !== 'NONE' && String(lastUserTxt).length > 0, true);
   console.log('  ℹ 探针快照: ' + pollLog + ' / user 消息增量: ' + userDelta);
 
   // 更强的一条：实时事件流里也要能看到 image 内容块
@@ -1311,6 +1362,69 @@ app.whenReady().then(async () => {
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   t('主进程 app:check-update 支持 force 绕缓存（源码级）',
     /app:check-update[\s\S]{0,300}force/.test(mainSrc), true);
+
+  /* ---- 8e. 像素性格：换性格真的换词库（老板 2026-10-12「像素性格」）----
+     为什么必须验："性格"是个分段选择器，最容易出现"设置改得动、行为改不动"——
+     保存成功、盘上也写了、界面上选中态也对，可气泡还是老词库，肉眼完全看不出来。
+     这里直接对 pickLine（选词函数）下手，验三个真实性格 + 一个不存在的（兜底）。 */
+  const personaR = await js(`(function(){
+    try {
+      var bak = (window.__pixelCfg() || {}).persona;
+      function withPersona(p){ window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { persona: p })); }
+      var out = {};
+      withPersona('cool');
+      var coolLine = pickLine('IDLE');
+      out.coolInCoolTable = (PERSONA_LINES.cool.IDLE || []).indexOf(coolLine) >= 0;
+      withPersona('lively');
+      out.livelyInLivelyTable = (GIRL_LINES.IDLE || []).indexOf(pickLine('IDLE')) >= 0;
+      withPersona('不存在的性格');
+      out.unknownFallsBack = (GIRL_LINES.IDLE || []).indexOf(pickLine('IDLE')) >= 0;
+
+      // ★ 这一组必须是**集合级**的，不能拿"随机抽到的那一句"去比 ⚠
+      //   第一版我写的是「抽到的那句不在默认词库里」，结果**假红**：
+      //   pickLine 是随机的，而 cool 库和默认库都含 '…' 这个通用省略号，
+      //   抽到 '…' 就判失败 —— 同样的输入下一次跑可能就绿。**随机量不能进断言。**
+      out.uniqueRatio = {};
+      ['cool', 'sharp', 'warm'].forEach(function(k){
+        var mine = PERSONA_LINES[k].IDLE || [];
+        var own = mine.filter(function(x){ return (GIRL_LINES.IDLE || []).indexOf(x) < 0; }).length;
+        out.uniqueRatio[k] = mine.length ? Math.round(own / mine.length * 100) / 100 : 0;
+      });
+      // 抽样：60 次取词必须**只**落在自己那套里，且不止一种（不是被写死成一句）。
+      // 6 个词的库里抽 60 次只覆盖到 2 个以下的概率可以忽略（coupon collector）。
+      withPersona('cool');
+      var seen = {};
+      for (var i = 0; i < 60; i++) { seen[pickLine('IDLE')] = 1; }
+      var keys = Object.keys(seen);
+      out.sampleDistinct = keys.length;
+      out.sampleOnlyCool = keys.every(function(x){ return (PERSONA_LINES.cool.IDLE || []).indexOf(x) >= 0; });
+
+      withPersona(bak);                     // 还原，别影响后面的截图/断言
+      out.restored = (window.__pixelCfg() || {}).persona === bak;
+      out.tables = Object.keys(PERSONA_LINES);
+      out.allTablesUsable = Object.keys(PERSONA_LINES).every(function(k){
+        var t = PERSONA_LINES[k];
+        return t && Array.isArray(t.IDLE) && t.IDLE.length > 0 && Array.isArray(t.DONE) && t.DONE.length > 0;
+      });
+      return out;
+    } catch (e) { return { err: String((e && e.message) || e) }; }
+  })()`);
+  console.log('  ℹ 性格: ' + JSON.stringify(personaR));
+  t('性格验证脚本跑通了（否则下面几条是空转）', !!(personaR && !personaR.err), true);
+  t('cool 性格用的是 cool 的词库（不是老词库）', personaR && personaR.coolInCoolTable, true);
+  t('lively 性格用的是默认词库', personaR && personaR.livelyInLivelyTable, true);
+  t('配置里写了不存在的性格时兜底到默认词库（不报错、也不哑掉）', personaR && personaR.unknownFallsBack, true);
+  t('抽 60 次取词只落在自己的词库里（换性格真的换了词源）', personaR && personaR.sampleOnlyCool, true);
+  t('抽 60 次不止一种词（不是被写死成一句）', personaR && personaR.sampleDistinct >= 3, true);
+  // 集合级：每套性格至少一半的 IDLE 词是它自己独有的（不是把默认库复制一份改个名）
+  t('cool 至少一半的 IDLE 词是自己的',
+    !!(personaR && personaR.uniqueRatio && personaR.uniqueRatio.cool >= 0.5), true);
+  t('sharp 至少一半的 IDLE 词是自己的',
+    !!(personaR && personaR.uniqueRatio && personaR.uniqueRatio.sharp >= 0.5), true);
+  t('warm 至少一半的 IDLE 词是自己的',
+    !!(personaR && personaR.uniqueRatio && personaR.uniqueRatio.warm >= 0.5), true);
+  t('验证完把性格还回去了（不污染后面的截图）', personaR && personaR.restored, true);
+  t('每种性格都有可用的 IDLE/DONE 词库', personaR && personaR.allTablesUsable, true);
 
   /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
      原来的 bug：文档级 keydown 只有 mask-input / mask-model 两支，
@@ -2242,6 +2356,14 @@ app.whenReady().then(async () => {
   // 保险：万一中间哪一步抛了，一次性会话别留在老板的列表里
   try { if (fs.existsSync(tmpSessFile)) fs.rmSync(tmpSessFile, { force: true }); } catch (e) { /* ignore */ }
   try { fs.rmSync(tmpExportDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+  // 2c 为了验画像注入新建的那个会话，也收掉 —— 别在老板的会话列表里留一条测试消息。
+  // 放在最后（不是 2c 里立刻删）：后面 [3]~[10] 都跑在这个会话上，中途删了就是自断腿。
+  if (profNew && Number.isFinite(profNew.seq)) {
+    try {
+      const del = await js(`window.pixelAPI.deleteSession(${profNew.seq})`);
+      console.log('  🧹 画像验证用的临时会话 #' + profNew.seq + ' 已清理: ' + JSON.stringify(del && del.ok));
+    } catch (e) { console.log('  ⚠ 临时会话没删掉（无害）: ' + e.message); }
+  }
 
   console.log('\n================ 汇总 ================');
   console.log('PASS ' + pass + ' / FAIL ' + fail);
