@@ -42,6 +42,9 @@ const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'H
 // 用户看不见的内部值：二进制魔数、mime、IPC/CLI 标识、路径片段、抽屉按钮的 props、事件键名
 const INTERNAL_KEEP = new Set([
   'Files', 'image/*', 'image/svg+xml',            // DataTransfer.types / mime
+  // 2026-10-12：拖 .html 进窗口时 Chromium 只给 DownloadURL（mime:name:url），
+  // 和 Files 一样是 DataTransfer.types 里的类型名，用户看不到
+  'DownloadURL',
   'GIF87a', 'GIF89a', 'IHDR', 'IDAT', 'IEND', 'RIFF', 'WEBP', // 图片魔数（比对用）
   'PIXELTODOS:',                                  // 自带 todo 扩展的 stdout 协议前缀
   'pixelAPI', 'toolResult', 'openDirectory', 'createDirectory', // IPC 名 / pi 事件字段 / 选目录 props
@@ -50,7 +53,10 @@ const INTERNAL_KEEP = new Set([
   'var(--warn)'                                    // CSS 变量引用（内部值，不是文案）
   // 老板 2026-10-11 17:44：新增模型时打 OpenAI-compatible REST ——
   //   HTTP 方法名 / 请求头都是标准协议标识，用户看不到，只出现在 main.js 的 fetch() 里。
-  , 'GET', 'POST', 'Authorization', 'Accept', 'Content-Type'  // HTTP 方法 / 标准请求头
+  , 'GET', 'POST', 'Authorization', 'Accept', 'Content-Type',  // HTTP 方法 / 标准请求头
+  // 2026-10-12：应用更新检查（GitHub Release）——仓库路径 / API mime / UA 头，
+  // 全是网络层内部值，界面只显示版本号和中文提示
+  'User-Agent', 'application/vnd.github+json', 'bingo-jiyiku/PixelAgent', 'api.github.com'
 ]);
 // 内部"词汇表"：消息标签 / 状态值 / 错误码 / 快捷键。
 // 这些字面量**不会单独显示给用户**（显示前都过 WHO_ZH / STATE_ZH / REASON_ZH / TH_ZH 翻译），
@@ -60,7 +66,9 @@ const INTERNAL_TOKENS = new Set(('use strict,IDLE,THINKING,TOOL,DONE,CLICK,SYS,E
   'IMAGE_REJECTED,unknown,on,del,off,minimal,low,medium,high,xhigh,max,' +
   'NAME_TAKEN,NAME_EMPTY,html,md,json,' +
   // 老板 2026-10-11 18:54：吉祥物分区点击的 zone 标识（内部值，不显示给用户）
-  'GIRL,MONITOR,KEYBOARD,MUG').split(','));
+  'GIRL,MONITOR,KEYBOARD,MUG,' +
+  // 2026-10-11 22:00：热区白名单新增窗户（zone 内部值；点窗户报时间，文案是中文动态拼的）
+  'WINDOW').split(','));
 const KEEP = new Set([...PUBLIC_KEEP, ...INTERNAL_KEEP]);
 const keepLc = new Set([...KEEP].map((s) => s.toLowerCase()));
 const tokenLc = new Set([...INTERNAL_TOKENS].map((s) => s.toLowerCase()));

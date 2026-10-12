@@ -37,6 +37,8 @@ const S = {
   toolEl: null,
   lastState: 'IDLE',
   seq: 0,
+  // 像素性格预览去重（老板 2026-10-12）：设置面板里连点同一个性格只冒一次话
+  personaPreviewed: '',
   tools: [],
   fileDir: '',
   fileCache: [],
@@ -44,7 +46,7 @@ const S = {
   models: [],         // 模型目录（真跑 pi --list-models 拿到）
   curModel: null,     // {provider, model} | null = 用 pi 默认
   curThinking: null,  // off..max | null = 用 pi 默认
-  // pi 自己配置里的默认模型（读 .pi-agent/settings.json）。
+  // pi 自己配置里的默认模型（读 ~/.pi/agent/settings.json，与终端 pi 同一份）。
   // 用途：没手动切过模型时 pi 报的 current.model 是 null，
   // 这时靠它把用量条的分母和"看图能力"补上，不然永远是 `— / —` 与 `图 ?`。
   piDefault: null,    // {provider, model} | null
@@ -65,6 +67,8 @@ const S = {
   todos: [],          // 真 todo 工具吐出来的待办
   subs: [],           // 会话内子代理/嵌套调用活动
   exts: null,         // 已装扩展（真跑 pi list）
+  extUpd: {},         // 本次会话更新成功的扩展（pkgId -> 时间戳）：渲染成「最新 ✓」
+  extOutdated: null,  // 启动时自动检查的待更新包名集合（null = 还没查完）
   shellEls: {},       // shell 执行 id -> {out, code}
   searchTimer: null,
   searchQ: ''
@@ -218,8 +222,22 @@ function reasonZh(r) { return (r && REASON_ZH[r]) || r || '未知'; }
 const EXT_SRC_ZH = { npm: 'npm 包', file: '本地文件', git: 'Git 仓库', local: '自带', workspace: '工作区' };
 function extSrcZh(s) { return (s && EXT_SRC_ZH[s]) || s || ''; }
 
+// token 消耗累计（老板 2026-10-11：吉祥物屏幕上多一行 token 消耗）
+// 没有精确计费口，先用「字符数/2」估算（中英混合口径），够看趋势用
+let tokenEst = 0;
+// 点电脑时把 token 折成钱的估算单价（元 / 千 token）——
+// 拍的是豆包 coding 档的综合价，没有真实账单口，只看量级；老板说改就改
+const TOKEN_EST_RATE = 0.015;
+function bumpTok(n) {
+  if (!n) return;
+  tokenEst += Math.max(1, Math.ceil(n / 2));
+  const t = document.getElementById('of-token');
+  if (t) t.textContent = tokenEst >= 1000 ? (tokenEst / 1000).toFixed(1) + 'K' : String(tokenEst);
+}
+
 function addMsg(cls, who, txt, extra) {
   showTimeline();
+  if (txt && /me|user|人/i.test(who || '')) bumpTok(txt.length);
   const m = el('div', 'm ' + cls);
   m.appendChild(el('span', 'who', whoZh(who)));
   if (txt != null) m.appendChild(el('span', 'txt', txt));
@@ -245,6 +263,7 @@ function addBotMsg() {
 
 // 把纯文本正文变成 Markdown 成品 + 挂消息工具条
 function finishBotMsg(body, text, withRetry) {
+  bumpTok((text || '').length);
   body.innerHTML = mdToHtml(text);
   body.classList.add('md');
   bindMdCopy(body);
@@ -288,16 +307,59 @@ const CAP_ZH = { THINKING: '思考中…', TOOL: '处理中…', DONE: '完成�
 //   - MUG：点马克杯（☕）
 // 词库刻意简短（≤10 字），因为气泡宽 80px —— 长句要么撑破要么截断。
 // 老板 2026-10-11 20:30 删了 MONITOR → 19:41 加回来："要坐着要有之前那个电脑啊"
+// 老板 2026-10-12：加「像素性格」—— GIRL_LINES = 活泼（默认）+ 兜底，
+//   PERSONA_LINES 是另外三种性格，pickLine 按设置里的 persona 选。
 const GIRL_LINES = {
-  IDLE:       ['嗨~', '在的', '等你', '…', '☕', '有空吗'],
+  IDLE:       ['嗨~', '在的', '等你', '…', '☕', '我叫像素'],
   THINKING:   ['想想…', '嗯…', '让我看看', '在跑…', '琢磨中'],
   TOOL:       ['噼啪~', '敲代码…', '稍等', '写代码…', '噼里啪啦'],
   DONE:       ['好！', '搞定~', '✓', 'OK~'],
-  CLICK:      ['嗨~', '在的', '有事吗', '…', '嗯嗯'],
-  GIRL:       ['嗨~', '在的', '怎么啦', '…', '在的~'],
+  CLICK:      ['嗨~', '在的', '有事吗', '…', '我叫像素'],
+  GIRL:       ['嗨~', '在的', '怎么啦', '…', '我叫像素'],
   MONITOR:    ['看代码…', '写着呢', 'bug?', '调试中…', '编译…'],
   KEYBOARD:   ['噼啪~', '敲代码…', '噼里啪啦', 'Ctrl+C', 'Tab→'],
   MUG:        ['☕', '来杯？', '续命水', '咖啡因+1']
+};
+
+// 像素性格词库（老板 2026-10-12：「给像素做一个性格进去」）。
+// 每套覆盖全部 9 类，缺的类兜底回 GIRL_LINES（见 pickLine）。
+const PERSONA_LINES = {
+  // 高冷：话少、句号多、不废话
+  cool: {
+    IDLE:     ['嗯。', '在。', '说。', '…', '。', '没空。'],
+    THINKING: ['…思考中。', '别催。', '嗯…', '等着。', '看呢。'],
+    TOOL:     ['忙。', '处理中。', '代码…', '啧，又改？', '忙着呢。'],
+    DONE:     ['完事。', '可以了。', '✓', '哼，简单。'],
+    CLICK:    ['嗯？', '说。', '…', '在听。'],
+    GIRL:     ['干嘛。', '说。', '…', '我在。'],
+    MONITOR:  ['看代码。', '写着。', '有 bug。', '编译中…', '别碰。'],
+    KEYBOARD: ['噼啪。', '敲代码。', '…', 'Ctrl+C', 'Tab→'],
+    MUG:      ['☕', '嗯，续命。', '咖啡因+1', '来杯。']
+  },
+  // 毒舌：损但不下作，自嘲式吐槽
+  sharp: {
+    IDLE:     ['又叫咱？', '在呢~', '啥事', '…', '☕先来一口', '说重点'],
+    THINKING: ['脑细胞燃烧中', '让我瞅瞅', '在跑…', '别催', '想想…'],
+    TOOL:     ['干呢~', '忙着呢', '写代码…', '稍等', '噼啪~'],
+    DONE:     ['简简单单', '搞定~', '✓', 'OK~', '就这？'],
+    CLICK:    ['在呢', '又叫咱？', '啥事', '…', '嗯嗯'],
+    GIRL:     ['夸我？', '在呢~', '怎么啦', '…', '我在呢'],
+    MONITOR:  ['这代码…', '写着呢', 'bug 在哪', '调试中…', '编译…'],
+    KEYBOARD: ['噼啪~', '敲代码…', '噼里啪啦', 'Ctrl+C', 'Tab→'],
+    MUG:      ['☕', '来杯？', '续命水', '咖啡因+1']
+  },
+  // 温柔：软语气、陪伴感
+  warm: {
+    IDLE:     ['在的呀', '陪你呢', '等你说', '…', '☀', '慢慢来'],
+    THINKING: ['想一想…', '嗯…', '让我看看', '在跑…', '不着急'],
+    TOOL:     ['在做呢~', '稍等一下', '写代码…', '马上好', '噼啪~'],
+    DONE:     ['好啦~', '完成啦', '✓', '辛苦啦', '抱一下'],
+    CLICK:    ['在的呀', '陪你呢', '有事吗', '…', '嗯嗯'],
+    GIRL:     ['怎么啦', '在的呀', '…', '我在呢~'],
+    MONITOR:  ['看代码…', '写着呢', 'bug 没关系', '调试中…', '编译…'],
+    KEYBOARD: ['噼啪~', '敲代码…', '噼里啪啦', 'Ctrl+C', 'Tab→'],
+    MUG:      ['☕', '来杯？', '续命水', '温温的']
+  }
 };
 
 // 显示器代码片段库：点显示器时循环切换
@@ -314,23 +376,44 @@ const MONITOR_SNIPPETS = [
 let girlSayAt = 0;
 let girlSayTimer = null;
 
-function girlSay(text, ms) {
+// 吉祥物"说话"。第三个参数 onClick 可选（老板 2026-10-12：
+// "检查更新的提醒我希望是由像素那边说出来提醒"）—— 带上它气泡就可点，
+// 点了执行回调并收起（例如打开下载页）。没带就跟以前一样纯展示。
+function girlSay(text, ms, onClick) {
   const b = $('of-bubble-txt');
   if (!b) return;
   if (!text) {
     b.classList.remove('on');
+    b.onclick = null;
+    b.style.pointerEvents = '';
+    b.style.cursor = '';
     if (girlSayTimer) { clearTimeout(girlSayTimer); girlSayTimer = null; }
     return;
   }
   b.textContent = text;
   b.classList.add('on');
+  // 可点气泡：启用指针事件 + 手型；点击 stopPropagation ——
+  // 否则会顺着 girl-scene 的监听被判成"点空白区"弹一句招呼，把正事盖掉。
+  b.onclick = onClick
+    ? (function (ev) {
+        ev.stopPropagation();
+        girlSay('');            // 先收起，避免回调打开新窗口后气泡还挂着
+        onClick();
+      })
+    : null;
+  b.style.pointerEvents = onClick ? 'auto' : '';
+  b.style.cursor = onClick ? 'pointer' : '';
   girlSayAt = Date.now();
   if (girlSayTimer) clearTimeout(girlSayTimer);
   if (ms > 0) girlSayTimer = setTimeout(() => girlSay(''), ms);
 }
 
 function pickLine(kind) {
-  const list = GIRL_LINES[kind] || GIRL_LINES.IDLE;
+  // 按像素性格选词库（老板 2026-10-12）：活泼=lively=GIRL_LINES 本身；
+  // cool/sharp/warm 走 PERSONA_LINES，缺类兜底回 GIRL_LINES。
+  const p = (CFG && CFG.persona) || 'lively';
+  const table = (p !== 'lively' && PERSONA_LINES[p]) ? PERSONA_LINES[p] : GIRL_LINES;
+  const list = table[kind] || GIRL_LINES[kind] || GIRL_LINES.IDLE;
   return list[(Math.random() * list.length) | 0];
 }
 
@@ -375,27 +458,46 @@ function attachGirlClick() {
     const girl = $('pixel-girl');
     if (!girl) return;
 
-    // 判断点了哪个分区
+    /* 老板 2026-10-11：不要随便点一个地方就交互。
+       热区白名单：像素 / 电脑 / 键盘 / 窗户 / 水杯 —— 点空白处没反应。 */
     const t = e.target;
-    let zone = 'CLICK';
-    if (t.classList && t.classList.contains('of-girl')) zone = 'GIRL';
+    let zone = null;
+    if (t.closest && t.closest('.of-girl')) zone = 'GIRL';
     else if (t.closest && t.closest('.of-monitor')) zone = 'MONITOR';
     else if (t.closest && t.closest('.of-keyboard')) zone = 'KEYBOARD';
     else if (t.closest && t.closest('.of-mug')) zone = 'MUG';
-    else if (t.tagName === 'IMG' && girl.contains(t)) zone = 'GIRL';
+    else if (t.closest && t.closest('.of-window')) zone = 'WINDOW';
+    if (!zone) return; // 热区以外：完全不理
 
-    // 按分区冒对应的话
-    girlSay(pickLine(zone), 2000);
+    // 分区专属内容
+    let say = pickLine(zone === 'WINDOW' ? 'CLICK' : zone);
+    if (zone === 'MONITOR') {
+      // 点电脑：报 token 消耗 + 估算花费（估算口径见 TOKEN_EST_RATE）
+      if (tokenEst > 0) {
+        say = '累计用了 ' + (tokenEst >= 1000 ? (tokenEst / 1000).toFixed(1) + 'K' : tokenEst) +
+              ' token，约 ¥' + ((tokenEst * TOKEN_EST_RATE) / 1000).toFixed(2) + ' 哦~';
+      } else {
+        say = '还没开始消耗 token 哦';
+      }
+      triggerMonitorCycle();
+    } else if (zone === 'WINDOW') {
+      // 点窗户：报时间 + 时段问候
+      const d = new Date();
+      const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      const seg = timeSeg(d.getHours());
+      const greet = { morning: '早上好', noon: '中午好', afternoon: '下午好', evening: '晚上好', night: '夜深了，早点休息' }[seg];
+      say = '现在 ' + hm + '，' + greet + '~';
+    } else if (zone === 'KEYBOARD') {
+      triggerTypingBurst();
+    }
 
-    // 点头动画（所有分区都点头，因为吉祥物"回应"了）
+    girlSay(say, 2600);
+
+    // 点头动画（吉祥物"回应"了）
     girl.classList.remove('girl-nod');
     void girl.offsetWidth;
     girl.classList.add('girl-nod');
     setTimeout(() => girl.classList.remove('girl-nod'), 700);
-
-    // 分区专属特效
-    if (zone === 'MONITOR') triggerMonitorCycle();
-    else if (zone === 'KEYBOARD') triggerTypingBurst();
   });
 }
 
@@ -476,7 +578,7 @@ function toggleThink(row) {
    答案是**第三种** —— 它不是模型说的、也不是我们定的，而是 **pi 的模型表第 3 列**。
    实测 `pi --list-models` 的 130 行里，第 3 列只出现过
      1M / 1.0M / 1.1M / 524.3K / 512K / 500K / 400K / 272K / 262.1K / 256K / 204.8K / 200K / 128K
-   —— **根本没有 10 万**。而默认模型 `ark-code-latest` 在 `.pi-agent/models.json`
+   —— **根本没有 10 万**。而默认模型 `ark-code-latest` 在 `~/.pi/agent/models.json`
    里只有 `{"id":"ark-code-latest"}`，**一个 contextWindow 都没声明**，
    所以 pi 退回了自己的兜底常量（在 pi 的 bundle 里能翻到 `contextWindow??128e3`）。
    两件事因此落地：
@@ -519,7 +621,7 @@ function contextOf(modelName) {
 }
 function ctxSourceZh(src) {
   if (src === 'override') return '来自你在「模型配置」里填的覆盖值';
-  if (src === 'pi') return '来自 pi 的模型表（pi --list-models 第 3 列）';
+  if (src === 'pi') return '来自内置模型表';
   return '未知：模型目录还没读到，或这个模型不在目录里';
 }
 
@@ -578,10 +680,10 @@ function showUsageDetail() {
     '占用比例：' + (ci.tokens ? pct + '%' : '—'),
     '',
     '分母来源：' + ctxSourceZh(ci.source),
-    hit ? ('pi 表里写的是 ' + hit.context + '，最大输出 ' + hit.maxOut) : 'pi 表里没有这个模型',
+    hit ? ('模型表里写的是 ' + hit.context + '，最大输出 ' + hit.maxOut) : '模型表里没有这个模型',
     '',
     '要改这个分母：打开模型选择器 → 找到这一行 → 「配置」→ 填「上下文窗口」。',
-    '（只是让百分比算得对，不改变 pi 实际能收多少上下文。）'
+    '（只是让百分比算得对，不改变 AI 实际能收多少上下文。）'
   ];
   return confirmBox('上下文用量', lines.join('\n'));
 }
@@ -612,40 +714,73 @@ function setUsage(usage, modelName) {
    这里要提前用当前模型的 images 能力给出警告，别让用户以为 AI 眼瞎。
    ============================================================ */
 const MAX_ATT_BYTES = 16 * 1024 * 1024;
+// 非图片附件上限放得更宽：走「路径直传」不经 base64，不发大也没 IPC 负担；
+// 真正的约束是模型上下文 —— 附件超大时 pi 会把内容内联进 prompt，模型读不读得下是它的事
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+// 附件徽章文字：取扩展名大写（note.pdf → PDF、main.js → JS），没扩展名叫「文件」
+function extBadge(name) {
+  const m = /\.([A-Za-z0-9]{1,5})$/.exec(String(name || ''));
+  return m ? m[1].toUpperCase() : '文件';
+}
 
 function addAttachment(file) {
   if (!file) return;
-  if (!/^image\//.test(file.type || '')) {
-    addMsg('err', 'ERR', '只支持图片（这份是 ' + esc(file.type || '未知类型') + '）');
-    return;
-  }
-  if (file.size > MAX_ATT_BYTES) {
-    addMsg('err', 'ERR', '图片太大（' + fmtBytes(file.size) + '，上限 16M）');
-    return;
-  }
-  // 张数上限走设置（默认 4）。超了要**说清楚**而不是静默丢掉 —— 静默丢图
-  // 会让人以为"图发出去了"，跟 pi 那边静默丢图是同一类坑。
+  // 张数上限走设置（默认 4）。超了要**说清楚**而不是静默丢掉。
   const cap = (CFG && CFG.maxImages) ? CFG.maxImages : 4;
   const pending = S.attachments.length + S.attLoading;
   if (pending >= cap) {
-    addMsg('err', 'ERR', '一次最多带 ' + cap + ' 张图（现在已有 ' + pending + ' 张，可在「设置」里调）');
+    addMsg('err', 'ERR', '一次最多带 ' + cap + ' 个附件（现在已有 ' + pending + ' 个，可在「设置」里调）');
     return;
   }
-  S.attLoading += 1;
-  const r = new FileReader();
-  r.onerror = () => { S.attLoading = Math.max(0, S.attLoading - 1); addMsg('err', 'ERR', '这张图读不出来（' + esc(file.name || '未命名') + '）'); };
-  r.onload = () => {
-    S.attLoading = Math.max(0, S.attLoading - 1);
-    S.attachments.push({
-      id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-      name: file.name || ('pasted-' + Date.now() + '.png'),
-      size: file.size,
-      mime: file.type || 'image/png',
-      dataUrl: r.result
-    });
-    renderAtt();
-  };
-  r.readAsDataURL(file);
+
+  // ── 图片：走 dataURL（要出缩略图 + 发前体检，防 pi 静默丢图） ──
+  if (/^image\//.test(file.type || '')) {
+    if (file.size > MAX_ATT_BYTES) {
+      addMsg('err', 'ERR', '图片太大（' + fmtBytes(file.size) + '，上限 16M）');
+      return;
+    }
+    S.attLoading += 1;
+    const r = new FileReader();
+    r.onerror = () => { S.attLoading = Math.max(0, S.attLoading - 1); addMsg('err', 'ERR', '这张图读不出来（' + esc(file.name || '未命名') + '）'); };
+    r.onload = () => {
+      S.attLoading = Math.max(0, S.attLoading - 1);
+      S.attachments.push({
+        id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        name: file.name || ('pasted-' + Date.now() + '.png'),
+        size: file.size,
+        mime: file.type || 'image/png',
+        dataUrl: r.result
+      });
+      renderAtt();
+    };
+    r.readAsDataURL(file);
+    return;
+  }
+
+  // ── 非图片（PDF/文本/代码/Office…）：按路径直传 ──
+  // Electron 的 File 带 .path（资源管理器复制粘贴/拖拽/点选都有）；
+  // 从网页里粘出来的文件没有路径，这种 attach 不了，得说清楚别静默吞
+  if (!file.path) {
+    addMsg('err', 'ERR', '这份文件拿不到磁盘路径，附不上去（' + esc(file.name || '未知') + '）—— 把它存到磁盘再拖进来或用「+ 附件」选');
+    return;
+  }
+  if (file.size === 0) {
+    addMsg('err', 'ERR', '这份文件是空的（' + esc(file.name || '未知') + '）');
+    return;
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    addMsg('err', 'ERR', '文件太大（' + fmtBytes(file.size) + '，上限 50M）');
+    return;
+  }
+  S.attachments.push({
+    id: 'a' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    name: file.name || file.path.split(/[\\/]/).pop() || 'file',
+    size: file.size,
+    mime: file.type || '',
+    path: file.path
+  });
+  renderAtt();
 }
 
 function renderAtt() {
@@ -655,8 +790,10 @@ function renderAtt() {
   if (!S.attachments.length) { bar.classList.add('hidden'); return; }
   bar.classList.remove('hidden');
 
-  // 模型看不懂图就先说清楚，不然后面会怀疑「AI 怎么在瞎猜」
-  const vis = visionOf(activeModelName());
+  // 模型看不懂图就先说清楚，不然后面会怀疑「AI 怎么在瞎猜」。
+  // 只在真带了图片时才提示 —— 纯文件附件跟看图能力无关，别吓人。
+  const hasImg = S.attachments.some((a) => a.dataUrl);
+  const vis = hasImg ? visionOf(activeModelName()) : true;
   if (vis === false) {
     bar.appendChild(el('div', 'att-warn',
       '⚠ 当前模型（' + esc(activeModelName()) + '）不支持看图 —— 发出去它只能靠命令行工具去认字猜，建议切到带「看图」标记的模型'));
@@ -669,10 +806,15 @@ function renderAtt() {
 
   S.attachments.forEach((a) => {
     const d = el('div', 'att-item');
-    const img = el('img');
-    img.src = a.dataUrl;
-    img.alt = a.name;
-    d.appendChild(img);
+    if (a.dataUrl) {
+      const img = el('img');
+      img.src = a.dataUrl;
+      img.alt = a.name;
+      d.appendChild(img);
+    } else {
+      // 非图片附件：扩展名徽章块，跟缩略图同尺寸占位
+      d.appendChild(el('span', 'att-doc', esc(extBadge(a.name))));
+    }
     d.appendChild(el('span', 'att-n', esc(a.name)));
     d.appendChild(el('span', 'att-s', fmtBytes(a.size)));
     const x = el('button', 'att-x', '✕');
@@ -689,28 +831,37 @@ function renderAtt() {
 
 function clearAtt() { S.attachments = []; renderAtt(); }
 
-/* ---------- 粘贴图片 ---------- */
+/* ---------- 粘贴附件（图片 + 资源管理器里复制的文件） ---------- */
 document.addEventListener('paste', (e) => {
   const cd = e.clipboardData;
   if (!cd) return;
   let got = 0;
   const items = cd.items || [];
   for (const it of items) {
-    if (it.kind === 'file' && /^image\//.test(it.type || '')) {
-      const f = it.getAsFile && it.getAsFile();
-      if (f) { addAttachment(f); got++; }
-    }
+    if (it.kind !== 'file') continue;
+    const f = it.getAsFile && it.getAsFile();
+    if (!f) continue;
+    // 图片直接收；非图片必须有磁盘路径（资源管理器复制的文件有，网页里粘的没有）
+    if (!/^image\//.test(f.type || '') && !f.path) continue;
+    addAttachment(f); got++;
   }
-  // 只在真的吃到了图片时才阻止默认行为，
+  // 只在真的吃到了附件时才阻止默认行为，
   // 否则会把「往输入框里粘贴文字」也一起吞掉
-  if (got) { e.preventDefault(); addMsg('step', 'SYS', '&gt; 已加入 ' + got + ' 张图片'); }
+  if (got) { e.preventDefault(); addMsg('step', 'SYS', '&gt; 已加入 ' + got + ' 个附件'); }
 });
 
-/* ---------- 拖拽图片 ---------- */
+/* ---------- 拖拽附件 ---------- */
+// 判定"这次拖拽算不算带文件"。
+// ★ 不能只看 'Files'：拖 .html/.htm 时 Chromium 把文档类文件只放进
+//   text/uri-list（file:///…）和 DownloadURL，dt.files 是空的 ——
+//   只认 Files 的话 dragover 就不会 preventDefault，Chromium 直接导航打开那个
+//   html（页面像刷新了一样），drop 事件压根不触发。这就是"HTML 拉不进去"的根因。
 function hasFiles(e) {
   const dt = e.dataTransfer;
   if (!dt) return false;
   if (dt.types && Array.prototype.indexOf.call(dt.types, 'Files') >= 0) return true;
+  if (dt.types && Array.prototype.indexOf.call(dt.types, 'text/uri-list') >= 0) return true;
+  if (dt.types && Array.prototype.indexOf.call(dt.types, 'DownloadURL') >= 0) return true;
   return !!(dt.files && dt.files.length);
 }
 let dragDepth = 0;
@@ -732,14 +883,85 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   dragDepth = 0;
   $('dropmask').classList.add('hidden');
-  const files = Array.prototype.slice.call(e.dataTransfer.files || []);
-  files.forEach(addAttachment);
+  const dt = e.dataTransfer;
+  const files = Array.prototype.slice.call(dt.files || []);
+  if (files.length) {
+    files.forEach(addAttachment);
+    return;
+  }
+  // 老板 2026-10-12：「有一些文件它还是没办法拉进去，比如 Html 的」。
+  // 根因（Chromium 已知行为）：从资源管理器拖 **.html/.htm** 进窗口时，
+  // Chromium 把它当成"一个网页文档"而不是"一个文件" —— dt.files 是空的，
+  // 只在 text/uri-list（file:///E:/xxx.html）或 DownloadURL 里留下地址。
+  // 老代码 files.forEach 一个都不跑 → 看着就是"拉不进去"。
+  // 修法：从 uri-list / DownloadURL 里把本地路径抠出来，走 addAttachmentFromPath。
+  const uris = [];
+  try {
+    const ul = dt.getData('text/uri-list') || '';
+    ul.split(/[\r\n]+/).forEach((s) => { if (s.trim()) uris.push(s.trim()); });
+  } catch (e1) { /* 某些类型取不到会抛，忽略 */ }
+  try {
+    const dl = dt.getData('DownloadURL') || '';   // 形如 mime:name:url
+    if (dl) {
+      const parts = dl.split(':');
+      if (parts.length >= 3) {
+        const url = parts.slice(2).join(':');
+        if (/^file:\/\//i.test(url)) uris.push(url);
+      }
+    }
+  } catch (e2) { /* ignore */ }
+  const localPaths = uris
+    .map((u) => uriToLocalPath(u))
+    .filter((p) => p);
+  if (!localPaths.length) {
+    addMsg('err', 'ERR', '这份东西拿不到文件（拖进来的可能是个链接或网页内容，不是磁盘文件）');
+    return;
+  }
+  localPaths.forEach(addAttachmentFromPath);
 });
 
-/* ---------- 点选图片 ---------- */
+// file:///E:/a/b.html → E:\a\b.html（含中文要先 decodeURIComponent，空格是 %20）
+function uriToLocalPath(uri) {
+  let s = String(uri || '').trim();
+  if (/^file:\/\//i.test(s)) {
+    s = s.replace(/^file:\/\/\//i, '');
+    // file://server/share 形态（UNC）在这里用不到，直接放弃而不是拼出个错路径
+    if (/^[a-z]:/i.test(s) === false && s.indexOf('/') >= 0 && !s.startsWith('/')) return '';
+  } else if (/^[a-z]:[\\/]/i.test(s)) {
+    // 资源管理器偶尔直接给裸路径
+  } else {
+    return '';
+  }
+  try { s = decodeURIComponent(s); } catch (e) { /* 含 % 但非编码，原样用 */ }
+  return s.replace(/\//g, '\\');
+}
+
+// 只有路径、没有 File 对象时（HTML 拖拽就是这种）：先问主进程要 name/size 再走同一套把关
+function addAttachmentFromPath(p) {
+  if (!api || !api.statFile) {
+    addMsg('err', 'ERR', '这个版本拖不了这种文件（' + esc(p) + '），用「+ 附件」按钮选它');
+    return;
+  }
+  api.statFile(p).then((st) => {
+    if (!st || st.ok === false) {
+      addMsg('err', 'ERR', '读不到这个文件（' + esc(p) + '）：' + esc((st && st.error) || '不存在或被占用'));
+      return;
+    }
+    addAttachment({
+      name: st.name,
+      size: st.size,
+      type: st.mime || '',
+      path: p
+    });
+  }).catch((e) => {
+    addMsg('err', 'ERR', '读不到这个文件（' + esc(p) + '）：' + esc(String((e && e.message) || e)));
+  });
+}
+
+/* ---------- 点选附件（不限制类型，任何文件都能选） ---------- */
 const filePicker = document.createElement('input');
 filePicker.type = 'file';
-filePicker.accept = 'image/*';
+filePicker.accept = '';   // 不限类型：PDF/文本/代码/Office 都行，addAttachment 里分类把关
 filePicker.multiple = true;
 filePicker.style.display = 'none';
 document.body.appendChild(filePicker);
@@ -856,13 +1078,16 @@ function send() {
   if (!text && !nAtt) return;
   if (S.busy) { addMsg('err', 'ERR', '上一轮还没结束，先按 ESC 停掉它。'); return; }
 
-  const images = S.attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl }));
+  // 附件分两路：图片走 dataURL（落盘+体检），文件走磁盘路径直传
+  const images = S.attachments.filter((a) => a.dataUrl).map((a) => ({ name: a.name, dataUrl: a.dataUrl }));
+  const docFiles = S.attachments.filter((a) => a.path).map((a) => ({ path: a.path, name: a.name }));
+  const nImg = images.length, nDoc = docFiles.length;
 
   input.value = '';
   syncCursor();
   S.lastUser = text;
   S.round += 1;
-  S.attSent = nAtt;      // 记账：这一轮发了几张图，等 pi 回显时对账
+  S.attSent = nImg;      // 记账：这一轮发了几张图，等 pi 回显时对账（文件不算，pi 不回显文件）
   S.imgIn = 0;
   S.imgWarned = false;
   $('kv-round').textContent = String(S.round);
@@ -870,15 +1095,16 @@ function send() {
   btnStop.classList.remove('hidden');
   setState('THINKING');
   startTimer();
-  addMsg('user', 'YOU', esc(text || '(只看图)'), nAtt ? ('图×' + nAtt) : null);
+  const attTag = nImg && nDoc ? ('附件×' + (nImg + nDoc)) : nImg ? ('图×' + nImg) : ('文件×' + nDoc);
+  addMsg('user', 'YOU', esc(text || (nImg ? '(只看图)' : '(只发附件)')), nAtt ? attTag : null);
   clearAtt();
 
   if (!api) { demoReply(text); return; }
 
-  api.ask({ text, images }).then((r) => {
+  api.ask({ text, images, files: docFiles }).then((r) => {
     if (r && r.ok === false) {
       if (r.reason === 'IMAGE_REJECTED') {
-        addMsg('err', 'IMG', '这些图没收下，所以没发出去：' + esc(rejText(r.rejected)));
+        addMsg('err', 'IMG', '这些附件没收下，所以没发出去：' + esc(rejText(r.rejected)));
       } else {
         addMsg('err', 'ERR', '主进程拒绝了这次请求：' + esc(reasonZh(r.reason)));
       }
@@ -887,7 +1113,7 @@ function send() {
     }
     // 部分被拒：好的照发，坏的要说清楚为什么（不能让用户以为全都发出去了）
     if (r && Array.isArray(r.rejected) && r.rejected.length) {
-      addMsg('err', 'IMG', '有 ' + r.rejected.length + ' 张图没能发送：' + esc(rejText(r.rejected)));
+      addMsg('err', 'IMG', '有 ' + r.rejected.length + ' 个附件没能发送：' + esc(rejText(r.rejected)));
     }
   }).catch((e) => {
     addMsg('err', 'ERR', '发送失败：' + (e && e.message ? e.message : e));
@@ -898,7 +1124,7 @@ function send() {
 // 把附件被拒的原因拼成一行给人看的话
 function rejText(rejected) {
   if (!Array.isArray(rejected) || !rejected.length) return '';
-  return rejected.map((x) => (x && x.name ? x.name : '一张图') + '（' + ((x && x.reason) || '未知原因') + '）').join('；');
+  return rejected.map((x) => (x && x.name ? x.name : '一个附件') + '（' + ((x && x.reason) || '未知原因') + '）').join('；');
 }
 
 function endTurn(code) {
@@ -908,7 +1134,7 @@ function endTurn(code) {
   removeCaret();
   setState('DONE');
   if (code !== 0 && code != null) {
-    addMsg('err', 'ERR', 'pi 退出码 ' + code + '（看看是不是没认证 / 没 key）');
+    addMsg('err', 'ERR', '进程退出码 ' + code + '（看看是不是没认证 / 没 key）');
   }
   refreshSessions();
 }
@@ -945,7 +1171,7 @@ function todosFromToolResult(ev) {
    ============================================================ */
 // 标记种类 -> 给用户看的解释
 const IMG_OMIT_WHY = {
-  resize: 'pi 没能把这张图处理进请求（图本身解不开 / 尺寸或体积超过内联上限）。换一张能正常打开的图再试。',
+  resize: '没能把这张图处理进请求（图本身解不开 / 尺寸或体积超过内联上限）。换一张能正常打开的图再试。',
   // 指路要指到**真的存在**的入口上：/model 这条命令已经删了，
   // 模型入口只剩状态栏那个「模型」按钮（老板原话："UI 界面上已经有了"）。
   nomodel: '当前模型不看图，图被丢掉了。点状态栏的「模型」按钮，换一个列表里带「看图」标记的模型。'
@@ -1017,7 +1243,7 @@ function onMsg(msg) {
       const first = full.split('\n').filter(Boolean)[0] || '';
       if (msg.code === 0) {
         const m = addMsg('step', 'SYS',
-          '&gt; pi 本轮正常结束（退出码 0），但 stderr 有 ' +
+          '&gt; 本轮正常结束（退出码 0），但 stderr 有 ' +
           full.split('\n').filter(Boolean).length + ' 行输出：' + esc(first.slice(0, 140)));
         m.title = full.slice(0, 4000);   // 鼠标悬停可看全文，别丢信息
       } else {
@@ -1042,9 +1268,9 @@ function onMsg(msg) {
       if (!S.imgWarned) {
         S.imgWarned = true;
         addMsg('err', 'IMG', '图片没能进入请求：' +
-          esc(IMG_OMIT_WHY[info.omit.key] || 'pi 把图片丢掉了') +
+          esc(IMG_OMIT_WHY[info.omit.key] || '这张图片被丢掉了') +
           (S.attSent ? '（本轮带了 ' + S.attSent + ' 张图）' : '') +
-          (info.omit.text ? ' ｜ pi 原话：' + esc(info.omit.text) : ''));
+          (info.omit.text ? ' ｜ 原因：' + esc(info.omit.text) : ''));
       }
     } else if (S.attSent > 0 && info.imgs === 0) {
       // pi 既没放 image 块、也没留标记 —— 兜一层，别让它静静过去
@@ -1088,7 +1314,10 @@ function onMsg(msg) {
         break;
       }
       case 'text_start': {
-        setState('THINKING');
+        // 老板 2026-10-11：AI 开始输出正文 → 吉祥物敲键盘（TOOL 态），
+        // 思考阶段（thinking_*）仍是 THINKING 抬头想。文本流结束后状态
+        // 由后续事件接管（toolcall_start→TOOL / 轮次结束→IDLE）。
+        setState('TOOL');
         const b = addBotMsg();
         S.bubble = b.body;
         S.botMain = b.main;
@@ -1492,7 +1721,8 @@ async function applyDeleteResult(seq, res) {
 // fmt 可选：不传就用设置里的「导出格式」（html / md / json，三种都是真格式）
 async function exportSession(r, outPath, fmt) {
   if (!api) return null;
-  const format = fmt || (CFG && CFG.exportFormat) || 'html';
+  // 老板 2026-10-12：默认 MD（老配置里选过 html 的仍然尊重，见 main.js loadCfg）
+  const format = fmt || (CFG && CFG.exportFormat) || 'md';
   const res = await api.exportSession(r.seq, outPath, format);
   if (res && res.ok) addMsg('step', 'SYS', '&gt; 已导出（' + esc(res.format || format) + '）：' + esc(res.out));
   else if (res && res.reason !== 'CANCELED') {
@@ -1638,11 +1868,14 @@ function renderExts() {
   const empty = $('ext-empty');
   if (!box) return;
   box.innerHTML = '';
+  // 标题数量：老板 2026-10-12「不用自己数」。读取中（null）时不显示数字。
+  const cnt = $('ext-count');
+  if (cnt) cnt.textContent = S.exts ? ('（' + S.exts.length + '）') : '';
   const list = S.exts;
-  if (!list) { empty.classList.remove('hidden'); empty.textContent = '读取中…'; return; }
+  if (!list) { empty.classList.remove('hidden', 'bad'); empty.textContent = '读取中…'; return; }
   if (!list.length) {
-    empty.classList.remove('hidden');
-    empty.textContent = '隔离配置目录里还没装扩展（点上面 ↻ 重新读）';
+    empty.classList.remove('hidden', 'bad');
+    empty.textContent = '还没装扩展（点上面 ↻ 重新读）';
     return;
   }
   empty.classList.add('hidden');
@@ -1652,12 +1885,85 @@ function renderExts() {
       '<span class="ag-n">' + esc(x.name) + '</span>' +
       (x.path ? '<span class="ag-p">' + esc(x.path) + '</span>' : '') +
       '<span class="ag-tag">' + esc(extSrcZh(x.source)) + '</span>';
+    // 更新按钮只在**自动检查发现有新版**时才挂（老板 2026-10-11 23:20：
+    // 「每次打开 PixelAgent 自动检查更新，然后才显示全部更新，没有就不用显示」）。
+    // 三态：本会话更过 → 绿标；有新版 → 更新按钮；检查完已最新 → 淡标；还没查完 → 什么都不挂。
+    if (x.source !== 'local') {
+      const pid = pkgIdOf(x);
+      if (S.extUpd[pid]) {
+        const ok = el('span', 'ext-ok');
+        ok.textContent = '最新 ✓';
+        d.appendChild(ok);
+      } else if (S.extOutdated && S.extOutdated.has(x.name)) {
+        const b = el('button', 'ext-upd');
+        b.textContent = '更新';
+        b.title = '发现新版本，点这里更新';
+        b.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          updateOneExt(x, b);
+        });
+        d.appendChild(b);
+      } else if (S.extOutdated) {
+        const ok2 = el('span', 'ext-ok dim');
+        ok2.textContent = '最新';
+        d.appendChild(ok2);
+      }
+    }
     box.appendChild(d);
   });
+  syncUpdateAllBtn();
+}
+
+function pkgIdOf(x) { return x.source + ':' + x.name; }
+
+/* 更新扩展 / pi 本体（老板 2026-10-11：PI 有什么更新，直接在 PixelAgent 更新）
+   跑的是主进程里的 pi update（最多等 5 分钟），完事刷新列表 + 把输出尾部塞给提示条 */
+let updBusy = false;
+async function updateOneExt(x, btn) {
+  if (updBusy) return;
+  updBusy = true;
+  const old = btn.textContent;
+  btn.textContent = '更新中…';
+  btn.disabled = true;
+  try {
+    const r = await api.updatePi({ ext: pkgIdOf(x) });
+    if (r.ok) {
+      S.extUpd[pkgIdOf(x)] = Date.now();
+      if (S.extOutdated) S.extOutdated.delete(x.name);
+    }
+    await renderExts();
+    toast(r.ok ? ('「' + x.name + '」更新完成：' + tailLine(r.out)) : ('更新失败：' + (r.error || tailLine(r.out))));
+  } finally {
+    updBusy = false;
+  }
+}
+async function updateAllPi(btn) {
+  if (updBusy) return;
+  updBusy = true;
+  const old = btn.textContent;
+  btn.textContent = '更新中…（可能要几分钟）';
+  btn.disabled = true;
+  try {
+    const r = await api.updatePi({});
+    if (r.ok) {
+      // 本轮全部标成最新 + 待更新清单清空（「全部更新」按钮随之藏起来）
+      (S.exts || []).forEach((x) => { if (x.source !== 'local') S.extUpd[pkgIdOf(x)] = Date.now(); });
+      S.extOutdated = new Set();
+    }
+    await renderExts();
+    toast(r.ok ? ('已全部更新到最新：' + tailLine(r.out)) : ('更新失败：' + (r.error || tailLine(r.out))));
+  } finally {
+    updBusy = false;
+    if (btn) { btn.textContent = old; btn.disabled = false; }
+  }
+}
+function tailLine(t) {
+  const lines = String(t || '').split('\n').map(s => s.trim()).filter(Boolean);
+  return lines[lines.length - 1] || '';
 }
 
 let agentsLoading = false;
-async function loadAgents() {
+async function loadAgents(force, isAutoRetry) {
   if (!api || agentsLoading) return;
   agentsLoading = true;
   const r = await api.agents();
@@ -1666,11 +1972,48 @@ async function loadAgents() {
   S.exts = (r.extensions || []).concat(r.local || []);
   renderExts();
   if (r.ok === false) {
+    // 老板 2026-10-12 踩坑：刚装完插件时 pi 可能还占着配置锁，list 拉取失败，
+    // 旧代码因为列表里还有「自带 todo」一条，把错误整个吞掉 → 看着像「插件全没了」。
+    // 现在：① 明确显示失败和重试入口；② 3 秒后自动悄悄再拉一次（锁一般很快释放）。
     const empty = $('ext-empty');
-    if (empty && !S.exts.length) { empty.classList.remove('hidden'); empty.textContent = '读取失败：' + (r.error || '未知'); }
+    if (empty) {
+      empty.classList.remove('hidden');
+      empty.classList.add('bad');
+      empty.textContent = '读取失败：' + (r.error || '未知') + '（3 秒后自动重试，或点这里立即重试）';
+      empty.style.cursor = 'pointer';
+      empty.onclick = () => { S.exts = null; renderExts(); loadAgents(true); };
+    }
+    if (!isAutoRetry) setTimeout(() => loadAgents(false, true), 3000);
+  } else {
+    const empty = $('ext-empty');
+    if (empty) { empty.classList.remove('bad'); empty.style.cursor = ''; empty.onclick = null; }
   }
+  checkExtUpdates(!!force);   // 列表先出，更新检查在后台跑（老板：有更新才显示按钮）
 }
-if ($('btn-agents-refresh')) $('btn-agents-refresh').addEventListener('click', () => { S.exts = null; renderExts(); loadAgents(); });
+
+/* 启动 / 刷新扩展列表后自动检查更新（npm outdated 纯比对，不真更新）。
+   查完：有过期的包挂「更新」按钮 + 显示「全部更新」；全是最新则什么都不挂。
+   force=true（点 ↻ 手动刷新）时绕过主进程缓存，真跑一次 npm outdated。 */
+async function checkExtUpdates(force) {
+  if (!api || !api.checkUpdates) return;
+  try {
+    const r = await api.checkUpdates(!!force);
+    S.extOutdated = new Set(r && Array.isArray(r.outdated) ? r.outdated : []);
+  } catch (e) {
+    S.extOutdated = new Set();   // 查不了按"没有更新"处理，别让界面卡在检查中
+  }
+  renderExts();
+}
+function syncUpdateAllBtn() {
+  const b = $('btn-pi-update');
+  if (!b) return;
+  // 有待更新包才显示「全部更新」；没检查完 / 全是最新 → 藏
+  const has = S.extOutdated && S.extOutdated.size > 0;
+  b.classList.toggle('hidden', !has);
+}
+if ($('btn-agents-refresh')) $('btn-agents-refresh').addEventListener('click', () => { S.exts = null; S.extOutdated = null; renderExts(); loadAgents(true); });
+// 「全部更新」：pi update --all（pi 本体 + 扩展 + 模型目录，一次到位）
+if ($('btn-pi-update')) $('btn-pi-update').addEventListener('click', (e) => updateAllPi(e.currentTarget));
 
 /* ---------- FILES：可换工作目录 ---------- */
 async function loadFiles(dir) {
@@ -1713,7 +2056,7 @@ async function pickDir() {
   $('kv-cwd').title = r.dir;
   $('set-cwd').value = r.dir;
   await loadFiles(r.dir);
-  addMsg('step', 'SYS', '&gt; 工作目录已切到 ' + esc(r.dir) + '（pi 的 cwd 和 @ 引用都跟着走）');
+  addMsg('step', 'SYS', '&gt; 工作目录已切到 ' + esc(r.dir) + '（@ 引用文件都从这里找）');
 }
 if ($('btn-pick-dir')) $('btn-pick-dir').addEventListener('click', pickDir);
 
@@ -1738,12 +2081,12 @@ function modelTitle() {
   if (S.curModel && S.curModel.model) return (S.curModel.provider + '/' + S.curModel.model);
   if (S.observedModel) {
     return '正在用 ' + (S.observedProvider ? S.observedProvider + '/' : '') + S.observedModel +
-      '（没手动切过，跟随 pi 的默认配置）';
+      '（没手动切过，跟随默认配置）';
   }
   if (S.piDefault && S.piDefault.model) {
-    return 'pi 配置里的默认模型 ' + (S.piDefault.provider ? S.piDefault.provider + '/' : '') + S.piDefault.model;
+    return '默认模型 ' + (S.piDefault.provider ? S.piDefault.provider + '/' : '') + S.piDefault.model;
   }
-  return '用 pi 自己的默认配置';
+  return '用默认配置';
 }
 function paintModelBar() {
   $('kv-model2').textContent = modelLabel();
@@ -1760,7 +2103,7 @@ function renderThinkBtns() {
     const on = (S.curThinking || '') === lv;
     const b = el('button', 'th-btn' + (on ? ' on' : ''), lv ? (TH_ZH[lv] || lv) : '默认');
     b.type = 'button';
-    b.title = lv ? ('--thinking ' + lv + '（' + (TH_ZH[lv] || lv) + '）') : '用 pi 默认档位';
+    b.title = lv ? ('--thinking ' + lv + '（' + (TH_ZH[lv] || lv) + '）') : '用默认档位';
     b.addEventListener('click', async () => {
       if (api) { const r = await api.setThinking(lv || null); if (r && r.current) S.curThinking = r.current.thinking; }
       else S.curThinking = lv || null;
@@ -1818,10 +2161,16 @@ function renderModelList(q) {
     h.innerHTML = '<span class="mp-caret">' + (isCol ? '▸' : '▾') + '</span>' +
       '<span class="mp-name">' + esc(p) + '</span>' +
       '<span class="mp-n">' + byProv[p].length + '</span>';
+    h.title = (isCol ? '展开这一组' : '收起这一组') + '；右键可删除整组';
     h.addEventListener('click', () => {
       if (S.collapsedProvs.has(p)) S.collapsedProvs.delete(p); else S.collapsedProvs.add(p);
       saveCollapsed();
       renderModelList($('mdl-q').value);
+    });
+    // 右键分组标题 → 删除模型组（老板 2026-10-11 23:00，删除前有确认窗）
+    h.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      groupCtxMenu(ev, p);
     });
     box.appendChild(h);
     if (isCol) return;   // 收起 = 不渲染行（不是用 CSS 藏：藏了还在 DOM 里，"数行数"的断言会算进去）
@@ -1919,15 +2268,15 @@ async function openModelConfig(m, runTest) {
   MCFG.info = info;
   $('mcfg-base').textContent = info.baseUrl
     ? (info.baseUrl + (info.api ? '（' + info.api + '）' : ''))
-    : '没在 pi 的 models.json 里声明';
+    : '没在配置里声明';
 
   // ★ 这个数字到底是"模型自己说的"还是"pi 补的"，在这里分开说清楚
   const rep = info.reported;
   const dec = info.declared;
-  const src = dec && dec.contextWindow ? '模型自己声明的' : '模型没声明 → pi 的兜底值';
+  const src = dec && dec.contextWindow ? '模型自己声明的' : '模型没声明 → 内置兜底值';
   $('mcfg-reported').textContent = rep
     ? (rep.context + '（' + rep.contextTokens + ' 词元）· 最大输出 ' + rep.maxOut + '  ← ' + src)
-    : 'pi 的表里没有这个模型';
+    : '内置表里没有这个模型';
 
   const caps = [];
   if (rep) {
@@ -1937,7 +2286,7 @@ async function openModelConfig(m, runTest) {
   if (dec && dec.input && dec.input.length) caps.push('声明输入：' + dec.input.join('+'));
   $('mcfg-cap').textContent = caps.length ? caps.join(' · ') : '—';
   $('mcfg-auth').textContent = info.hasKey
-    ? 'pi 的 models.json 里有 key（内容不回显）'
+    ? '已配置密钥（内容不回显）'
     : '没在 models.json 里找到 key';
 
   if (info.override) {
@@ -1945,7 +2294,7 @@ async function openModelConfig(m, runTest) {
     if (info.override.maxOut) $('mcfg-max').value = String(info.override.maxOut);
   }
   if (info.isDefault) {
-    $('mcfg-note').textContent = '这是 pi 配置里的默认模型。';
+    $('mcfg-note').textContent = '这是默认模型。';
     $('mcfg-default').disabled = true;
   }
   if (runTest) runModelTest();
@@ -1976,7 +2325,7 @@ async function runModelTest() {
   mcfgOut('✅ 通了\n' +
     '模型回话：' + JSON.stringify(r.text) + '\n' +
     '服务商实际用的模型：' + (r.responseModel || '未报告') + '\n' +
-    'pi 报告耗时：' + (r.durationMs || 0) + ' ms（我这里量到 ' + secs + ' 秒，含 pi 启动）\n' +
+    '报告耗时：' + (r.durationMs || 0) + ' ms（我这里量到 ' + secs + ' 秒，含启动）\n' +
     '这一轮的 token：总 ' + (r.totalTokens || 0) + '（入 ' + (r.inputTokens || 0) +
     ' / 出 ' + (r.outputTokens || 0) + '）\n' +
     '结束原因：' + (r.stopReason || '未报告'), 'ok');
@@ -1988,8 +2337,8 @@ async function saveModelConfig() {
   const xRaw = $('mcfg-max').value.trim();
   const ctx = cRaw === '' ? 0 : Math.round(Number(cRaw));
   const max = xRaw === '' ? 0 : Math.round(Number(xRaw));
-  if (cRaw !== '' && (!Number.isFinite(ctx) || ctx <= 0)) { mcfgNote('上下文窗口要填正整数（或留空用 pi 的值）', true); return; }
-  if (xRaw !== '' && (!Number.isFinite(max) || max <= 0)) { mcfgNote('最大输出要填正整数（或留空用 pi 的值）', true); return; }
+  if (cRaw !== '' && (!Number.isFinite(ctx) || ctx <= 0)) { mcfgNote('上下文窗口要填正整数（或留空用默认值）', true); return; }
+  if (xRaw !== '' && (!Number.isFinite(max) || max <= 0)) { mcfgNote('最大输出要填正整数（或留空用默认值）', true); return; }
   // 覆盖值那张表由**主进程**持有并落盘（它是唯一写盘的一方），
   // 这里只把"这一次要改成什么"发过去。之前这里还自己拼了一份 `patch` 却从不发送 ——
   // 看着像在改配置、其实一行都没用上，这种"看着有用其实没用"的死代码比没有更危险。
@@ -2001,7 +2350,7 @@ async function saveModelConfig() {
   if (dropped.length) { mcfgNote('主进程不认识的键：' + dropped.join(', '), true); return; }
   if (r && r.ok === false) { mcfgNote('保存失败：' + ((r && r.error) || '未知原因'), true); return; }
   if (r && r.cfg) applyCfg(r.cfg, null);
-  mcfgNote((!ctx && !max) ? '已清掉这个模型的覆盖值，回到 pi 报的值。' : '已保存：用量条的分母按你填的值算。');
+  mcfgNote((!ctx && !max) ? '已清掉这个模型的覆盖值，回到默认值。' : '已保存：用量条的分母按你填的值算。');
   // 立刻把用量条按新分母重算，不用等下一轮
   if (S.lastUsage) setUsage(S.lastUsage, S.lastUsageModel);
   else paintCtxIdle();
@@ -2029,7 +2378,7 @@ async function openModelPicker() {
   renderThinkBtns();
   if (!api) { renderModelList(''); return; }
   if (!S.modelsLoaded) {
-    $('mdl-count').textContent = '读取中…（正在运行 pi --list-models）';
+    $('mdl-count').textContent = '读取中…';
     $('mdl-title').textContent = '模型(读取中)';
     const r = await api.models();
     if (r && r.ok && r.models && r.models.length) {
@@ -2091,16 +2440,17 @@ function fillMaddProviders() {
 }
 
 function fillMaddModels(models) {
-  // 把 fetch-provider-models 拉回来的模型列表塞进 <select>，
-  // 保留第一条空 option 作为"未选择"提示。
+  // 把 fetch-provider-models 拉回来的模型列表塞进 <select>。
+  // 老板 2026-10-12：这个下拉只是「选一个来测试/当默认」，保存时**整组**都会入组，
+  // 不再是"选了哪个就只加哪个"。
   const sel = $('madd-model');
   if (!sel) return;
   sel.innerHTML = '';
   const ph = document.createElement('option');
   ph.value = '';
   ph.textContent = models && models.length
-    ? '— 从下面 ' + models.length + ' 个里选一个 —'
-    : '— 服务商返回了 0 个模型 —';
+    ? '— 选一个测试用（保存时 ' + models.length + ' 个全部入组） —'
+    : '— 先点「获取模型列表」 —';
   sel.appendChild(ph);
   (models || []).forEach((m) => {
     const o = document.createElement('option');
@@ -2108,6 +2458,13 @@ function fillMaddModels(models) {
     o.textContent = m.id;
     sel.appendChild(o);
   });
+  // 「添加」按钮跟着列表长度走：没拉列表就还是"添加"，拉到了就明说整组数量
+  const save = $('madd-save');
+  if (save) {
+    save.textContent = (models && models.length)
+      ? '添加全部 ' + models.length + ' 个模型'
+      : '添加';
+  }
 }
 
 // 拉 provider 的模型列表：填 base + key，点一下
@@ -2133,15 +2490,16 @@ async function fetchMaddModels() {
     fillMaddModels([]);
     return;
   }
-  // 缓存下来：saveModelAdd 时如果模型元数据里没有 ctx/max，
-  // 就再从这份缓存里找一遍
+  // 缓存下来：saveModelAdd 时 ctx/max 从这里带（provider 元数据里没有就 0，pi 自己兜底）
   S.maddFetchedModels = (r.models || []).map((m) => ({
     id: m.id,
     contextWindow: Number(m.contextWindow) || 0,
     maxTokens: Number(m.maxTokens) || 0
   }));
   fillMaddModels(S.maddFetchedModels);
-  maddNote('拿到 ' + (r.models || []).length + ' 个模型，选一个然后点「添加」。');
+  const n = (r.models || []).length;
+  maddNote('拿到 ' + n + ' 个模型 —— 保存时这 ' + n + ' 个会全部加进「' +
+    ($('madd-provider').value.trim() || '新服务商') + '」组。可以选一个先测试连通。');
 }
 
 // 测试连通：填 base + key + 模型 ID，发一次 max_tokens=1 的最小请求
@@ -2193,18 +2551,28 @@ function closeModelAdd() { $('mask-model-add').classList.add('hidden'); }
 async function saveModelAdd() {
   if (!api) return;
   const provider = $('madd-provider').value.trim();
-  const modelId = $('madd-model').value;
   const baseUrl = $('madd-base').value.trim();
   const apiKey = $('madd-key').value.trim();
-  // ctx / max 从「拉回来的模型元数据」里带，用户不手填
-  const hit = ((S.maddFetchedModels || []).find((m) => m.id === modelId)) || null;
-  const ctx = (hit && hit.contextWindow) || 0;
-  const max = (hit && hit.maxTokens) || 0;
+  // 老板 2026-10-12：服务商返回的几个模型就加几个，不再只加选中的那一个。
+  // 下拉里选的那一个只是「测试用 / 默认想看的那一个」，不参与"加哪些"的筛选。
+  const picked = $('madd-model').value;
+  const all = (S.maddFetchedModels || []).filter((m) => m && m.id);
   if (!provider) { maddNote('服务商必填', true); return; }
-  if (!modelId) { maddNote('先从下拉里选一个模型 ID（点右边「获取模型列表」）', true); return; }
+  if (!all.length) {
+    maddNote('先点「获取模型列表」把服务商的模型拉下来（拉到几个就加几个）', true);
+    return;
+  }
   if (!baseUrl) { maddNote('接入地址必填', true); return; }
   if (!apiKey) { maddNote('API Key 必填（新服务商）', true); return; }
-  const r = await api.addModel({ provider, modelId, baseUrl, apiKey, contextWindow: ctx, maxTokens: max });
+
+  maddNote('正在写入 ' + all.length + ' 个模型…');
+  const r = await api.addModels({
+    provider,
+    baseUrl,
+    apiKey,
+    models: all,
+    defaultModelId: picked || all[0].id
+  });
   if (!r || r.ok === false) {
     maddNote('添加失败：' + ((r && r.error) || '未知原因'), true);
     return;
@@ -2212,7 +2580,11 @@ async function saveModelAdd() {
   // 清本地缓存，逼下一次 pi:models 重跑
   S.models = [];
   S.modelsLoaded = false;
-  maddNote('已添加：' + provider + '/' + modelId);
+  const added = (r.added || []).length;
+  const skipped = (r.skipped || []).length;
+  let msg = '已把 ' + added + ' 个模型加进「' + provider + '」组（共 ' + (r.total || added) + ' 个）';
+  if (skipped) msg += '，' + skipped + ' 个本来就在组里（跳过）';
+  maddNote(msg);
   setTimeout(async () => {
     closeModelAdd();
     // 强制刷新模型菜单：openModelPicker 会重新拉一次
@@ -2220,7 +2592,7 @@ async function saveModelAdd() {
       // modelsLoaded=false 会让 openModelPicker 重新走读取路径
       await openModelPicker();
     }
-  }, 500);
+  }, 900);
 }
 
 /* ============================================================
@@ -2307,7 +2679,7 @@ const COMMANDS = [
   { k: '/export', g: '会话', d: '导出当前会话（格式见设置）',   run: () => exportSession({ seq: S.seq, title: '当前会话' }) },
   { k: '/clear',  g: '会话', d: '清空当前视图（不动会话文件）', run: () => { log.innerHTML = ''; if (welcome) welcome.classList.remove('hidden'); } },
   { k: '/stop',   g: '运行', d: '停止当前这一轮',                run: () => doAbort() },
-  { k: '/img',    g: '输入', d: '添加图片（也可直接粘贴/拖拽）', run: () => filePicker.click() },
+  { k: '/img',    g: '输入', d: '添加附件（图片/文档都行，也可直接粘贴/拖拽）', run: () => filePicker.click() },
   { k: '/dir',    g: '输入', d: '切换工作目录',                  run: () => pickDir() }
 ];
 
@@ -2537,6 +2909,60 @@ $('mdl-default').addEventListener('click', async () => {
 });
 
 /* ---------- 模型列表：全部展开 / 全部收起 ---------- */
+/* 模型组右键菜单（老板 2026-10-11 23:00：右键分组标题 → 删除模型组 → 确认窗） */
+function closeGroupCtx() {
+  const m = document.querySelector('.ctx-menu');
+  if (m) m.remove();
+}
+function groupCtxMenu(ev, prov) {
+  closeGroupCtx();
+  const m = el('div', 'ctx-menu');
+  const del = el('button', 'ctx-item');
+  del.type = 'button';
+  del.textContent = '删除模型组';
+  del.addEventListener('click', () => { closeGroupCtx(); removeModelGroup(prov); });
+  m.appendChild(del);
+  document.body.appendChild(m);
+  // 贴着鼠标出菜单，贴屏幕边时往回缩
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(ev.clientX, window.innerWidth - r.width - 8)) + 'px';
+  m.style.top = Math.max(4, Math.min(ev.clientY, window.innerHeight - r.height - 8)) + 'px';
+  // 点菜单外任何地方 / 再按一次右键 → 收掉
+  setTimeout(() => {
+    document.addEventListener('mousedown', closeGroupCtx, { once: true });
+    document.addEventListener('contextmenu', closeGroupCtx, { once: true });
+  }, 0);
+}
+async function removeModelGroup(prov) {
+  if (!api) return;
+  const n = S.models.filter((x) => x.provider === prov).length;
+  const ok = await confirmBox(
+    '删除模型组',
+    '把模型组「' + prov + '」整个删掉？\n\n组里 ' + n + ' 个模型会被移除，这一组的密钥配置也一起删。\n直接改配置文件，不进回收站。'
+  );
+  if (!ok) return;
+  const r = await api.removeModelGroup(prov);
+  if (!r || r.ok !== true) { toast('删除失败：' + ((r && r.error) || '未知原因')); return; }
+  // 当前用的模型在被删组里 → 切回 pi 默认（动作和「恢复默认」按钮一致）
+  if (S.curModel && S.curModel.provider === prov) {
+    const rr = await api.setModel(null);
+    if (rr && rr.current) S.curModel = rr.current.model;
+    const em = effModel();
+    const ci = ctxInfoOf(em && em.provider, em && em.model);
+    $('ub-fill').style.width = '0%';
+    $('ub-fill').className = '';
+    $('ub-text').textContent = '— / ' + ctxLabel(ci);
+  }
+  // 重拉模型目录 + 重画列表（重拉失败也不影响提示删除成功）
+  const m = await api.models();
+  if (m && m.ok && m.models) { S.models = m.models; S.modelsLoaded = true; }
+  renderModelList($('mdl-q').value);
+  paintModelBar();
+  updateVision();
+  renderAtt();
+  toast('模型组「' + prov + '」已删除（' + (r.removed || 0) + ' 个模型）');
+}
+
 function allProvs(q) {
   const query = String(q == null ? $('mdl-q').value : q).toLowerCase();
   return Array.from(new Set(S.models
@@ -2641,6 +3067,20 @@ function segPick(host) {
   return b ? b.dataset.v : '';
 }
 
+/* 设置面板里的分段按钮（.seg 里的 .seg-b）：点一下切 .on + 即时预览。
+   ★ 为什么要委托：set-enter / set-export 这两个 seg 从来没绑过点击 ——
+     点了不切换，保存时 segPick 读到的还是初始 .on（功能是坏的，只是没人发现）。
+     加 persona seg（老板 2026-10-12）时统一收在这里：以后加 seg 都不用再管绑定。
+   .sw 是主题色色块（buildAccentSeg 自建、自带点击），跳过别重复执行。 */
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const b = t.closest('.seg:not(.sw) .seg-b');
+  if (!b) return;
+  segOn(b.parentElement, b.dataset.v);
+  previewDraftCfg();
+});
+
 // 主题色色块：由主进程的色表生成，不在 HTML 里写死
 function buildAccentSeg() {
   const host = $('set-accent');
@@ -2661,53 +3101,52 @@ function buildAccentSeg() {
 function cfgToForm(c) {
   if (!c) return;
   $('set-cwd').value = c.workDir || '';
-  const msel = $('set-model');
-  // 默认模型下拉：以真跑回来的模型目录为准；当前值不在目录里也补一条，免得被悄悄改掉
-  const want = c.defaultModel || '';
-  if (!msel.dataset.filled) {
-    msel.innerHTML = '<option value="">（用 pi 默认）</option>';
-    for (const m of (S.models || [])) {
-      const o = el('option', null, esc(m.provider + '/' + m.model));
-      o.value = m.provider + '/' + m.model;
-      msel.appendChild(o);
-    }
-    msel.dataset.filled = '1';
-  }
-  if (want && !Array.prototype.some.call(msel.options, (o) => o.value === want)) {
-    const o = el('option', null, esc(want));
-    o.value = want;
-    msel.appendChild(o);
-  }
-  msel.value = want;
+  // 「默认模型」下拉已删（老板 2026-10-11 23:00 图二去掉）：
+  // 设默认模型走模型配置窗口里的「设为默认模型」按钮，设置面板不再重复一份。
+  // c.defaultModel 保留在配置里，formToCfg 会原样带回去，绝不能悄悄清掉。
   $('set-thinking').value = c.defaultThinking || '';
   $('set-maximg').value = String(c.maxImages == null ? 4 : c.maxImages);
   $('set-mascot').checked = c.mascotAnim !== false;
   $('set-compact').checked = c.compact === true;
   $('set-scroll').checked = c.autoScroll !== false;
   segOn($('set-enter'), c.enterToSend === false ? '0' : '1');
-  segOn($('set-export'), c.exportFormat || 'html');
+  segOn($('set-export'), c.exportFormat || 'md');   // 老板 2026-10-12：默认 MD
   segOn($('set-accent'), c.accent || 'lav');
+  // 老板 2026-10-12：用户画像 + 像素性格
+  $('set-uname').value = c.userName || '';
+  $('set-uprofile').value = c.userProfile || '';
+  segOn($('set-persona'), c.persona || 'lively');
 }
 
 function formToCfg() {
   return {
     workDir: $('set-cwd').value.trim(),
-    defaultModel: $('set-model').value,
+    // 默认模型下拉已删：沿用配置里的现值，保存时绝不覆盖（上面 cfgToForm 的说明）
+    defaultModel: (CFG && CFG.defaultModel) || '',
     defaultThinking: $('set-thinking').value,
     maxImages: Number($('set-maximg').value),
     mascotAnim: $('set-mascot').checked,
     compact: $('set-compact').checked,
     autoScroll: $('set-scroll').checked,
     enterToSend: segPick($('set-enter')) === '1',
-    exportFormat: segPick($('set-export')) || 'html',
-    accent: segPick($('set-accent')) || 'lav'
+    exportFormat: segPick($('set-export')) || 'md',   // 老板 2026-10-12：默认 MD
+    accent: segPick($('set-accent')) || 'lav',
+    // 老板 2026-10-12：用户画像 + 像素性格（trim/长度夹在主进程 normalizeCfg 里做）
+    userName: $('set-uname').value,
+    userProfile: $('set-uprofile').value,
+    persona: segPick($('set-persona')) || 'lively'
   };
 }
 
-// 主题色 / 动画 / 紧凑 这类"看得见"的先即时预览，取消时再整个回滚
+// 主题色 / 动画 / 紧凑 这类"看得见"的先即时预览，取消时再整个回滚。
+// 像素性格也算"看得见"：切了立刻用新腔调冒一句，不用保存就能听出差别。
 function previewDraftCfg() {
   const d = formToCfg();
-  applyCfg(Object.assign({}, CFG, { accent: d.accent, mascotAnim: d.mascotAnim, compact: d.compact }));
+  applyCfg(Object.assign({}, CFG, { accent: d.accent, mascotAnim: d.mascotAnim, compact: d.compact, persona: d.persona }));
+  if (d.persona && d.persona !== S.personaPreviewed) {
+    S.personaPreviewed = d.persona;
+    girlSay(pickLine('IDLE'), 2600);   // 用新性格的词库打招呼
+  }
 }
 
 function setNote(text, bad) {
@@ -2727,15 +3166,12 @@ async function openSettings() {
   if (api) {
     const c = await api.cfg();
     if (c && c.ok) applyCfg(c.cfg, { accents: c.accents, thinkingLevels: c.thinkingLevels, exportFormats: c.exportFormats });
-    // 模型目录：下拉要有真数据；没加载过就先拉一次（--list-models 冷启动慢，给个提示）
+    // 模型目录：模型对话框要用（默认模型下拉已删，这里只为 S.models 拉数据）
     if (!S.models.length) {
-      $('set-model').innerHTML = '<option value="">（模型目录加载中…）</option>';
-      $('set-model').dataset.filled = '';
       api.models().then((r) => {
         if (r && r.ok && r.models) { S.models = r.models; S.modelsLoaded = true; }
-        $('set-model').dataset.filled = '';
         cfgToForm(CFG);
-      }).catch(() => { $('set-model').dataset.filled = ''; cfgToForm(CFG); });
+      }).catch(() => { cfgToForm(CFG); });
     }
     buildAccentSeg();
     cfgToForm(CFG);
@@ -2752,21 +3188,21 @@ function closeSettings(revert) {
 async function fillRunInfo() {
   if (!api) return;
   const i = await api.info();
-  $('set-cli').textContent = i.cli || '未找到 pi 入口';
+  $('set-cli').textContent = i.cli || '未安装';
   $('set-session').textContent = i.session;
   $('set-mode').textContent = i.mode;
   $('set-agentdir').textContent = i.agentDir || '—';
   const st = i.agentDirState || {};
   $('set-auth').textContent = st.ready
-    ? ('就绪' + (st.copied && st.copied.length ? '（首次已抄入 ' + st.copied.join('/') + '）' : ''))
+    ? '就绪'
     : ('未就绪：' + (st.error || '未知'));
-  // 没手动切过模型时 pi 报的是 null —— 这时把 pi 配置里的默认模型写出来，
-  // 否则这一行只会说"（用 pi 默认）"，用户不知道到底用的是哪个。
+  // 没手动切过模型时报的是 null —— 这时把配置里的默认模型写出来，
+  // 否则这一行只会说"（默认）"，用户不知道到底用的是哪个。
   const pd = i.current && i.current.piDefault;
   $('set-curmodel').textContent = i.current && i.current.model
     ? (i.current.model.provider + '/' + i.current.model.model)
-    : (i.cli === null ? 'pi 未安装'
-      : (pd ? (pd.model + '（pi 配置里的默认' + (pd.provider ? '，来自 ' + pd.provider : '') + '）') : '（用 pi 默认）'));
+    : (i.cli === null ? '未安装'
+      : (pd ? (pd.model + '（默认' + (pd.provider ? '，来自 ' + pd.provider : '') + '）') : '（默认）'))
   $('kv-cwd').textContent = i.cwd || '—';
   $('kv-cwd').title = i.cwd || '';
 }
@@ -2808,7 +3244,7 @@ $('set-save').addEventListener('click', async () => {
   } else {
     setNote('已保存到 .pixelagent.json，重启后依然生效');
   }
-  if (api.models) api.models().then((r) => { if (r && r.ok && r.models) { S.models = r.models; S.modelsLoaded = true; $('set-model').dataset.filled = ''; cfgToForm(CFG); } }).catch(() => {});
+  if (api.models) api.models().then((r) => { if (r && r.ok && r.models) { S.models = r.models; S.modelsLoaded = true; cfgToForm(CFG); } }).catch(() => {});
 });
 
 $('set-reset').addEventListener('click', async () => {
@@ -2832,12 +3268,22 @@ $('titlebar').addEventListener('dblclick', (e) => {
 });
 
 /* ============================================================
-   时钟
+   时钟 + 窗外天色（老板 2026-10-11：窗户按右下角时间分五档）
+   morning 5-9 / noon 9-13 / afternoon 13-18 / evening 18-23 / night 23-5
    ============================================================ */
+function timeSeg(h) {
+  if (h >= 5 && h < 9) return 'morning';
+  if (h >= 9 && h < 13) return 'noon';
+  if (h >= 13 && h < 18) return 'afternoon';
+  if (h >= 18 && h < 23) return 'evening';
+  return 'night';
+}
 function tick() {
   const d = new Date();
   const p = (x) => String(x).padStart(2, '0');
   $('sb-clock').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  const win = $('of-window');
+  if (win) win.dataset.time = timeSeg(d.getHours());
 }
 setInterval(tick, 1000); tick();
 
@@ -2886,6 +3332,110 @@ function demoReply(text) {
 }
 
 /* ============================================================
+   首次运行引导：主进程说 firstRun（没有 auth.json、models.json
+   里也没配过密钥）就盖欢迎窗 —— 填 接入地址 + Key → 拉模型列表
+   → 真发一次测试请求 → 通过才落盘 addModel。跳过 = 下次启动再问。
+   ============================================================ */
+let wlShown = false;
+function showWelcome() {
+  if (wlShown || !api) return;
+  const w = $('wl-overlay');
+  if (!w) return;
+  wlShown = true;
+  w.classList.remove('hidden');
+}
+function hideWelcome() {
+  const w = $('wl-overlay');
+  if (w) w.classList.add('hidden');
+}
+function wlMsg(text, bad) {
+  const m = $('wl-msg');
+  if (!m) return;
+  m.classList.remove('hidden');
+  m.textContent = text;
+  m.classList.toggle('bad', !!bad);
+}
+function wlBusy(on) {
+  const b = $('wl-save'), f = $('wl-fetch');
+  if (b) { b.disabled = on; b.textContent = on ? '测试中…' : '测试并保存'; }
+  if (f) f.disabled = on;
+}
+async function welcomeSave() {
+  if (!api) return;
+  const base = $('wl-base').value.trim();
+  const key = $('wl-key').value.trim();
+  const manual = $('wl-model-manual');
+  const fromList = $('wl-model').value.trim();
+  const modelId = (manual && !manual.classList.contains('hidden'))
+    ? manual.value.trim()
+    : fromList;
+  if (!base) { wlMsg('先填接入地址', true); return; }
+  if (!key) { wlMsg('先填 API Key', true); return; }
+  if (!modelId) { wlMsg('先选一个模型（列表里没有就点「手动填模型 ID」）', true); return; }
+
+  wlBusy(true);
+  try {
+    wlMsg('正在真发一次测试请求（几秒钟）…');
+    const t = await api.testConnection({ baseUrl: base, apiKey: key, modelId });
+    if (!t || !t.ok) {
+      wlMsg('测试没通过：' + ((t && t.error) || '未知原因') + ' —— 检查地址 / Key / 模型 ID 再试', true);
+      return;
+    }
+    wlMsg('测试通过（' + (t.ms || '?') + 'ms），正在保存配置…');
+    const r = await api.addModel({ provider: 'custom', modelId, baseUrl: base, apiKey: key, allowUpdate: true });
+    if (!r || !r.ok) { wlMsg('保存失败：' + ((r && r.error) || '未知原因'), true); return; }
+    wlMsg('配置完成，开始用吧！');
+    setTimeout(hideWelcome, 500);
+    // 模型目录重拉（新模型刚落盘）+ 用量条切到刚配的模型
+    api.models().then((rr) => {
+      if (rr && rr.ok && rr.models) {
+        S.models = rr.models; S.modelsLoaded = true;
+        S.curModel = { provider: 'custom', model: modelId };
+        paintModelBar();
+      }
+    }).catch(() => {});
+  } catch (e) {
+    wlMsg('出错：' + ((e && e.message) || e), true);
+  } finally {
+    wlBusy(false);
+  }
+}
+if ($('wl-overlay')) {
+  $('wl-save').addEventListener('click', welcomeSave);
+  $('wl-skip').addEventListener('click', hideWelcome);
+  const wlToggleManual = (force) => {
+    const m = $('wl-model-manual');
+    if (!m) return;
+    m.classList.toggle('hidden', typeof force === 'boolean' ? !force : undefined);
+    const t = $('wl-toggle-manual');
+    if (t) t.textContent = m.classList.contains('hidden') ? '列表里没有？手动填模型 ID' : '改回从列表选';
+  };
+  $('wl-toggle-manual').addEventListener('click', () => wlToggleManual());
+  $('wl-fetch').addEventListener('click', async () => {
+    const base = $('wl-base').value.trim();
+    const key = $('wl-key').value.trim();
+    if (!base || !key) { wlMsg('拉取模型前，先填好接入地址和 API Key', true); return; }
+    wlMsg('正在拉取模型列表…');
+    const r = await api.fetchProviderModels({ baseUrl: base, apiKey: key });
+    if (!r || !r.ok) { wlMsg('拉取失败：' + ((r && r.error) || '未知原因'), true); return; }
+    const sel = $('wl-model');
+    sel.innerHTML = '';
+    (r.models || []).forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.id;
+      sel.appendChild(o);
+    });
+    if (!r.models || !r.models.length) {
+      sel.innerHTML = '<option value="">接口没报模型清单</option>';
+      wlToggleManual(true);
+      wlMsg('接口没吐出模型清单 —— 已切到手动填模型 ID', true);
+      return;
+    }
+    wlMsg('拉到 ' + r.models.length + ' 个模型，选一个');
+  });
+}
+
+/* ============================================================
    启动
    ============================================================ */
 syncCursor();
@@ -2902,7 +3452,26 @@ refreshSessions();
 if (api) {
   api.info().then((i) => {
     if (i && i.cwd) { $('kv-cwd').textContent = i.cwd; $('kv-cwd').title = i.cwd; }
+    if (i && i.firstRun) showWelcome();   // 打包分发：对方第一次用，先接模型
   });
+  // 启动后台悄悄查一次 GitHub Release：有新版本 → **像素冒泡说出来**（老板 2026-10-12：
+  // "检查更新的提醒我希望是由像素那边说出来提醒"），状态栏徽章作为兜底。
+  // 没网/超时/还没发过 Release 都静默（ok:false），绝不打扰使用。
+  api.checkAppUpdate().then((r) => {
+    if (r && r.ok && r.hasUpdate) {
+      // ① 像素说：可点气泡，点了直接开下载页（12 秒后自己收起）
+      girlSay('发现新版本 ' + r.latest + '，点我去更新', 12000, () => {
+        if (api.openUpdatePage) api.openUpdatePage();
+      });
+      // ② 状态栏徽章照旧（气泡会消失，徽章留着，随时能点）
+      const badge = $('sb-update');
+      if (badge) {
+        $('sb-update-ver').textContent = r.latest;
+        badge.classList.remove('hidden');
+        badge.onclick = () => api.openUpdatePage();
+      }
+    }
+  }).catch(() => {});
   api.files().then((r) => {
     if (r && r.items) { S.fileCache = r.items; S.fileDir = r.dir; }
   }).catch(() => {});
@@ -2929,8 +3498,7 @@ if (api) {
         $('sb-usage').title = '上下文总窗口 ' + ci.tokens + ' tokens\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）';
       }
       updateVision();
-      // 模型目录到了 → 设置面板的"默认模型"下拉才有真数据，重建一次
-      $('set-model').dataset.filled = '';
+      // （默认模型下拉已删：模型目录到了不用再重建下拉）
     }
   }).catch(() => {});
 }

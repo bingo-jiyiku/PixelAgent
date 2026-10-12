@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('pixelAPI', {
 
   // 文件树 / 工作目录
   files: (dir) => ipcRenderer.invoke('pi:files', dir),
+  // 老板 2026-10-12：拖 .html 进窗口时浏览器只给 file:// 路径、不给 File 对象，
+  // 用这个 IPC 补 name/size/mime，再走同一套附件把关
+  statFile: (p) => ipcRenderer.invoke('pi:stat-file', p),
   pickDir: () => ipcRenderer.invoke('pi:pick-dir'),
   setWorkDir: (dir) => ipcRenderer.invoke('pi:set-workdir', dir),
 
@@ -43,6 +46,8 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   modelTest: (sel) => ipcRenderer.invoke('pi:model-test', sel),
   // 老板 2026-10-11：新增自定义模型
   addModel: (p) => ipcRenderer.invoke('pi:add-model', p),
+  // 老板 2026-10-12：新增模型时服务商返回的所有模型整组入组（不再是只加选中的那个）
+  addModels: (p) => ipcRenderer.invoke('pi:add-models', p),
   // 老板 2026-10-11 17:44：新增模型时按 base/key 直接拉 provider 支持的模型清单
   fetchProviderModels: (p) => ipcRenderer.invoke('pi:fetch-provider-models', p),
   // 老板 2026-10-11 17:44：新增模型时发一次 max_tokens=1 的最小请求验证连通
@@ -50,9 +55,19 @@ contextBridge.exposeInMainWorld('pixelAPI', {
 
   // 扩展清单
   agents: () => ipcRenderer.invoke('pi:agents'),
+  // 启动时自动检查扩展更新（npm outdated 纯比对，不真更新）；force=true 绕过缓存
+  checkUpdates: (force) => ipcRenderer.invoke('pi:check-updates', { force: !!force }),
+  // 删除模型组（右键分组标题 → 确认窗 → 删 providers.<组名> 整键）
+  removeModelGroup: (provider) => ipcRenderer.invoke('pi:remove-model-group', { provider }),
+  // 更新 pi 本体 / 扩展（老板 2026-10-11：PI 的更新直接在 PixelAgent 里做）
+  updatePi: (what) => ipcRenderer.invoke('pi:update', what || {}),
 
   // 读信息（模型/会话路径/配置目录），设置面板用
   info: () => ipcRenderer.invoke('pi:info'),
+
+  // 应用自身的更新检查（GitHub Release 比对版本号）+ 打开下载页
+  checkAppUpdate: () => ipcRenderer.invoke('app:check-update'),
+  openUpdatePage: () => ipcRenderer.invoke('app:open-update-page'),
 
   // 设置：读 / 写 / 恢复默认
   cfg: () => ipcRenderer.invoke('pi:cfg'),

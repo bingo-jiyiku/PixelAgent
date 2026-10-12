@@ -95,7 +95,8 @@ app.whenReady().then(async () => {
   /* ================= 1. 打开模型框，拿到基线 ================= */
   console.log('\n== 1. 模型框基线 ==');
   await js(`document.getElementById('btn-model').click()`);
-  await sleep(2200);                       // 里面要真跑一次 pi --list-models
+  // 不写死等多久 —— pi --list-models 空闲 1 秒、机器忙时 5-8 秒。
+  // 真正的等待在下面「等列表真的渲染出来」那段（等条件，不等秒数）。
 
   // 过滤词 + 折叠状态都可能是上次留下的 —— 全部清成"最干净的开局"
   await js(`(function(){
@@ -103,7 +104,7 @@ app.whenReady().then(async () => {
     window.__pixel.collapsedProvs = new Set();
     var q = document.getElementById('mdl-q'); q.value = ''; q.dispatchEvent(new Event('input'));
     return 1; })()`);
-  await sleep(500);
+  await sleep(300);
 
   const listStat = () => js(`(function(){
     var provs = [].slice.call(document.querySelectorAll('#mdl-list .mdl-prov'));
@@ -123,8 +124,34 @@ app.whenReady().then(async () => {
       stored: (function(){ try { return localStorage.getItem('pixelagent.collapsedProvs'); } catch (e) { return 'ERR'; } })()
     }; })()`);
 
-  const base = await listStat();
-  console.log('  ℹ ' + JSON.stringify({ provs: base.provCount, items: base.itemCount, title: base.title, count: base.count }));
+  /* 等模型列表**真的渲染出来**，不是等一个写死的秒数。
+     原来这里 sleep(2200) 就往下走 —— 那是手调的魔法数：
+     实测 pi --list-models 空闲时 1 秒多，机器上同时跑着几个 electron
+     （Trae / 另一个 PixelAgent 实例）时要 5-8 秒。2200ms 一到列表还在
+     「读取中…」，第 2 步 querySelector('.mdl-prov') 点不到 → 抛异常 →
+     整个测试中断，看着像"产品挂了"，其实只是没等够。
+     改成轮询等条件，并且把「还在读」「读失败」「真的没有模型」
+     三种状态分开说 —— 混在一起就没法诊断了。 */
+  let base = null;
+  const waitT0 = Date.now();
+  for (let i = 0; i < 80; i++) {
+    await sleep(300);
+    base = await listStat();
+    if (base.provCount > 0) break;
+  }
+  const waitMs = Date.now() - waitT0;
+  console.log('  ℹ ' + JSON.stringify({ provs: base.provCount, items: base.itemCount, title: base.title, count: base.count, waitMs: waitMs }));
+  if (base.provCount === 0) {
+    // 分开说：还在读 / 读失败 / 真空。这三种的修法完全不同，不能混成一句。
+    const phase = /读取中/.test(base.count + base.title) ? '还在读取中（查询太慢或没回来）'
+      : /读取失败/.test(base.count + base.title) ? '读取失败（pi --list-models 报错了）'
+      : '列表真的为空（models.json 里没有模型？）';
+    console.log('  ❌ 模型列表是空的：' + phase + '  count=' + base.count + ' title=' + base.title);
+    t('模型列表等到了分组（不是空的）', 0, 'NONE');
+    console.log('\n' + JSON.stringify({ pass: RESULT.pass, fail: RESULT.fail + 1 }));
+    app.exit(1);
+    return;
+  }
   console.log('  ℹ 各组行数 = ' + JSON.stringify(base.groupSizes) + ' · 组名 = ' + JSON.stringify(base.provNames));
   const mdl = await probe(['#mask-model .dialog-model', '#mdl-list', '#mdl-collapse', '#mdl-count', '#mdl-hint']);
   console.log('  ' + JSON.stringify(mdl, null, 0));
@@ -236,8 +263,10 @@ app.whenReady().then(async () => {
   t('「pi 报的窗口」这行明说了数字的**来源**（模型没声明 → pi 兜底）',
     txt.reported.indexOf('兜底') >= 0, true);
   t('上下文 placeholder = pi 报的值', txt.ctxPh, '128K');
+  // 文案是中文「已配置密钥（内容不回显）」—— 全中文那一轮改的，
+  // 这条断言原来 grep 英文 'key'，改完文案后一直假红（行为本来就是对的）。
   t('凭据行只说有没有 key，不回显内容',
-    txt.auth.indexOf('key') >= 0 && txt.auth.length < 60, true);
+    txt.auth.indexOf('密钥') >= 0 && txt.auth.length < 60, true);
   console.log('  ℹ 全部文案里没有 key 明文（长度检查通过）');
 
   /* ---- 4b. 几何：控件两两不重叠，且都在框内 ---- */

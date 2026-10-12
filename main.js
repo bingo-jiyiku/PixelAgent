@@ -8,11 +8,13 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog, shell: electronShell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
+const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const bridge = require('./pi-bridge');
 const { saveAttachments } = require('./attach');
+const { pathNotes } = require('./path-notes');
 
 let win = null;          // 主窗口
 let job = null;          // 当前正在跑的 pi 子进程（支持"停止"）
@@ -20,19 +22,46 @@ let sessionSeq = 0;      // 当前会话序号（对应 .sessions/chat-<n>.json�
 
 const APP_DIR = __dirname;
 
-// 会话文件放在项目下的 .sessions/（在 E 盘，不占 C 盘）
-const SESSION_DIR = path.join(APP_DIR, '.sessions');
+// 打包版开关：electron-builder 出的 exe 即 true；本地想验收打包行为，
+// 设 PIXELAGENT_FORCE_PACKAGED=1 也能走同一套路径（不用先出安装包）。
+// 开发模式维持原样：一切还在项目目录下、与终端 pi 互通。
+const IS_PACK = app.isPackaged || process.env.PIXELAGENT_FORCE_PACKAGED === '1';
+
+// 打包版的用户数据统一放 %APPDATA%/PixelAgent（userData）：
+// 安装目录（resources/）不保证可写，往里写会话/附件属于定时炸弹。
+let USER_DIR = APP_DIR;
+if (IS_PACK) {
+  try { USER_DIR = app.getPath('userData'); } catch (e) { /* 取不到就退回 APP_DIR */ }
+}
+
+// 打包版默认工作目录 = 用户的「文档」：文件树是给人看的，指进安装目录没意义
+const DEFAULT_WORKDIR = (() => {
+  if (!IS_PACK) return APP_DIR;
+  try { const d = app.getPath('documents'); return (d && fs.existsSync(d)) ? d : USER_DIR; }
+  catch (e) { return USER_DIR; }
+})();
+
+// 会话文件：开发版在项目 .sessions/（E 盘，不占 C 盘）；打包版在 userData/sessions/
+const SESSION_DIR = IS_PACK ? path.join(USER_DIR, 'sessions') : path.join(APP_DIR, '.sessions');
 // 用户发进来的图片落盘在这里（pi 只认文件路径，不认内存里的 base64）
-const ATT_DIR = path.join(APP_DIR, '.attachments');
-// pi 的**隔离**配置目录。
-// 为什么不直接用 ~/.pi/agent：那边是老板终端里那套 pi 在用的。
-// 两边共用一个目录会互相抢 settings.json.lock —— 而且 PixelAgent 一旦被强杀，
-// 会留下 stale 锁把**终端里的 pi 一起弄坏**。隔离掉，各用各的。
-const AGENT_DIR = path.join(APP_DIR, '.pi-agent');
+const ATT_DIR = IS_PACK ? path.join(USER_DIR, 'attachments') : path.join(APP_DIR, '.attachments');
+// pi 配置目录：
+// · 开发版 = 全局 ~/.pi/agent，**与终端 pi 完全互通**（老板 2026-10-11 拍板）——
+//   扩展、凭据、模型定义、会话全和终端 pi 是同一份，下面 pi:update 更新的也是同一套。
+//   代价（老板知情）：终端 pi 和 PixelAgent 同时写配置时理论上会抢 settings.json.lock，
+//   日常一先一后用没事；真撞上了重跑一次就好。
+// · 打包版 = ~/.pixelagent/agent：对方机器多半没装过 pi，用中性名字自成一户；
+//   若这台机器上碰巧有终端 pi 配置，首次运行会拷贝一份过来（见 ensureAgentDir）。
+const AGENT_DIR = IS_PACK
+  ? path.join(homeDir(), '.pixelagent', 'agent')
+  : path.join(homeDir(), '.pi', 'agent');
 // 自带扩展（给 pi 补一个 todo 工具，否则右栏 TODOS tab 永远是空的）
-const TODO_EXT = path.join(APP_DIR, 'ext', 'todo.ts');
+// 打包版：pi 是独立子进程读不了 asar —— 扩展必须放 extraResources（resources/ext/）
+const TODO_EXT = (IS_PACK && process.resourcesPath)
+  ? path.join(process.resourcesPath, 'ext', 'todo.ts')
+  : path.join(APP_DIR, 'ext', 'todo.ts');
 // 本应用的配置：工作目录 + 会话别名
-const CONFIG_FILE = path.join(APP_DIR, '.pixelagent.json');
+const CONFIG_FILE = IS_PACK ? path.join(USER_DIR, 'pixelagent.json') : path.join(APP_DIR, '.pixelagent.json');
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -45,7 +74,7 @@ const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ma
   不摆"只显示不生效"的假设置（老板这轮的原话就是"设置要有设置该有的功能"）。
 */
 const CFG_DEFAULTS = {
-  workDir: APP_DIR,
+  workDir: DEFAULT_WORKDIR,
   names: {},
   enterToSend: true,        // true=Enter 发送；false=Enter 换行、Ctrl+Enter 发送
   maxImages: 4,             // 一次最多几张图（1..9）
@@ -53,9 +82,20 @@ const CFG_DEFAULTS = {
   mascotAnim: true,         // 吉祥物四态动画
   compact: false,           // 紧凑模式（行距更紧）
   autoScroll: true,         // 新消息自动滚到底
-  exportFormat: 'html',     // 导出默认格式
+  // 老板 2026-10-12：「我希望它导出会话是导出成 MD 格式的，不是 html」
+  // ⇒ 默认从 html 改成 md。老配置文件里显式选过 html 的仍然尊重（loadCfg 只覆盖存在的键）。
+  exportFormat: 'md',        // 导出默认格式
   defaultModel: '',         // '' = 用 pi 默认
   defaultThinking: '',      // '' = 用 pi 默认
+  // 老板 2026-10-12：「设置里面增加用户画像，给像素做一个性格进去」
+  // userName/userProfile：写给 AI 看的用户画像（每个会话的第一轮带上，之后不重复烧 token）
+  // persona：像素（吉祥物）的性格，只影响本地气泡语库，不发给 AI
+  userName: '',             // 称呼（≤20 字）
+  userProfile: '',          // 自由文本画像（≤500 字）
+  persona: 'lively',        // lively 活泼 / cool 高冷 / sharp 毒舌 / warm 温柔
+  // 一次性迁移标记：老配置里 exportFormat 显式存了 html 的，升过一次就打标，
+  // 之后用户再主动选回 html 就不会被"迁"回去（见 loadCfg）。
+  cfgMigratedMd: false,
   // 单个模型的覆盖值：{ "provider/model": { contextTokens, maxOut } }。
   // 只影响**界面上的分母**（用量条），不改变 pi 实际能收多少上下文 ——
   // 存在的理由是 pi 对没声明 contextWindow 的模型会退回兜底值，
@@ -70,6 +110,14 @@ const ACCENTS = {
   rose:  { name: '玫瑰',     main: '#c96a7e', deep: '#a04f61' }
 };
 const EXPORT_FORMATS = ['html', 'md', 'json'];
+// 像素性格（老板 2026-10-12：「给像素做一个性格进去」）。
+// 只影响吉祥物本地气泡语库，不发给 AI —— AI 的归画像管，像素的归性格管。
+const PERSONAS = {
+  lively: { name: '活泼' },
+  cool:   { name: '高冷' },
+  sharp:  { name: '毒舌' },
+  warm:   { name: '温柔' }
+};
 
 let cfg = { ...CFG_DEFAULTS };
 
@@ -90,6 +138,17 @@ function normalizeCfg(patch) {
   if ('defaultThinking' in p) {
     out.defaultThinking = THINKING_LEVELS.includes(p.defaultThinking) ? p.defaultThinking : '';
   }
+  // 用户画像：三段都是纯文本，长度夹住（称呼 20 / 画像 500 / 性格枚举）
+  if ('userName' in p) {
+    out.userName = String(p.userName == null ? '' : p.userName).replace(/\s+/g, ' ').trim().slice(0, 20);
+  }
+  if ('userProfile' in p) {
+    out.userProfile = String(p.userProfile == null ? '' : p.userProfile).replace(/\r/g, '').trim().slice(0, 500);
+  }
+  if ('persona' in p) {
+    out.persona = PERSONAS[p.persona] ? p.persona : CFG_DEFAULTS.persona;
+  }
+  if ('cfgMigratedMd' in p) out.cfgMigratedMd = !!p.cfgMigratedMd;
   // 模型覆盖值：键和值都要过滤。整数、>0、有上限，
   // 免得界面把一个负数或 1e30 写进配置文件，用量条当场变成 0% 或永远 100%。
   if ('modelOverrides' in p) {
@@ -118,11 +177,20 @@ function loadCfg() {
       if (typeof j.workDir === 'string' && j.workDir) cfg.workDir = j.workDir;
       if (j.names && typeof j.names === 'object') cfg.names = j.names;
       Object.assign(cfg, normalizeCfg(j));      // 老配置里没有的键自动落默认值
+      // 一次性迁移（老板 2026-10-12）：导出默认格式 html → md。
+      // 光改默认值不生效 —— loadCfg 尊重老配置里已存在的键，公司机器上
+      // .pixelagent.json 明明白白写着 "html"，界面永远停在 html。
+      // 标记必须有：否则用户后来主动选回 html，下次启动又被迁成 md。
+      if (j.exportFormat === 'html' && !j.cfgMigratedMd) {
+        cfg.exportFormat = 'md';
+        cfg.cfgMigratedMd = true;
+        saveCfg();
+      }
     }
   } catch (e) { /* 首次运行没有配置文件，用默认 */ }
   // 工作目录必须真实存在，否则文件树和 pi 的 cwd 都会出错
-  try { if (!fs.statSync(cfg.workDir).isDirectory()) cfg.workDir = APP_DIR; }
-  catch (e) { cfg.workDir = APP_DIR; }
+  try { if (!fs.statSync(cfg.workDir).isDirectory()) cfg.workDir = DEFAULT_WORKDIR; }
+  catch (e) { cfg.workDir = DEFAULT_WORKDIR; }
 }
 function saveCfg() {
   try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); } catch (e) { /* 写不进去不该崩 */ }
@@ -158,55 +226,46 @@ function send(obj) {
 function getWindow() { return win; }
 
 // ============================================================
-// pi 配置目录准备：首次运行时把终端里那套凭据/模型目录抄一份过来
-// （只抄凭据与模型定义，不抄 packages —— 见下面 ensureAgentDir 的说明）
+// pi 配置目录（2026-10-11 起与终端 pi 互通 = 直接用全局 ~/.pi/agent，不再拷贝）
 // ============================================================
 let agentDirState = { ready: false, copied: [], error: '' };
 
 function homeDir() {
-  return process.env.USERPROFILE || process.env.HOME || '';
+  // PIXELAGENT_HOME：测试钩子（shot-welcome / probe-migration 用它伪造一个
+  // 干净/有旧配置的"家"）。不能改 USERPROFILE —— Chromium 起进程时要读它，
+  // 改了直接崩（实测 0x80000003）。只影响我们自己的路径计算，Chromium 无感。
+  return process.env.PIXELAGENT_HOME || process.env.USERPROFILE || process.env.HOME || '';
 }
 
-function ensureAgentDir() {
-  const src = path.join(homeDir(), '.pi', 'agent');
-  const copied = [];
+// models.json 里有没有任何一家配了 apiKey —— 打包版没有 auth.json 也算就绪
+// （首次引导写的就是 models.json，不能让用户配完了还提示"未就绪"）
+function hasAnyProviderKey() {
   try {
-    fs.mkdirSync(AGENT_DIR, { recursive: true });
+    const m = JSON.parse(fs.readFileSync(path.join(AGENT_DIR, 'models.json'), 'utf8'));
+    const provs = (m && m.providers && typeof m.providers === 'object') ? m.providers : {};
+    return Object.keys(provs).some((k) => provs[k] && provs[k].apiKey);
+  } catch (e) { return false; }
+}
 
-    // auth.json 是命根子：没有它 pi 会直接报 "No API key found"
-    const want = ['auth.json', 'models.json', 'settings.json'];
-    for (const f of want) {
-      const dst = path.join(AGENT_DIR, f);
-      const s = path.join(src, f);
-      if (!fs.existsSync(dst) && fs.existsSync(s)) {
-        fs.copyFileSync(s, dst);
-        copied.push(f);
+// 互通后这里只**探测**，绝不动全局目录里的文件（包括锁 —— 那是终端 pi 的命根子）。
+// 唯一例外：打包版首次运行、且本机有终端 pi 配置时，把 auth/models/settings
+// **拷贝**一份到 ~/.pixelagent/agent（老用户零重填；原目录一个字节都不改）。
+function ensureAgentDir() {
+  if (IS_PACK
+    && !fs.existsSync(path.join(AGENT_DIR, 'models.json'))
+    && !fs.existsSync(path.join(AGENT_DIR, 'auth.json'))) {
+    const legacy = path.join(homeDir(), '.pi', 'agent');
+    try {
+      fs.mkdirSync(AGENT_DIR, { recursive: true });
+      for (const f of ['auth.json', 'models.json', 'settings.json']) {
+        const src = path.join(legacy, f);
+        if (fs.existsSync(src)) { fs.copyFileSync(src, path.join(AGENT_DIR, f)); agentDirState.copied.push(f); }
       }
-    }
-
-    // 顺手清掉本目录下自己的 stale 锁。
-    // 只清 AGENT_DIR 里的 —— 这是 PixelAgent 自己的目录，清它不碰别人的东西。
-    // （共享 ~/.pi/agent 时那种"被强杀留下锁、下次报 Lock file is already being held"
-    //   的故障，隔离目录从结构上就不会波及终端里的 pi。）
-    for (const lock of ['settings.json.lock', 'auth.json.lock', 'models-store.json.lock']) {
-      const p = path.join(AGENT_DIR, lock);
-      try {
-        const st = fs.statSync(p);
-        if (st.isDirectory() && fs.readdirSync(p).length === 0) fs.rmdirSync(p);
-      } catch (e) { /* 不存在就算了 */ }
-    }
-
-    const ok = fs.existsSync(path.join(AGENT_DIR, 'auth.json'));
-    agentDirState = {
-      ready: ok,
-      copied,
-      error: ok ? '' : (fs.existsSync(src)
-        ? '没能从 ' + src + ' 取到 auth.json'
-        : '在本机找不到 ' + src + ' —— 先在终端里跑一次 pi 并登录，或有 --api-key')
-    };
-  } catch (e) {
-    agentDirState = { ready: false, copied, error: e.message };
+    } catch (e) { /* 拷不动就按没配置走首次引导 */ }
   }
+  const ok = fs.existsSync(path.join(AGENT_DIR, 'auth.json')) || hasAnyProviderKey();
+  agentDirState.ready = ok;
+  agentDirState.error = ok ? '' : '还没有模型配置 —— 在启动引导里填接入地址和 API Key 就能用';
   return agentDirState;
 }
 
@@ -415,9 +474,9 @@ function parseModels(text) {
 // 函数名带 Once 是有意的：外面还套了一层「串行 + 重试」的 runPiQuery。
 function runPiQueryOnce(args, timeoutMs, agentDir) {
   return new Promise((resolve) => {
-    const { node, cli } = bridge.locate();
+    const { node, cli, env: nodeEnv } = bridge.locate();
     if (!cli) { resolve({ ok: false, error: '找不到 pi 入口' }); return; }
-    const env = Object.assign({}, process.env, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
+    const env = Object.assign({}, process.env, nodeEnv || {}, { PI_OFFLINE: process.env.PI_OFFLINE || '' });
     if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
     let child;
     try {
@@ -564,7 +623,7 @@ ipcMain.handle('pi:model-set-config', (_e, sel) => {
 });
 
 // 老板 2026-10-11：模型菜单要有"新增自定义模型"入口。
-// 直接把记录插进 .pi-agent/models.json，pi 下次 --list-models 就会看到它。
+// 直接把记录插进 ~/.pi/agent/models.json（与终端 pi 同一份），pi 下次 --list-models 就会看到它。
 // 结构参考现有 models.json：
 //   providers.<name>.{api, apiKey, baseUrl, models:[{id, contextWindow, maxTokens, input}]}
 // 规则：
@@ -601,9 +660,14 @@ ipcMain.handle('pi:add-model', (_e, p) => {
     if (apiKey) provs[provider].apiKey = apiKey;
   }
   const prov = provs[provider];
-  // 重复检测：同名模型已在同 provider 里 ⇒ 拒收
+  // 重复检测：同名模型已在同 provider 里 ⇒ 拒收。
+  // 例外：首次运行引导传 allowUpdate —— 那是"改配置"不是"加重复"，
+  // 一味拒收会把用户卡死在引导里（base/key 填错一次就得删了重来）。
   if (prov.models.find((m) => m && m.id === modelId)) {
-    return { ok: false, error: '这个模型已经存在于 ' + provider + ' 下，换一个 ID 或者先去配置它' };
+    if (!(p && p.allowUpdate)) {
+      return { ok: false, error: '这个模型已经存在于 ' + provider + ' 下，换一个 ID 或者先去配置它' };
+    }
+    prov.models = prov.models.filter((m) => m && m.id !== modelId);
   }
 
   const m = { id: modelId };
@@ -624,13 +688,98 @@ ipcMain.handle('pi:add-model', (_e, p) => {
   return { ok: true, provider, modelId };
 });
 
+// 老板 2026-10-12：「用户选了个模型测试连通都是对的，但是模型列表里不可能只有用户选的
+// 那一个模型，要服务商返回的所有模型都得在模型组里」。
+// 批量版：pi:fetch-provider-models 拉回多少就写多少（已存在的跳过，不覆盖、不报错）。
+// 与单发版共用同一套 models.json 结构；默认模型（defaultModelId）顺带在返回里带给界面，
+// 主进程不擅自改用户的当前选择 —— 切模型是用户自己的决定。
+ipcMain.handle('pi:add-models', (_e, p) => {
+  const provider = String((p && p.provider) || '').trim();
+  const baseUrl = String((p && p.baseUrl) || '').trim();
+  const apiKey = String((p && p.apiKey) || '').trim();
+  const list = Array.isArray(p && p.models) ? p.models : [];
+  const clean = list
+    .map((m) => ({
+      id: String((m && m.id) || '').trim(),
+      contextWindow: Number(m && m.contextWindow) || 0,
+      maxTokens: Number(m && m.maxTokens) || 0
+    }))
+    .filter((m) => m.id);
+  if (!provider) return { ok: false, error: '服务商不能为空' };
+  if (!clean.length) return { ok: false, error: '没有可添加的模型（先点「获取模型列表」）' };
+  for (const m of clean) {
+    if (m.contextWindow && m.contextWindow <= 0) return { ok: false, error: m.id + ' 的上下文窗口要填正整数' };
+    if (m.maxTokens && m.maxTokens <= 0) return { ok: false, error: m.id + ' 的最大输出要填正整数' };
+  }
+
+  const mf = path.join(AGENT_DIR, 'models.json');
+  const doc = readPiJson('models.json');
+  const provs = (doc.providers && typeof doc.providers === 'object') ? doc.providers : {};
+  if (!provs[provider]) {
+    provs[provider] = { api: 'openai-completions', models: [] };
+  }
+  if (!Array.isArray(provs[provider].models)) provs[provider].models = [];
+  if (baseUrl) provs[provider].baseUrl = baseUrl;
+  if (apiKey) provs[provider].apiKey = apiKey;
+
+  const prov = provs[provider];
+  const added = [];
+  const skipped = [];
+  for (const m of clean) {
+    const at = prov.models.findIndex((x) => x && x.id === m.id);
+    if (at >= 0) { skipped.push(m.id); continue; }   // 已存在：跳过，绝不静默覆盖
+    const rec = { id: m.id };
+    if (m.contextWindow) rec.contextWindow = m.contextWindow;
+    if (m.maxTokens) rec.maxTokens = m.maxTokens;
+    prov.models.push(rec);
+    added.push(m.id);
+  }
+  doc.providers = provs;
+  try {
+    fs.writeFileSync(mf, JSON.stringify(doc, null, 2), 'utf8');
+  } catch (e) {
+    return { ok: false, error: '写 models.json 失败: ' + e.message };
+  }
+  modelsCache = null;
+  return {
+    ok: true, provider,
+    added, skipped,
+    total: prov.models.length,
+    defaultModelId: String((p && p.defaultModelId) || '').trim()
+  };
+});
+
+// 删除模型组（老板 2026-10-11 23:00：模型菜单里的模型组右键 → 删除，先弹确认窗）
+// 组 = provider。只删 ~/.pi/agent/models.json 里的自定义 provider 整键（模型 + 该组的
+// api/apiKey/baseUrl 一起没）；pi 内置目录里的组在配置文件里没有键，删不了 —— 如实报错。
+ipcMain.handle('pi:remove-model-group', (_e, p) => {
+  const provider = String((p && p.provider) || '').trim();
+  if (!provider) return { ok: false, error: '组名不能为空' };
+  const mf = path.join(AGENT_DIR, 'models.json');
+  const doc = readPiJson('models.json');
+  const provs = (doc.providers && typeof doc.providers === 'object') ? doc.providers : {};
+  if (!provs[provider]) {
+    return { ok: false, error: '「' + provider + '」不在自定义配置里（内置目录的组不能删）' };
+  }
+  const n = Array.isArray(provs[provider].models) ? provs[provider].models.length : 0;
+  delete provs[provider];
+  doc.providers = provs;
+  try {
+    fs.writeFileSync(mf, JSON.stringify(doc, null, 2), 'utf8');
+  } catch (e) {
+    return { ok: false, error: '写 models.json 失败: ' + e.message };
+  }
+  modelsCache = null;   // 强制下次 pi:models 重跑，界面立刻看不到这组
+  return { ok: true, provider, removed: n };
+});
+
 // ============================================================
 // 老板 2026-10-11 17:44：「新增模型那一块需要链接测试那些功能」
 // 「模型 ID 在配置好获取模型就会自动读取它里面所有可用的模型」
 // 「上下文窗口和读写输出那些配置模型的时候要自动读取它原本的」
 //
 // 两个 IPC，都直接打 OpenAI-compatible REST（不走 pi CLI，避免把用户还没落盘的
-// 半填表单硬写进 .pi-agent/models.json 才做试连）：
+// 半填表单硬写进 ~/.pi/agent/models.json 才做试连）：
 //   - pi:fetch-provider-models  GET  {base}/v1/models           拿这个 base/key 下所有模型 ID
 //   - pi:test-connection        POST {base}/v1/chat/completions 发一次 max_tokens=1 的最小请求
 //
@@ -796,7 +945,7 @@ ipcMain.handle('pi:model-test', async (_e, sel) => {
 // ------------------------------------------------------------
 // runPiQuery 的队列只做了单向等待：查询会等对话（`if (job)`），
 // 但**对话不等查询**。于是实测到过这个场景：启动时的 --list-models
-// 还在跑，用户立刻发问 ⇒ 两个 pi 同时动 .pi-agent 下的 settings.json.lock
+// 还在跑，用户立刻发问 ⇒ 两个 pi 同时动 ~/.pi/agent 下的 settings.json.lock
 // ⇒ pi 报 "Invalid settings file ... settings.json.lock" 并降级。
 // 这条警告会以 stderr 的形式出现在界面顶部，看着像出大事了。
 // 补上反向等待，让两边不再撞。
@@ -821,12 +970,22 @@ function modelArgs() {
 // ============================================================
 function createWindow() {
   win = new BrowserWindow({
-    width: 1340,
-    height: 880,
-    minWidth: 1024,
-    minHeight: 660,
+    // 老板 2026-10-11：初始大小按他亲手拉的那次来（Win32 实测外框 1118x688，
+    // frame:false + useContentSize:true → 这两个值就是整窗尺寸）
+    width: 1118,
+    height: 688,
+    minWidth: 920,
+    minHeight: 620,
     backgroundColor: '#ffffff',
     title: 'PixelAgent',
+    // 「像素」立绘图标（tools/make-icon.js 生成）。打包版读 resources/icon.ico
+    //（asar 里的 .ico 不保证能被系统当窗口图标读），取不到就退回开发路径
+    icon: (() => {
+      const cand = (IS_PACK && process.resourcesPath)
+        ? path.join(process.resourcesPath, 'icon.ico')
+        : path.join(__dirname, 'build', 'icon.ico');
+      return fs.existsSync(cand) ? cand : undefined;
+    })(),
     // 无原生标题栏：整个窗口一块画布，标题栏用页面里 HTML 自绘
     frame: false,
     autoHideMenuBar: true,
@@ -839,15 +998,48 @@ function createWindow() {
   });
   const shot = process.env.PIXELAGENT_SHOT;
   win.loadFile(path.join(__dirname, 'index.html'), shot ? { query: { auto: shot } } : {});
+
+  // 兜底：拖 .html/.htm 进窗口时 Chromium 有可能把 drop 当导航（page 被换成那个文件，
+  // 界面像"刷新坏了一样"）。渲染层的 dragover/drop 已经 preventDefault 了，
+  // 这里再拦一道：任何不是 http(s) 的导航意图都掐掉，只当什么都没发生
+  //（要不要告诉用户由渲染层决定 —— 它那边正在把文件加进附件栏）。
+  // 老板 2026-10-12：「有一些文件它还是没办法拉进去，比如 Html 的」
+  win.webContents.on('will-navigate', (ev, url) => {
+    if (!/^https?:\/\//i.test(url)) {
+      ev.preventDefault();
+      console.log('[pixelagent] 拦截页面跳转（拖文件当附件，不是打开它）: ' + url.slice(0, 120));
+    }
+  });
 }
 
 module.exports = { getWindow, sessionFile };
+
+// 画像注入（老板 2026-10-12：「设置里面增加用户画像」）。
+// 写给 AI 的用户画像，拼在每轮 prompt 前面；**每个会话只带一次** ——
+// pi 的 session 文件持续追加，带过一次模型就记得，之后每轮都带纯属白烧 token。
+// 画像为空就不加（别发一段废话占上下文）。改了画像会重置，下一位…下一轮重新带。
+let profileInjectedFor = null;
+function profilePrefixFor(sessFile) {
+  const name = String(cfg.userName || '').trim();
+  const prof = String(cfg.userProfile || '').trim();
+  if (!name && !prof) return '';
+  if (profileInjectedFor === sessFile) return '';
+  profileInjectedFor = sessFile;
+  const L = ['[用户画像 —— 以下是关于你服务对象的信息，本次会话里请一直记住]'];
+  if (name) L.push('- 怎么称呼他：' + name);
+  if (prof) L.push('- 他的情况：' + prof);
+  L.push('[画像结束，下面是他这次说的话]');
+  return L.join('\n');
+}
+
+// 路径补全（老板 2026-10-12：「我给它发了文件夹路径，它说猜不到文件名」）——
+// 实现在 path-notes.js（纯逻辑，node 下可直接断言），pi:ask 里对每轮文本调一次。
 
 // ---------- 渲染层 -> 主进程：发一轮话 ----------
 ipcMain.handle('pi:ask', async (_e, payload) => {
   if (job) return { ok: false, reason: 'BUSY' };
 
-  // 兼容两种调用：老式直接给字符串，新式给 {text, images}
+  // 兼容两种调用：老式直接给字符串，新式给 {text, images, files}
   const text = typeof payload === 'string' ? payload : String((payload && payload.text) || '');
   const images = (payload && Array.isArray(payload.images)) ? payload.images : [];
 
@@ -855,12 +1047,32 @@ ipcMain.handle('pi:ask', async (_e, payload) => {
   // rejected 必须一路带回界面 —— 图片收不下的原因（格式坏 / 超限 / 文件名不合法）
   // 只有我们知道，pi 那边只会含糊地说一句 "could not be resized"。
   const att = saveAttachments(images, ATT_DIR);
-  const files = att.saved.map((f) => f.path);
+
+  // 非图片附件（2026-10-12 老板：不能只支持图片）：渲染层直接给磁盘路径
+  // （实测 pi 对任何文件都按 @file 内联，PDF/文本/代码都能读），不落盘不复制。
+  // 路径必须真实验证 —— 界面传来的东西不能全信，文件可能已被删/改名。
+  const pathRejected = [];
+  const refPaths = [];
+  const rawFiles = (payload && Array.isArray(payload.files)) ? payload.files : [];
+  for (const f of rawFiles.slice(0, 32)) {
+    const p = (f && typeof f.path === 'string') ? f.path : '';
+    const nm = (f && f.name) || p || '(未知)';
+    if (!p) { pathRejected.push({ name: nm, reason: '没有磁盘路径' }); continue; }
+    try {
+      if (!fs.statSync(p).isFile()) throw new Error('not a file');
+      refPaths.push(p);
+    } catch (e) {
+      pathRejected.push({ name: nm, reason: '文件不存在或读不了（被删了/改名了？）' });
+    }
+  }
+
+  const files = att.saved.map((f) => f.path).concat(refPaths);
 
   if (!text && !files.length) {
-    // 图全被拒了又没打字：别装没事把空请求发出去
-    if (att.rejected.length) {
-      return { ok: false, reason: 'IMAGE_REJECTED', rejected: att.rejected };
+    // 附件全被拒了又没打字：别装没事把空请求发出去
+    const rejected = att.rejected.concat(pathRejected);
+    if (rejected.length) {
+      return { ok: false, reason: 'IMAGE_REJECTED', rejected };
     }
     return { ok: false, reason: 'EMPTY' };
   }
@@ -871,8 +1083,18 @@ ipcMain.handle('pi:ask', async (_e, payload) => {
   // 先把还在跑的查询（--list-models / pi list …）等干净，再起对话 —— 见 drainPiQueries 的说明
   await drainPiQueries();
 
+  // 老板 2026-10-12：「设置里面增加用户画像」—— 画像写给 AI 看。
+  // 每个会话只在第一轮带一次：pi 的 session 文件持续追加，带过模型就记得，
+  // 之后每轮都带纯属白烧 token。画像为空就不加（别发一段废话占上下文）。
+  const profilePrefix = profilePrefixFor(sessionFile());
+  // 老板 2026-10-12：「我给它发了文件夹路径，它说猜不到文件名」——
+  // 文本里出现**真实存在**的目录路径时，把目录内容直接列给模型（见 pathNotes）。
+  const pathPrefix = pathNotes(text);
+  const basePrompt = text || (att.saved.length ? '（看这张图）' : '（看这个附件）');
+
   job = bridge.ask({
-    prompt: text || '（看这张图）',
+    prompt: (profilePrefix ? profilePrefix + '\n\n' : '') +
+            (pathPrefix ? pathPrefix + '\n\n' : '') + basePrompt,
     attachments: files,
     sessionFile: sessionFile(),
     cwd: cfg.workDir,
@@ -889,7 +1111,7 @@ ipcMain.handle('pi:ask', async (_e, payload) => {
     }
   });
 
-  return { ok: true, attachments: files.length, rejected: att.rejected };
+  return { ok: true, attachments: files.length, rejected: att.rejected.concat(pathRejected) };
 });
 
 // ---------- 停止当前这一轮 ----------
@@ -899,10 +1121,10 @@ ipcMain.handle('pi:abort', () => {
 });
 
 // ---------- 新会话（序号取最大值 +1，不覆盖已有） ----------
-ipcMain.handle('pi:new-session', () => {
-  if (job) { job.abort(); job = null; }
+ipcMain.handle('pi:new-session', () => {  if (job) { job.abort(); job = null; }
   const seqs = listSessionSeqs();
   sessionSeq = seqs.length ? Math.max(...seqs) + 1 : 0;
+  profileInjectedFor = null;   // 新会话 = 新 session 文件，画像要重新带一次
   return { ok: true, seq: sessionSeq, session: sessionFile() };
 });
 
@@ -1111,6 +1333,38 @@ ipcMain.handle('pi:search', (_e, q) => {
 // ---------- 文件树 ----------
 ipcMain.handle('pi:files', (_e, dir) => listFiles(dir));
 
+// ---------- 单个文件的信息（拖 .html 进来时补 name/size/mime 用） ----------
+// 老板 2026-10-12：「有一些文件它还是没办法拉进去，比如 Html 的」——
+// Chromium 拖 .html 只给 file:// 路径，renderer 拿不到 File 对象，
+// 靠这个 IPC 把 name/size/mime 补回来，再走和非图片附件同一套把关。
+ipcMain.handle('pi:stat-file', (_e, p) => {
+  const abs = path.resolve(String(p || ''));
+  let st = null;
+  try { st = fs.statSync(abs); } catch (e) {
+    return { ok: false, error: '文件不存在或读不了（被删了/改名了？）' };
+  }
+  if (!st.isFile()) return { ok: false, error: '这不是一个文件（是目录？）' };
+  return {
+    ok: true,
+    name: path.basename(abs),
+    size: st.size,
+    mime: mimeFromExt(path.extname(abs))
+  };
+});
+
+// 扩展名 → mime（只覆盖常见的；认不出的返回 ''，renderer 按非图片路径走，无妨）
+function mimeFromExt(ext) {
+  const e = String(ext || '').toLowerCase();
+  const map = {
+    '.html': 'text/html', '.htm': 'text/html',
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
+    '.json': 'application/json', '.csv': 'text/csv', '.xml': 'text/xml'
+  };
+  return map[e] || '';
+}
+
 // ---------- 选择工作目录（同时成为 pi 的 cwd，@ 引用也按它解析） ----------
 function setWorkDir(dir) {
   const abs = path.resolve(String(dir || ''));
@@ -1261,12 +1515,75 @@ ipcMain.handle('pi:agents', async () => {
   };
 });
 
+// ---------- 更新（老板 2026-10-11：PI 有什么更新，直接在 PixelAgent 更新） ----------
+// 启动时自动检查：npm outdated 纯比对版本号，**不真更新**。
+// 全最新时输出 {}（也可能 exit 1 + 空输出）；有过期的包输出 { 包名: {current, wanted, latest} }。
+// 检查结果缓存住（打开设置面板直接读）；真跑完更新后清空 → 按钮自然消失。
+let extUpdatesCache = null;   // null = 还没查完 / 查不了
+ipcMain.handle('pi:check-updates', async (_e, p) => {
+  // 打包版：内核随应用捆绑，目标机器可能没有 npm —— v1 不做在线更新。
+  // 返回空清单，界面自然一个更新按钮都不挂（老板的规则：没更新就不显示）。
+  if (IS_PACK) return { ok: true, outdated: [], supported: false };
+  const force = !!(p && p.force);   // 手动点 ↻ 刷新时绕过缓存，真跑一次
+  const dir = path.join(AGENT_DIR, 'npm');
+  if (extUpdatesCache && !force) return { ok: true, outdated: extUpdatesCache };
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  // Node 安全补丁（CVE-2024-27980）后 spawn .cmd **必须** shell:true，否则 EINVAL；
+  // shell 模式参数是裸拼接，路径含空格会断 —— win32 下自己包引号（非 win 走原样）
+  const dirArg = process.platform === 'win32' ? ('"' + dir + '"') : dir;
+  const outdated = await new Promise((resolve) => {
+    execFile(npmBin, ['outdated', '--json', '--prefix', dirArg],
+      { timeout: 60000, windowsHide: true, shell: true }, (err, stdout) => {
+        try {
+          const j = JSON.parse(String(stdout || '{}') || '{}');
+          resolve(Array.isArray(j) ? [] : Object.keys(j));
+        } catch (e) { resolve([]); }   // 输出不是 JSON（npm 警告串流）→ 当作查不到，按"没有更新"处理
+      });
+  });
+  extUpdatesCache = outdated;
+  return { ok: true, outdated };
+});
+
+// pi update 有两个口：
+//   pi update               → 只更 pi 本体（扩展会被跳过，实测输出 "Extensions are skipped"）
+//   pi update --extensions  → 更新全部已装扩展
+//   pi update --extension <npm:包名> → 只更一个（实测**必须带 npm: 前缀**，裸名报 No matching package）
+// 「全部更新」= 本体 + 扩展连跑两趟；npm 下载可能要几分钟，超时给足 5 分钟
+ipcMain.handle('pi:update', async (_e, what) => {
+  // 打包版：pi 本体在只读的 resources 里、目标机器没有 npm —— 更新走"换新安装包"
+  if (IS_PACK) {
+    return { ok: false, out: '', error: '打包版暂不支持在线更新 —— 有新版本时下载新的 PixelAgent 替换即可' };
+  }
+  const ext = what && what.ext ? String(what.ext) : '';
+  if (ext) {
+    // 单项：渲染层传 source:name 全名；万一只传了裸名，自动补 npm: 前缀
+    const pkg = ext.includes(':') ? ext : ('npm:' + ext);
+    const r = await runPiQuery(['update', '--extension', pkg], 300000, AGENT_DIR);
+    // 单项更完 → 从待更新清单里划掉这个名字（npm:前缀剥回裸包名再比）
+    if (r.ok && Array.isArray(extUpdatesCache)) {
+      const bare = pkg.replace(/^[a-z]+:/, '');
+      extUpdatesCache = extUpdatesCache.filter((n) => n !== bare);
+    }
+    return { ok: r.ok, out: (r.out || '').slice(-4000), error: r.error || '' };
+  }
+  const a = await runPiQuery(['update'], 300000, AGENT_DIR);
+  const b = await runPiQuery(['update', '--extensions'], 300000, AGENT_DIR);
+  // 真更完了 → 待更新清单清空（渲染层的更新按钮/「全部更新」随之消失）
+  if (a.ok && b.ok) extUpdatesCache = [];
+  return {
+    ok: a.ok && b.ok,
+    out: ((a.out || '') + '\n' + (b.out || '')).slice(-4000),
+    error: a.error || b.error || ''
+  };
+});
+
 // ---------- 设置面板信息（只读部分） ----------
 ipcMain.handle('pi:info', () => {
   const loc = bridge.locate();
   return {
     node: loc.node,
     cli: loc.cli,
+    firstRun: !ensureAgentDir().ready,   // 首次运行引导的开关（重新探测，别用启动时的旧账）
     session: sessionFile(),
     sessionExists: fs.existsSync(sessionFile()),
     cwd: cfg.workDir,
@@ -1281,17 +1598,23 @@ ipcMain.handle('pi:info', () => {
 // 三层都要能对上，才算"真的能改"：
 //   ① 界面改 → ② 存进 .pixelagent.json → ③ 重启后还在（test/verify-settings.js 验的就是这条）
 ipcMain.handle('pi:cfg', () => ({
-  ok: true, cfg: cfgForUi(), accents: ACCENTS,
+  ok: true, cfg: cfgForUi(), accents: ACCENTS, personas: PERSONAS,
   thinkingLevels: THINKING_LEVELS, exportFormats: EXPORT_FORMATS
 }));
 
-ipcMain.handle('pi:cfg-set', (_e, patch) => applyCfgPatch(patch));
+ipcMain.handle('pi:cfg-set', (_e, patch) => {
+  const r = applyCfgPatch(patch);
+  // 画像三键动过 → 允许当前会话下一轮重新带一次画像（不用等新会话）
+  if (patch && ('userName' in patch || 'userProfile' in patch)) profileInjectedFor = null;
+  return r;
+});
 
 ipcMain.handle('pi:cfg-reset', () => {
   const names = cfg.names;                       // 会话改名记录不是设置，不清
   cfg = { ...CFG_DEFAULTS, names };
   saveCfg();
   applyModelDefaults();
+  profileInjectedFor = null;
   return { ok: true, cfg: cfgForUi() };
 });
 
@@ -1303,8 +1626,66 @@ ipcMain.handle('win:max', () => {
 });
 ipcMain.handle('win:close', () => { if (win && !win.isDestroyed()) win.close(); });
 
+// ============================================================
+// 应用自身的更新检查（老板 2026-10-12：分发给客户后要有更新提醒）
+// 方案：GitHub 公开仓库 Release —— 匿名 API 可读，客户机器零配置。
+//   启动时渲染层调一次，比对远端 tag 和本地 app.getVersion()。
+//   网络失败 / 超时 / 还没发过 Release（404）一律静默，绝不打扰使用。
+// 点击提示 → 开浏览器去 Releases 页面下载新安装包，覆盖安装即可
+// （配置在 userData，覆盖安装不丢数据）。
+// ============================================================
+const UPDATE_REPO = 'bingo-jiyiku/PixelAgent';
+const UPDATE_PAGE = 'https://github.com/' + UPDATE_REPO + '/releases';
+
+// 'v0.2.0' / '0.2.0' → [0,2,0]；解析不了返回 null
+function parseVer(s) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(s || '').trim());
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+// a 比 b 新才返回 true
+function verNewer(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return false;
+}
+
+let updateCache = null;   // 启动后只查一次，重复调用直接给缓存
+ipcMain.handle('app:check-update', () => {
+  if (updateCache) return updateCache;
+  updateCache = new Promise((resolve) => {
+    const done = (r) => { updateCache = Promise.resolve(r); resolve(r); };
+    const req = https.get({
+      host: 'api.github.com',
+      path: '/repos/' + UPDATE_REPO + '/releases/latest',
+      timeout: 5000,
+      headers: { 'User-Agent': 'PixelAgent', 'Accept': 'application/vnd.github+json' }
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try {
+          if (res.statusCode !== 200) { done({ ok: false }); return; }
+          const j = JSON.parse(body);
+          const latest = parseVer(j.tag_name);
+          const mine = parseVer(app.getVersion());
+          if (!latest || !mine) { done({ ok: false }); return; }
+          done({ ok: true, hasUpdate: verNewer(latest, mine), latest: j.tag_name });
+        } catch (e) { done({ ok: false }); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); done({ ok: false }); });
+    req.on('error', () => done({ ok: false }));
+  });
+  return updateCache;
+});
+
+ipcMain.handle('app:open-update-page', () => {
+  electronShell.openExternal(UPDATE_PAGE);
+});
+
 app.whenReady().then(() => {
-  ensureAgentDir();     // 首次运行时准备好隔离的 pi 配置目录
+  ensureAgentDir();     // 探测全局 pi 配置（~/.pi/agent）是否就绪
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

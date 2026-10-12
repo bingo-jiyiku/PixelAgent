@@ -109,14 +109,22 @@ body {
   font-family: var(--f-px);
   font-size: 11px;
   letter-spacing: 1px;
+  /* 老板 2026-10-11：整条顶栏都能按住拖动窗口（不只是中间空白），
+     窗口按钮已在下方 no-drag 排除。 */
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 /* 顶栏已去掉品牌名（老板 2026-10-11：不用自己标 PIXELAGENT v1.0），
    中间会话号顶格，右边「智能体终端」+ 窗口按钮。 */
 .tb-mid { flex: 1 1 auto; display: flex; align-items: center; padding: 0 6px; min-width: 0; }
-.tb-cur {
-  font-family: var(--f-tx); font-size: 18px; letter-spacing: 0;
-  color: var(--lav); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* 左上角应用名（黑底粉字 + 像素字体，不可点只作品牌展示，拖拽照常） */
+.tb-brand {
+  flex: 0 0 auto;
+  font-family: var(--f-px); font-size: 11px; letter-spacing: 1px;
+  color: var(--lav); user-select: none;
 }
+/* 老板 2026-10-11：顶栏左上角「会话 #N」字去掉（JS 仍会更新文本，CSS 藏掉即可） */
+.tb-cur { display: none; }
 .tb-side { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; font-size: 10px; }
 .bul { width: 9px; height: 9px; display: inline-block; }
 .sq-ink { background: var(--panel); border: 2px solid var(--panel); }
@@ -225,7 +233,13 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  /* 老板 2026-10-11：空会话时中间也别是纯白 —— 跟 .log 同款浅暖底点阵；
+     有消息时 .log 自己的背景盖上来，两边无缝。 */
+  /* 老板 2026-10-11（深夜四改）：米黄底改纯白，点阵保留（点调淡一点，白底上不显脏） */
+  background-color: #ffffff;
+  background-image: radial-gradient(rgba(25, 21, 16, .13) 1.3px, transparent 1.4px);
+  background-size: 12px 12px;
+  background-position: 6px 6px;
 }
 
 .welcome {
@@ -269,7 +283,13 @@ body {
   position: relative; z-index: 1;
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   padding: 14px 16px;
-  background: var(--panel);
+  /* 老板 2026-10-11：会话区不要纯白，照参考图做成浅暖底 + 规律点阵（点阵纸感）
+     深夜反馈「还是纯白的」→ 点加大加深、网格加密，肉眼一看就有 */
+  /* 老板 2026-10-11（深夜四改）：米黄改纯白，点阵保留 */
+  background-color: #ffffff;
+  background-image: radial-gradient(rgba(25, 21, 16, .13) 1.3px, transparent 1.4px);
+  background-size: 12px 12px;
+  background-position: 6px 6px;
   -webkit-user-select: text; user-select: text;
 }
 .log:empty { display: none; }
@@ -369,6 +389,9 @@ body {
   font-size: 18px; color: var(--muted);
   padding: 16px 12px; border-bottom: 2px solid var(--panel-3);
 }
+.empty.bad { color: var(--warn, #e05a7a); cursor: pointer; }
+/* 已装扩展标题上的数量（老板 2026-10-12：不用自己数） */
+.ext-count { font-weight: normal; color: var(--muted); }
 
 /* ---------- TOOLS 列表 ---------- */
 .tool-item {
@@ -593,13 +616,16 @@ body {
    ★ 主题色跟随：mug / books 用 var(--lav)
      —— 设置里换 accent 会一起换皮（shot-settings.js 断言 .of-mug 变色）。
    ★ 无 border：.office 的 border-top-width 必须 0px（verify-features.js 断言）。
-   ★ cursor:pointer：整个 office 可点（verify-features.js 断言）。
+   ★ cursor:pointer：只给 5 个热区（像素/电脑/键盘/水杯/窗户，
+     老板 2026-10-11 22:00 热区白名单；verify-features.js 断言）。
    ============================================================ */
 .girl-scene {
   flex: 0 0 auto;
   min-height: 232px;
-  display: flex; flex-direction: column; align-items: stretch; justify-content: center;
-  padding-bottom: 8px;
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end;
+  padding-bottom: 0;
+  /* 老板 2026-10-11：吉祥物区顶部要有一条黑线跟会话区分割 */
+  border-top: 3px solid var(--ink);
 }
 
 /* office 铺满 rail 宽度（236 - 3 border = 233 内宽），无 border、透明底，
@@ -607,36 +633,124 @@ body {
 .office {
   position: relative; width: 100%; height: 220px; overflow: hidden;
   background: transparent; border: none;
-  cursor: pointer;
+  /* 老板 2026-10-11：不要随便点一个地方就交互 → 场景默认普通光标，
+     只有 5 个热区（像素/电脑/键盘/窗户/水杯）给手型 */
+  cursor: default;
   transition: filter 120ms steps(2);
 }
 .office:hover { filter: brightness(1.03); }
 .office:active { filter: brightness(1.05); }
+/* 可交互热区：手型光标 */
+.of-girl, .of-monitor, .of-keyboard, .of-mug, .of-window { cursor: pointer; }
 
-/* --- ① 背景：白色标签感（横条纹白底 + 淡阴影）—— "标签"感的关键就是浅色底 + 淡淡的水平线 --- */
+/* --- ① 背景：少女的房间（老板 2026-10-11 深夜三改：房间背景再浅一点）
+   → 近白浅粉波点墙纸 + 浅粉横梁；白天黑夜仍由窗户交代（夜空月亮窗）。 */
 .of-wall {
   position: absolute; inset: 0; z-index: 0;
   background:
-    repeating-linear-gradient(0deg,
-      var(--panel) 0 8px,
-      var(--panel-3) 8px 9px),
-    linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(30,20,10,.03) 100%);
+    radial-gradient(circle, rgba(240, 168, 200, .32) 1.5px, transparent 1.6px) 0 0 / 22px 22px,
+    linear-gradient(180deg, #fef6fa 0%, #fdecf3 58%, #fde9f2 100%);
+}
+/* 房顶横梁：浅粉深一号 */
+.of-wall::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px;
+  background: #e5aac6;
 }
 
-/* --- ② 墙上装饰（只留书架 + 小盆栽，"标签感"要简洁） --- */
-/* 书架：横板 + 三本彩色书，位置从 left:20 top:78 挪到 left:20 top:82 让书架贴桌面 */
-.of-shelf {
-  position: absolute; left: 20px; top: 82px; width: 100px; height: 10px;
-  background: #c9a98a; border: 2px solid var(--ink); z-index: 1;
-  display: flex; gap: 2px; align-items: flex-end; padding: 0 2px 2px;
+/* --- ①b 窗户：左上，夜空玻璃 + 月亮 + 两颗星（表示现在是晚上）
+   x=16-68 y=14-58；显示器顶 ≈95，垂直不重叠；书架 top:82 在窗下方。 */
+.of-window {
+  position: absolute; left: 16px; top: 14px; width: 52px; height: 44px;
+  overflow: hidden; z-index: 2;
+  /* 老板 2026-10-11（深夜四改）：窗外天色按右下角时钟分五档
+     （renderer.js tick() 每秒算一次，写 data-time；night 是默认）：
+       morning   5-9 点    日出（橙天 + 太阳低位）
+       noon      9-13 点   蓝天白云 + 太阳头顶
+       afternoon 13-18 点  暖蓝天 + 太阳偏西
+       evening   18-23 点  暮色（月亮升起 + 少量星）
+       night     23-5 点   夜（月亮 + 眨眼星） */
+  background: linear-gradient(180deg, #101c44 0%, #1a2c62 100%);
+  border: 3px solid #0a0714; z-index: 1;
 }
-.of-book {
-  display: block; width: 8px; height: 16px;
-  background: var(--lav); border: 2px solid var(--ink);
-  border-bottom: none; margin-bottom: -2px;
+.of-window[data-time="morning"]   { background: linear-gradient(180deg, #ff9d5c 0%, #ffd9a0 100%); }
+.of-window[data-time="noon"]      { background: linear-gradient(180deg, #5fb0e8 0%, #bfe0f5 100%); }
+.of-window[data-time="afternoon"] { background: linear-gradient(180deg, #6f9fd8 0%, #f5c88a 100%); }
+.of-window[data-time="evening"]   { background: linear-gradient(180deg, #232a54 0%, #4a3a6e 100%); }
+/* 十字窗棂 */
+.of-window b {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 3px;
+  margin-left: -1.5px; background: #0a0714;
 }
-.of-book:nth-child(2) { background: var(--warn); height: 18px; }
-.of-book:nth-child(3) { background: #8ab4c4; height: 14px; }
+.of-window b::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 3px;
+  margin-top: -1.5px; background: #0a0714;
+}
+/* 太阳（早上/中午/下午出现，位置不同） */
+.of-sun {
+  position: absolute; left: 20px; top: 5px; width: 10px; height: 10px;
+  background: #ffdd55; border: 2px solid #e8a820; display: none;
+}
+.of-window[data-time="morning"]   .of-sun { display: block; left: 7px;  top: 26px; }
+.of-window[data-time="noon"]      .of-sun { display: block; left: 21px; top: 5px;  }
+.of-window[data-time="afternoon"] .of-sun { display: block; left: 33px; top: 13px; }
+/* 云（中午/下午有） */
+.of-cloud { position: absolute; height: 5px; background: #fff; display: none; }
+.of-cloud.c1 { left: 7px;  top: 12px; width: 16px; }
+.of-cloud.c2 { left: 26px; top: 23px; width: 12px; }
+.of-window[data-time="noon"] .of-cloud,
+.of-window[data-time="afternoon"] .of-cloud { display: block; }
+/* 月亮 + 窗内两颗小星（白天三档藏起来） */
+.of-window i {
+  position: absolute; right: 7px; top: 7px; width: 9px; height: 9px;
+  background: #ffe9a8; box-shadow: -2px 2px 0 #f5d67a;
+}
+.of-window i::before {
+  content: ''; position: absolute; left: -16px; top: -1px; width: 3px; height: 3px;
+  background: #cfe0ff;
+}
+.of-window i::after {
+  content: ''; position: absolute; left: -9px; top: 7px; width: 2px; height: 2px;
+  background: #cfe0ff;
+}
+.of-window[data-time="morning"] i,
+.of-window[data-time="noon"] i,
+.of-window[data-time="afternoon"] i { display: none; }
+/* 额外三颗星：晚上/深夜显示，深夜会眨 */
+.of-st { position: absolute; width: 2px; height: 2px; background: #cfe0ff; display: none; }
+.of-st.st1 { left: 10px; top: 10px; }
+.of-st.st2 { left: 21px; top: 21px; }
+.of-st.st3 { left: 33px; top: 8px; }
+.of-window[data-time="evening"] .of-st,
+.of-window[data-time="night"] .of-st { display: block; }
+.of-window[data-time="night"] .of-st { animation: of-tw 1.4s steps(2) infinite; }
+.of-window[data-time="night"] .of-st.st2 { animation-delay: .4s; }
+.of-window[data-time="night"] .of-st.st3 { animation-delay: .8s; }
+@keyframes of-tw { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .2; } }
+
+/* --- 天色动画（老板 2026-10-12：五档都要有动感） ---
+   像素风动画用 steps(2) 硬切，不搞平滑插值 —— 平滑飘动会破像素感。
+   太阳：1px 上下浮；云：2px 横飘（两朵速度错开）；
+   晚上/深夜：窗内两颗小星慢闪（深夜另有三颗快眨的 .of-st）。 */
+.of-window[data-time="morning"] .of-sun,
+.of-window[data-time="noon"] .of-sun,
+.of-window[data-time="afternoon"] .of-sun { animation: of-sunbob 2.6s steps(2) infinite; }
+@keyframes of-sunbob { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(1px); } }
+
+.of-window[data-time="noon"] .of-cloud,
+.of-window[data-time="afternoon"] .of-cloud { animation: of-drift 3.2s steps(2) infinite; }
+.of-window[data-time="noon"] .of-cloud.c2,
+.of-window[data-time="afternoon"] .of-cloud.c2 { animation-duration: 4.1s; animation-delay: .8s; }
+@keyframes of-drift { 0%, 49% { transform: translateX(0); } 50%, 100% { transform: translateX(2px); } }
+
+.of-window[data-time="evening"] i::before,
+.of-window[data-time="evening"] i::after,
+.of-window[data-time="night"] i::before,
+.of-window[data-time="night"] i::after { animation: of-tw 2.2s steps(2) infinite; }
+.of-window[data-time="evening"] i::after,
+.of-window[data-time="night"] i::after { animation-delay: .6s; }
+
+/* --- ② 墙上装饰：书架、盆栽已删（老板 2026-10-11 22:00），墙上只留窗户 --- */
+/* --- ②' 墙上装饰（原书架/盆栽样式，2026-10-11 22:00 随 HTML 一起下架） --- */
 
 /* --- ③ 人物：往右挪 + 露出更多上半身（老板 2026-10-11）
    ★ 故意没有椅背。踩过的坑：最初画椅背想强化"坐着"，
@@ -648,8 +762,11 @@ body {
    新坐标：left:95 top:40 width:100 → 图片高 137（315:432 原图比例），
    图底 y=177，桌面 y=165 挡下半身 12px（>8 ✅），露出上半身 125px（>100 ✅）。
    显示器 x=8-88、人物 x=95-195，水平无重叠。 */
+/* --- ③ 人物：回到「显示器左 / 人物中 / 键盘前」三件套布局
+   （老板 2026-10-11 深夜反馈：电脑要保留、要坐着敲键盘）
+   left:95 top:40 width:100 → 图底 y=177，桌顶 y=165 挡下半身 12px。 */
 .of-girl {
-  position: absolute; left: 95px; top: 40px; width: 100px;
+  position: absolute; left: 95px; top: 79px; width: 100px;
   z-index: 5; transform-origin: 50% 100%;
 }
 .office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
@@ -661,13 +778,10 @@ body {
   0%, 49% { transform: rotate(-3deg) translateY(-1px); }
   50%, 100% { transform: rotate(2deg) translateY(-3px); }
 }
-/* TOOL：敲键盘节奏（老板要求"敲键盘"）—— 快速低头配合敲键
-   原来 translateY(-1px) 完全看不见。现在 4 帧循环，前后左右微摆 + 快速低头 2px */
-.office[data-state="TOOL"] .of-girl { animation: of-typing 0.5s steps(2) infinite; }
-@keyframes of-typing {
-  0%, 100% { transform: translateY(1px) rotate(0deg); }
-  50%      { transform: translateY(-1px) rotate(1deg); }
-}
+/* TOOL：敲键盘节奏 —— 2026-10-11 定稿：人物本体必须静止！
+   （人物一上下动，原图的手就脱开手层位置 → 双影）动作全部交给手层：
+   .of-hand-l/r 0.34s 反相敲击，与键帽闪烁(0.3s)节奏咬合。 */
+.office[data-state="TOOL"] .of-girl { animation: none; }
 .office[data-state="DONE"] .of-girl { animation: of-hop 1.2s steps(2) infinite; }
 @keyframes of-hop { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-6px); } }
 
@@ -678,6 +792,30 @@ body {
   25% { transform: rotate(-4deg); }
   75% { transform: rotate(4deg); }
 }
+
+/* --- ③b 她自己的手（2026-10-11 定稿）：手层 = 原图裁下的「袖口+手」矩形
+   静止（IDLE/THINKING/DONE）：隐藏 —— 原图的手就是她的手，完整无缺
+   TOOL：左右手层交替下沉 2.5px（0.34s 反相）= 她自己在敲键盘
+   几何：girl.png 显示宽 100（缩放 0.31746），手层坐标 = 95/67 + 原图坐标×k
+     左手层 (88,288)→ left:122.9 top:158.4；右手层 (197,288)→ left:157.5
+   z：6（在人物 5 之上盖住原手，在键盘 9 之下 = 手在键盘后方敲） */
+.of-hand {
+  position: absolute; width: 9.5px; z-index: 6;
+  display: none; pointer-events: none;
+  image-rendering: pixelated;
+}
+.of-hand-l { left: 122.9px; top: 170.4px; }
+.of-hand-r { left: 157.5px; top: 170.4px; }
+.office[data-state="TOOL"] .of-hand-l { display: block; animation: of-hand-l .4s steps(2) infinite; }
+.office[data-state="TOOL"] .of-hand-r { display: block; animation: of-hand-r .4s steps(2) infinite; }
+@keyframes of-hand-l {
+  0%, 49%  { transform: translateY(3.5px); }  /* 左手按下（沉入键盘后沿） */
+  50%, 100% { transform: translateY(-2px); }  /* 左手抬起（露出原图的手） */
+}
+@keyframes of-hand-r {
+  0%, 49%  { transform: translateY(-2px); }   /* 右手抬起 */
+  50%, 100% { transform: translateY(3.5px); } /* 右手按下 */
+}
 /* 分区 hover：鼠标在人物身上时轻微放大提示可点 */
 .office .of-girl { transition: filter 100ms steps(2); }
 .office .of-girl:hover { filter: brightness(1.1) drop-shadow(0 0 0 var(--lav)); }
@@ -686,14 +824,14 @@ body {
    原高度 90 → 新高度 55，桌面顶 y=220-55=165，人物 y=35-185，
    露出上半身 130px（原来 75px），桌面挡下半身 20px（坐姿成立）。 */
 .of-desk {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 55px; z-index: 8;
-  background: linear-gradient(180deg, #b08860 0%, #8b6843 100%);
+  position: absolute; left: 0; right: 0; bottom: 0; height: 28px; z-index: 8;
+  background: linear-gradient(180deg, #eccfa5 0%, #dcb886 100%);
   border-top: 3px solid var(--ink);
 }
 /* 桌面上的高光（1px 亮线，暗示反光） */
 .of-desk::before {
   content: ''; position: absolute; left: 0; right: 0; top: 3px; height: 1px;
-  background: rgba(255, 240, 220, .3);
+  background: rgba(255, 255, 255, .55);
 }
 
 /* --- ⑤ 显示器：屏幕上是敲代码动画 ---
@@ -701,7 +839,9 @@ body {
    位置从 left:10 bottom:90 → left:8 bottom:55（桌子矮了 90→55，同步下移）
    宽度 70→80（键盘让到右侧后显示器可以稍宽）
    水平不压人物：显示器 x=8-88，人物 x=95-195，无重叠 ✅ */
-.of-monitor { position: absolute; left: 8px; bottom: 55px; width: 80px; z-index: 9; }
+/* --- ⑤ 显示器：老板 2026-10-11 深夜反馈「之前的电脑要保留」→ 恢复原位
+   left:8 bottom:55 宽80，在人物左手边；屏幕上仍是代码流动画。 */
+.of-monitor { position: absolute; left: 8px; bottom: 28px; width: 80px; z-index: 9; }
 .of-screen {
   position: relative; width: 80px; height: 60px; overflow: hidden;
   background: #1a1510; border: 3px solid var(--ink);
@@ -740,6 +880,14 @@ body {
 }
 .office[data-state="THINKING"] .of-cl,
 .office[data-state="DONE"] .of-cl { display: none; }
+
+/* token 消耗行（老板 2026-10-11：屏幕上多一行 token 消耗）
+   累计估算值，renderer.js 在每条消息后更新；所有状态常显（✓ 在上方不冲突） */
+.of-token {
+  position: absolute; right: 4px; bottom: 3px;
+  font-family: var(--f-px); font-size: 6px; letter-spacing: .5px;
+  color: #7ee787; opacity: .9; pointer-events: none;
+}
 
 /* 光标：跟随最后一行代码闪烁 */
 .of-cursor {
@@ -793,33 +941,48 @@ body {
 .office .of-monitor { transition: filter 100ms steps(2); }
 .office .of-monitor:hover { filter: brightness(1.12); }
 
-/* --- ⑥ 键盘：8 键，IDLE 只 .f-key 闪，TOOL 全闪 ---
-   老板 2026-10-11 20:30 键盘居中占满桌面 → 19:41 电脑回来后键盘挪到右侧
-   left:95 宽 100（原居中 left:50% 宽 130）；显示器 left:8 宽 80 在左，两者错开
-   键宽 12→10（键盘变窄，键不能太大） */
+/* --- ⑥ 键盘：老板 2026-10-11 深夜反馈「那个不是键盘，不知道是什么」
+   → 重画成一眼能认出的键盘：
+     ① 8 个键帽 flex-wrap 排成两排（每排 4 个）
+     ② ::after 画一条居中长空格键（第三排）
+     ③ 底座加高到 24px，键帽加大
+   位置回到人物正前方（left:95 与人物同列，z=9 挡住人物图底 = 坐在键盘后）。
+   f-key 仍是第 2 个键（renderer.js keyCount=8 / fKeyIdx=1 不受影响）。 */
 .of-keyboard {
-  position: absolute; left: 95px; bottom: 55px; width: 100px; height: 16px;
-  background: #d8c4a8; border: 3px solid var(--ink); z-index: 9;
-  display: flex; gap: 2px; align-items: center; justify-content: center;
+  position: absolute; left: 95px; bottom: 28px; width: 104px; height: 16px;
+  background: #eee3cf; border: 3px solid var(--ink); z-index: 9;
+  display: flex; flex-wrap: wrap; gap: 2px;
+  align-items: center; justify-content: center;
+  align-content: center;
+  padding: 1px 3px;
   transition: filter 100ms steps(2);
 }
 .of-keyboard:hover { filter: brightness(1.12); }
+/* 键帽 8x4：8 个小键正好排满上排，空格键独占下排（keyCount=8 不变） */
 .of-keyboard i {
-  width: 10px; height: 7px; background: var(--ink); flex: 0 0 auto;
+  width: 8px; height: 4px; background: var(--ink); flex: 0 0 auto;
+}
+/* 空格键：第二排居中长条 */
+.of-keyboard::after {
+  content: ''; width: 40px; height: 4px; background: var(--ink);
+  flex: 0 0 auto; align-self: center;
 }
 /* 只让具名键 .f-key 闪（第 2 个键，index 1）；别用 nth-child 数位置 —— 静默走位。
    显式给非 f-key 键设 animation:none，防止任何继承/缓存让它们也动起来。 */
 .office[data-state="IDLE"] .of-keyboard i.f-key { animation: of-key 1.1s steps(2) infinite; }
 .office[data-state="IDLE"] .of-keyboard i:not(.f-key) { animation: none; }
-.office[data-state="TOOL"] .of-keyboard i { animation: of-key .3s steps(2) infinite; }
-.office[data-state="TOOL"] .of-keyboard i:nth-child(odd) { animation-delay: .15s; }
+.office[data-state="TOOL"] .of-keyboard i { animation: of-key .4s steps(2) infinite; }
+.office[data-state="TOOL"] .of-keyboard i:nth-child(odd) { animation-delay: .2s; }
 /* 点击打字爆发：临时给所有键加 .typing-burst 类，全部快闪 400ms */
 .office .of-keyboard i.typing-burst { animation: of-key .1s steps(2) 3; }
 @keyframes of-key { 0%, 49% { background: var(--ink); } 50%, 100% { background: var(--lav); } }
 
+/* --- ⑥b 小手：已按老板要求撤掉（「要真让吉祥物的手动起来而不是加个小手元素」）
+   → 敲键盘动作改由人物本体俯身节奏表达（见 .of-girl 的 of-typing）。 */
+
 /* --- ⑦ 桌面小物：马克杯（点击 → ☕ 气泡）—— 挪到最右边，键盘和显示器都在左边 --- */
 .of-mug {
-  position: absolute; right: 8px; bottom: 55px; width: 18px; height: 20px;
+  position: absolute; right: 8px; bottom: 28px; width: 18px; height: 20px;
   background: var(--lav); border: 3px solid var(--ink); z-index: 9;
   transition: filter 100ms steps(2), transform 100ms steps(2);
 }
@@ -841,25 +1004,12 @@ body {
   50% { transform: translateY(-3px); opacity: .8; }
 }
 
-/* --- ⑦ 小盆栽：书架右侧 --- */
-.of-plant {
-  position: absolute; right: 24px; top: 70px; width: 14px; height: 12px;
-  z-index: 1;
-}
-.of-plant::before {
-  content: ''; position: absolute; left: 3px; top: 6px; width: 8px; height: 6px;
-  background: #c9a98a; border: 2px solid var(--ink);
-}
-.of-plant i {
-  position: absolute; left: 1px; top: 0; width: 12px; height: 8px;
-  background: #7a9a6a;
-  box-shadow: 0 -3px 0 #6a8a5a, 3px -2px 0 #7a9a6a, -3px -2px 0 #7a9a6a;
-}
+/* --- ⑦ 小盆栽：已删（老板 2026-10-11 22:00「墙上那两个东西去掉」） --- */
 
-/* --- ⑧ 状态特效（位置跟着人物新坐标 left:95 top:35 走） --- */
+/* --- ⑧ 状态特效（位置跟着人物 left:95 top:40 走） --- */
 /* 思考气泡：贴在人物头部左上侧（人物头 x≈120-175 y≈40-75） */
 .of-bubble {
-  position: absolute; left: 75px; top: 22px; display: none;
+  position: absolute; left: 75px; top: 49px; display: none;
   gap: 3px; padding: 5px; background: var(--panel); border: 3px solid var(--ink); z-index: 10;
 }
 .of-bubble i { width: 5px; height: 5px; background: var(--lav); display: block; }
@@ -870,7 +1020,7 @@ body {
 /* 文字气泡：吉祥物"说话" —— 头顶冒字（不是 TTS） */
 /* 定位在人物头部右上方（人物 x:50-150，头顶最高 y=55，气泡放在 x>130、y<55） */
 .of-bubble-txt {
-  position: absolute; right: 6px; top: 4px; z-index: 12;
+  position: absolute; right: 6px; top: 31px; z-index: 12;
   max-width: 80px; padding: 3px 6px;
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif; font-size: 11px; line-height: 1.2;
   color: var(--ink); background: var(--panel); border: 3px solid var(--ink);
@@ -893,20 +1043,21 @@ body {
   z-index: 1;
 }
 
-/* 齿轮：TOOL 态闪（跟随新人物坐标 left:95 挪到 left:72） */
+/* 齿轮：TOOL 态闪（少女房间 → 齿轮用深粉，浅粉墙上看得清）
+   位置跟人物走：left:72 在人物左肩外侧 */
 .of-gear {
-  position: absolute; left: 72px; top: 40px; width: 12px; height: 12px; display: none; z-index: 10;
-  background: var(--ink);
-  box-shadow: -6px 0 0 var(--ink), 6px 0 0 var(--ink), 0 -6px 0 var(--ink), 0 6px 0 var(--ink);
+  position: absolute; left: 72px; top: 67px; width: 12px; height: 12px; display: none; z-index: 10;
+  background: #d17590;
+  box-shadow: -6px 0 0 #d17590, 6px 0 0 #d17590, 0 -6px 0 #d17590, 0 6px 0 #d17590;
   animation: of-pulse .7s steps(2) infinite;
 }
-.of-gear::before { content: ''; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; background: var(--panel-3); }
+.of-gear::before { content: ''; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; background: #fbe4ef; }
 @keyframes of-pulse { 0%, 49% { transform: scale(1); } 50%, 100% { transform: scale(1.14); } }
 .office[data-state="TOOL"] .of-gear { display: block; }
 
 /* 星星：DONE 态撒在人物头顶右上方 */
 .of-stars {
-  position: absolute; right: 20px; top: 10px; width: 26px; height: 16px; display: none; z-index: 10;
+  position: absolute; right: 20px; top: 37px; width: 26px; height: 16px; display: none; z-index: 10;
 }
 .of-stars i {
   position: absolute; width: 6px; height: 6px; background: var(--warn);
@@ -1010,6 +1161,8 @@ body.no-anim .of-dots i {
 .set-in:focus { outline: none; background: #fffdf6; }
 .set-in.num { flex: 0 0 88px; }
 select.set-in { cursor: pointer; }
+/* 多行的「你的情况」输入框：行高、滚动条、和单行 input 同皮肤 */
+textarea.set-in { resize: vertical; min-height: 60px; line-height: 1.4; font-size: 18px; }
 .set-unit { font-size: 18px; color: var(--muted); flex: 0 0 auto; }
 .set-foot-gap { flex: 1 1 auto; }
 .set-note { margin: 0; padding: 10px 14px 14px; font-size: 18px; color: var(--muted); min-height: 22px; }
@@ -1124,6 +1277,11 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 
 /* ---------- 思考链可折叠 ---------- */
 .tk-toggle { cursor: pointer; }
+
+/* 状态栏「有新版本」提示（老板 2026-10-12）：粉色徽章，点击去 Release 页下载 */
+.sb-update { color: var(--pink, #ff9ecf); cursor: pointer; user-select: none; }
+.sb-update:hover { text-decoration: underline; }
+.sb-update b { font-weight: normal; }
 .tk-toggle:hover { color: var(--lav-deep); }
 .tk-full {
   display: block; margin-top: 6px; padding-top: 6px;
@@ -1384,7 +1542,45 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   font-family: var(--f-px); font-size: 6px;
   border: 2px solid var(--ink); background: var(--panel-2); color: var(--ink);
 }
+/* 扩展项的「更新」按钮（老板 2026-10-11：pi 的更新直接在这里做） */
+.ext-upd {
+  float: right; margin: 2px 0 0 4px;
+  font-family: var(--f-px); font-size: 8px; line-height: 1;
+  padding: 3px 6px; border: 2px solid var(--ink); background: var(--panel-2);
+  cursor: pointer; box-shadow: 1px 1px 0 var(--ink);
+}
+.ext-upd:hover { background: var(--lav); }
+.ext-upd:active { transform: translate(1px, 1px); box-shadow: none; }
+.ext-upd:disabled { opacity: .6; cursor: wait; }
+/* 「最新 ✓」徽标：本次会话更新成功过的扩展（老板 2026-10-11：更过的别再挂更新按钮） */
+.ext-ok {
+  float: right; margin: 2px 0 0 4px;
+  font-family: var(--f-px); font-size: 8px; line-height: 1;
+  padding: 3px 6px; border: 2px solid var(--ink);
+  background: #d9f2d0; color: #2c6e1f;
+}
+/* 淡版「最新」：自动检查过、确认已是最新版的扩展（区别于刚更完的绿标） */
+.ext-ok.dim {
+  background: transparent; color: #8a8f88;
+  border-color: #b9beb4;
+}
 .agent-item.live { background: #fff6e8; }
+
+/* ---------- 模型组右键菜单（分组标题右键 → 删除模型组） ---------- */
+.ctx-menu {
+  position: fixed; z-index: 999;
+  min-width: 108px; padding: 3px;
+  background: var(--panel); border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.ctx-item {
+  display: block; width: 100%;
+  font-family: var(--f-px); font-size: 9px; line-height: 1;
+  padding: 6px 8px; text-align: left;
+  border: none; background: transparent; color: var(--ink);
+  cursor: pointer;
+}
+.ctx-item:hover { background: var(--pink); color: #fff; }
 
 /* ---------- FILES：路径独立成行（长路径不能挤在按钮旁） ---------- */
 .filebar-p {
@@ -1412,6 +1608,13 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   width: 30px; height: 30px; display: block;
   object-fit: cover; border: 1px solid var(--ink);
   image-rendering: pixelated;
+}
+/* 非图片附件的扩展名徽章：跟缩略图同尺寸占位，像素方块感 */
+.att-item .att-doc {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--ink); background: var(--panel-3);
+  font-family: var(--f-tx); font-size: 10px; font-weight: bold;
+  max-width: 30px; overflow: hidden; white-space: nowrap;
 }
 .att-item .att-n {
   font-family: var(--f-tx); font-size: 14px; line-height: 1.1;
@@ -1520,3 +1723,52 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   .px-btn, .tb-btn, .rtab, .cap-btn, .win-btn, .sess { transition-duration: 60ms; }
 }
 @keyframes caret-soft { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* ============================================================
+   首次运行引导（wl-overlay）—— 打包分发用：对方机器没有模型配置时
+   盖在最上层，填 接入地址 + API Key + 模型 三样就能开聊。
+   像素风沿用全局变量：面板底 + 粉色硬阴影 + 像素字体。
+   ⚠ id 不能叫 welcome：吉祥物区早有一个 id="welcome" 的元素（138 行），
+   撞了 id 的话 getElementById 拿到的是它，断言会假绿、样式会误伤。
+   ============================================================ */
+#wl-overlay {
+  position: fixed; inset: 0; z-index: 95;
+  background: rgba(20, 14, 12, .78);
+  display: flex; align-items: center; justify-content: center;
+}
+#wl-overlay.hidden { display: none; }
+.wl-card {
+  width: 470px; max-width: 92vw;
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  box-shadow: 8px 8px 0 var(--lav-deep);
+  padding: 20px 22px 16px;
+}
+.wl-head { font-family: var(--f-px); font-size: 15px; color: var(--ink); }
+.wl-sub  { font-size: 17px; color: var(--muted); margin: 8px 0 2px; }
+.wl-lab  { font-size: 15px; color: var(--ink); margin: 14px 0 4px; font-weight: bold; }
+#wl-overlay input, #wl-overlay select {
+  width: 100%; box-sizing: border-box;
+  font-family: var(--f-tx); font-size: 17px;
+  padding: 7px 9px; color: var(--ink);
+  background: var(--panel-2); border: 2px solid var(--ink); border-radius: 0;
+  outline: none;
+}
+#wl-overlay input:focus { border-color: var(--lav-deep); background: var(--panel); }
+.wl-row { display: flex; gap: 8px; align-items: stretch; }
+.wl-row select { flex: 1; min-width: 0; }
+.wl-row .px-btn { flex: 0 0 auto; }
+#wl-model-manual { margin-top: 8px; }
+#wl-toggle-manual {
+  margin-top: 10px; font-size: 15px; color: var(--lav-deep);
+  cursor: pointer; text-decoration: underline; user-select: none;
+}
+#wl-msg {
+  margin-top: 12px; font-size: 16px; padding: 8px 10px;
+  border: 2px dashed var(--panel-3); color: var(--muted);
+  word-break: break-all;
+}
+#wl-msg.bad { border-color: var(--err); color: var(--err); }
+.wl-actions {
+  margin-top: 16px; display: flex; gap: 10px; justify-content: flex-end;
+}

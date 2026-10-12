@@ -1,11 +1,15 @@
 {
   "name": "pixelagent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "复古像素终端风桌面AI助手：Electron 前端 + pi 后端流式对话",
   "main": "main.js",
+  "author": "DSH",
   "scripts": {
     "start": "electron .",
-    "test": "node test/fixtures/load-image.js && node test/md.test.js && node test/parse.test.js && node test/pal.test.js && node test/bridge.test.js && node test/attach.test.js && node test/audit-copy.js",
+    "dist:kernel": "node tools/fetch-kernel.js",
+    "dist": "node tools/fetch-kernel.js && electron-builder --win nsis",
+    "dist:all": "node tools/fetch-kernel.js && electron-builder --win nsis portable",
+    "test": "node test/fixtures/load-image.js && node test/md.test.js && node test/parse.test.js && node test/pal.test.js && node test/bridge.test.js && node test/attach.test.js && node test/pathnotes.test.js && node test/audit-copy.js",
     "test:fixtures": "node test/fixtures/load-image.js",
     "test:md": "node test/md.test.js",
     "test:parse": "node test/parse.test.js",
@@ -19,6 +23,7 @@
     "shot:settings": "electron test/shot-settings.js",
     "shot:model": "electron test/shot-model.js",
     "shot:girl": "electron test/shot-girl.js",
+    "shot:sky": "electron test/shot-sky.js",
     "zoom:parts": "electron test/zoom-parts.js",
     "zoom:scene": "electron test/zoom-scene.js",
     "probe:scene": "electron test/probe-scene.js",
@@ -28,12 +33,66 @@
     "probe:trash": "electron test/probe-trash.js",
     "probe:usage": "electron test/probe-usage.js",
     "probe:mcfg": "electron test/probe-mcfg.js",
-    "probe:esc": "electron test/probe-esc.js"
+    "probe:esc": "electron test/probe-esc.js",
+    "shot:welcome": "electron test/shot-welcome.js",
+    "probe:migration": "electron test/probe-migration.js",
+    "probe:exportfmt": "electron test/probe-exportfmt.js && electron test/probe-exportfmt.js --keep"
   },
   "license": "MIT",
+  "build": {
+    "appId": "com.dsh.pixelagent",
+    "productName": "PixelAgent",
+    "asar": true,
+    "directories": {
+      "output": "dist-app",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "pi-bridge.js",
+      "attach.js",
+      "preload.js",
+      "renderer.js",
+      "md.js",
+      "parse.js",
+      "pal.js",
+      "index.html",
+      "style.css",
+      "assets/**/*",
+      "!test", "!tools", "!shots", "!variants", "!vendor", "!dist-app",
+      "!.sessions", "!.attachments", "!.pi", "!.pi-agent", "!.impeccable", "!.bak",
+      "!.git", "!.gitignore", "!.pixelagent.json",
+      "!*.png", "!*.jpg", "!*.bin", "!*.bak*", "!nul", "!README.md"
+    ],
+    "extraResources": [
+      { "from": "vendor/pi/node_modules", "to": "pi/node_modules" },
+      { "from": "ext", "to": "ext" },
+      { "from": "build/icon.ico", "to": "icon.ico" }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PixelAgent",
+      "artifactName": "PixelAgent-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "PixelAgent-${version}-portable.exe",
+      "unpackDirName": "PixelAgent"
+    }
+  },
   "devDependencies": {
     "@fontsource/press-start-2p": "^5.3.0",
     "@fontsource/vt323": "^5.3.0",
-    "electron": "^44.7.0"
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "png-to-ico": "^3.0.2",
+    "pngjs": "^7.0.0"
   }
 }

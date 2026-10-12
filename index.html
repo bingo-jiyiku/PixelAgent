@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; font-src 'self' data:;" />
-  <title>PixelAgent</title>
+  <title>像素 · PixelAgent</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <!-- ═══════════════ 顶部标题栏（无边框窗口，自绘按钮） ═══════════════ -->
 <header class="topbar" id="titlebar">
-  <!-- 老板 2026-10-11：顶栏左边那些字（品牌名 / 版本号）不要了，极简。
+  <!-- 老板 2026-10-11：左上角放应用名 PixelAgent（起初删字求极简，定名后又要回来）。
        会话号在中间、"智能体终端"在右边都留着（有信息量，删了反而空）。 -->
+  <span class="tb-brand">PixelAgent</span>
   <span class="tb-mid tb-drag">
     <span class="tb-cur" id="tb-cur">会话 #—</span>
   </span>
@@ -47,7 +48,7 @@
          正确做法：**CSS 里 display:none 藏起来**，视觉上不出现但 DOM 还在。
          下面那段 rail-foot 是渲染器要写的"隐藏状态位"，不是给老板看的。 -->
     <div class="rail-foot" aria-hidden="true">
-      <div class="kv"><span>后端</span><b>pi</b></div>
+      <div class="kv"><span>后端</span><b>内置智能体</b></div>
       <div class="kv"><span>模型</span><b id="kv-model">—</b></div>
       <div class="kv"><span>输出</span><b>JSON</b></div>
       <div class="kv"><span>工作目录</span><b id="kv-cwd" title="">—</b></div>
@@ -64,17 +65,27 @@
            其余        → 通用招呼气泡（保留原行为） -->
     <div class="girl-scene" id="girl-scene" data-state="IDLE" aria-hidden="true">
       <div class="office" id="pixel-girl" data-state="IDLE">
-        <!-- ① 背景：白色标签感（横条纹 + 淡阴影）—— 老板 2026-10-11 要"之前那种白色标签感" -->
+        <!-- ① 背景：室内深夜（深紫夜墙 + 墙纸竖纹 + 房顶横梁），白天黑夜看窗户 -->
         <div class="of-wall"></div>
-        <!-- ② 墙上装饰：只留书架（书本 + 小盆栽）—— 桌面变矮 + 场景铺满后，
-           原来 3 件装饰（窗/画框/书架）会互相挤到，删掉前两件更清爽 -->
-        <div class="of-shelf of-books">
-          <i class="of-book"></i><i class="of-book"></i><i class="of-book"></i>
+        <!-- ①b 窗户：五档天色（renderer.js 按时钟写 data-time）：太阳/云/月亮/星全备 -->
+        <div class="of-window" id="of-window" data-time="night">
+          <i></i>
+          <span class="of-sun"></span>
+          <span class="of-cloud c1"></span>
+          <span class="of-cloud c2"></span>
+          <s class="of-st st1"></s><s class="of-st st2"></s><s class="of-st st3"></s>
+          <b></b>
         </div>
-        <div class="of-plant"><i></i></div>
+        <!-- ② 墙上装饰：老板 2026-10-11 22:00「墙上那两个东西可以去掉」
+           → 书架、盆栽都删了，墙上只留窗户 -->
         <!-- ③ 人物：往右挪 + 露出更多上半身（老板 2026-10-11）
            left:95 让显示器（left:8 宽 80）不压脸，键盘（left:95 宽 100）在人物前面 -->
         <img class="of-girl" src="assets/girl.png" alt="">
+        <!-- ③b 她自己的手：girl-hand-l/r.png 是从 girl.png 原图裁下来的「袖口+手」，
+             静止时隐藏（原手的画像不动）；TOOL（敲键盘/输出回复）时手层图片
+             左右交替下沉 2px = 她自己的手在敲键盘（老板 2026-10-11 定稿方案） -->
+        <img class="of-hand of-hand-l" src="assets/girl-hand-l.png" alt="">
+        <img class="of-hand of-hand-r" src="assets/girl-hand-r.png" alt="">
         <!-- ④ 桌子：矮一截（90→55），把上半身露出来；顶边黑线告诉眼睛"人坐在这条线之上" -->
         <div class="of-desk"></div>
         <!-- ⑤ 显示器：屏幕上是敲代码动画（4 行代码循环打字 + 光标）
@@ -90,6 +101,8 @@
             </div>
             <div class="of-cursor"></div>
             <div class="of-scan"></div>
+            <!-- token 消耗（累计估算，renderer.js finishBotMsg/addMsg 更新） -->
+            <div class="of-token" id="of-token">0</div>
             <div class="of-dots"><i></i><i></i><i></i></div>
             <div class="of-ok">✓</div>
           </div>
@@ -154,7 +167,7 @@
 
     <div class="rail-scroll tab-body hidden" id="tab-files">
       <div class="filebar">
-        <button class="cap-btn" id="btn-pick-dir" type="button" title="切换工作目录（同时成为 pi 的工作目录）">📁 换目录</button>
+        <button class="cap-btn" id="btn-pick-dir" type="button" title="切换工作目录（@ 引用文件都从这里找）">📁 换目录</button>
         <button class="cap-btn" id="btn-refresh-files" type="button" title="刷新">↻</button>
       </div>
       <div class="filebar-p" id="files-root">—</div>
@@ -169,7 +182,11 @@
       </div>
       <div class="agents-sec">
         <div class="agents-hd">
-          <span>已装扩展</span>
+          <span>已装扩展 <b id="ext-count" class="ext-count"></b></span>
+          <!-- 老板 2026-10-11：与终端 pi 互通 + 在这里直接更新
+               「全部更新」= pi update --all（pi 本体 + 扩展 + 模型目录） -->
+          <span style="flex:1"></span>
+          <button class="cap-btn" id="btn-pi-update" type="button" title="把全部扩展更到最新" style="width:auto;padding:0 6px">全部更新</button>
           <button class="cap-btn" id="btn-agents-refresh" type="button" title="重新读取已装扩展清单">↻</button>
         </div>
         <div class="agentlist" id="ext-list"></div>
@@ -201,9 +218,9 @@
          去掉了 `>` 前缀、像素字体、自定义 cursor/mirror（浏览器原生光标足够）。
          输入框现在就是个常规 input，边框稍细、留一点内边距，不再像终端提示符。 -->
     <div class="inputwrap">
-      <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件   图片可直接粘贴" />
+      <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="说点什么…  / 命令   @ 文件   附件可粘贴/拖拽" />
     </div>
-    <button class="px-btn att" id="btn-att" title="添加图片（也可以直接粘贴 / 拖进来）">+ 图片</button>
+    <button class="px-btn att" id="btn-att" title="添加附件（图片、PDF、文本、代码都行；也可以直接粘贴 / 拖进来）">+ 附件</button>
     <button class="px-btn primary" id="btn-send">发送</button>
     <button class="px-btn hidden" id="btn-stop">■ 停止</button>
   </div>
@@ -225,7 +242,9 @@
       <b id="ub-text">— / —</b>
     </span>
     <span class="sb-spacer"></span>
-    <span class="sb-keys">⏎ 发送 · ESC 停止 · / 命令 · @ 文件 · ! 执行命令</span>
+    <!-- 有新版本时出现的小铃铛（平时隐藏） -->
+    <span class="sb-item sb-update hidden" id="sb-update" title="发现新版本，点击去下载">⬆ 新版 <b id="sb-update-ver"></b></span>
+    <!-- 老板 2026-10-11：快捷键提示字（⏎ 发送 · ESC 停止…）去掉 -->
     <span class="sb-item sb-clock" id="sb-clock">--:--:--</span>
     <button class="sb-btn" id="btn-settings" title="设置">⚙</button>
   </div>
@@ -278,13 +297,9 @@
         <button class="px-btn" id="set-cwd-pick" type="button">选择…</button>
       </div>
       <div class="set-row">
-        <label class="set-lb" for="set-model">默认模型</label>
-        <select class="set-in" id="set-model"><option value="">（用 pi 默认）</option></select>
-      </div>
-      <div class="set-row">
         <label class="set-lb" for="set-thinking">思考档位</label>
         <select class="set-in" id="set-thinking">
-          <option value="">（用 pi 默认）</option>
+          <option value="">（默认）</option>
           <option value="off">关闭</option>
           <option value="minimal">极少</option>
           <option value="low">低</option>
@@ -293,6 +308,29 @@
           <option value="xhigh">很高</option>
           <option value="max">最高</option>
         </select>
+      </div>
+
+      <div class="set-sec">用户画像（写给 AI 看，让它更懂你）</div>
+      <div class="set-row">
+        <label class="set-lb" for="set-uname">怎么称呼你</label>
+        <input class="set-in" id="set-uname" type="text" maxlength="20"
+               placeholder="比如：老板 / 老王" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="set-row">
+        <label class="set-lb" for="set-uprofile">你的情况</label>
+        <textarea class="set-in set-ta" id="set-uprofile" rows="3" maxlength="500"
+                  placeholder="职业、在做什么、希望 AI 怎么回你…&#10;（每个新会话的第一轮发给 AI，之后不用重复发）"></textarea>
+      </div>
+
+      <div class="set-sec">像素性格（吉祥物说话的腔调）</div>
+      <div class="set-row">
+        <span class="set-lb">性格</span>
+        <span class="seg" id="set-persona">
+          <button class="seg-b" type="button" data-v="lively">活泼</button>
+          <button class="seg-b" type="button" data-v="cool">高冷</button>
+          <button class="seg-b" type="button" data-v="sharp">毒舌</button>
+          <button class="seg-b" type="button" data-v="warm">温柔</button>
+        </span>
       </div>
 
       <div class="set-sec">输入</div>
@@ -329,23 +367,24 @@
       <div class="set-row">
         <span class="set-lb">导出格式</span>
         <span class="seg" id="set-export">
-          <button class="seg-b" type="button" data-v="html">网页</button>
           <button class="seg-b" type="button" data-v="md">Markdown 文档</button>
+          <button class="seg-b" type="button" data-v="html">网页</button>
           <button class="seg-b" type="button" data-v="json">JSON</button>
         </span>
       </div>
 
       <div class="set-sec">运行信息（只读）</div>
-      <div class="kv"><span>后端</span><b>pi</b></div>
+      <div class="kv"><span>后端</span><b>内置智能体</b></div>
       <div class="kv"><span>输出模式</span><b id="set-mode">JSON</b></div>
       <div class="kv"><span>当前模型</span><b id="set-curmodel">读取中…</b></div>
       <div class="kv"><span>配置目录</span><b id="set-agentdir">—</b></div>
       <div class="kv"><span>凭据</span><b id="set-auth">—</b></div>
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
-      <div class="kv"><span>pi 入口</span><b id="set-cli">—</b></div>
+      <div class="kv"><span>内核入口</span><b id="set-cli">—</b></div>
       <p class="dlg-tip">
-        配置目录是隔离的：PixelAgent 用自己那份，跟终端里的 pi 各不打扰
-        （共用会被残留的锁文件互相牵连）。首次运行会从终端配置里抄一份凭据过来。
+        扩展、模型、登录状态都保存在本机配置里；
+        点「全部更新」会把扩展一起更到最新。
+        注意：同一时间只在一处改配置（这里或命令行），同时写可能报错，一先一后没事。
       </p>
 
       <div class="dlg-foot">
@@ -405,7 +444,7 @@
       <div class="kv"><span>模型</span><b id="mcfg-id">—</b></div>
       <div class="kv"><span>服务商</span><b id="mcfg-prov">—</b></div>
       <div class="kv"><span>接入地址</span><b id="mcfg-base">—</b></div>
-      <div class="kv"><span>pi 报的窗口</span><b id="mcfg-reported">—</b></div>
+      <div class="kv"><span>默认上下文窗口</span><b id="mcfg-reported">—</b></div>
       <div class="kv"><span>能力</span><b id="mcfg-cap">—</b></div>
       <div class="kv"><span>凭据</span><b id="mcfg-auth">—</b></div>
 
@@ -421,8 +460,8 @@
         <span class="set-unit">词元</span>
       </div>
       <p class="dlg-tip">
-        留空 = 用 pi 报的值。改这里只是为了在 pi 报得不准（或模型没声明窗口、走了 pi 的兜底值）时，
-        让用量条的分母按你知道的真实值算 —— 它<b>不会</b>改变 pi 实际能收多少上下文。
+        留空 = 用默认值。改这里只是在模型没报准窗口（或模型没声明窗口、走了兜底值）时，
+        让用量条的分母按你知道的真实值算 —— 它<b>不会</b>改变 AI 实际能收多少上下文。
       </p>
       <p class="set-note" id="mcfg-note"></p>
       <div class="mcfg-out hidden" id="mcfg-out"></div>
@@ -440,12 +479,12 @@
 <!-- ═══════════════ 新增自定义模型 ═══════════════ -->
 <!-- 老板 2026-10-11 17:44：「我们只需要填写API 和key还有服务商就好，
      模型ID在配置好获取模型就会自动读取它里面所有可用的模型」
-     「上下文窗口和读写输出那些配置模型的时候要自动读取它原本的」
-
-     表单就三件事：填 base + key，点「获取模型列表」拉出来，选一条，
-     想试试通不通就点「测试连通」，然后「添加」。
-     ctx / max 不再让用户手填 —— 从 provider 返回的模型元数据里带出来，
-     实在没有就走 pi 兜底。 -->
+     老板 2026-10-12：「用户选了个模型测试连通都是对的，但是模型列表里不可能只有
+     用户选的那一个模型，要服务商返回的所有模型都得在模型组里」
+     ⇒ 最终流程：填 provider + base + key → 点「获取模型列表」→
+       （可选）选一个点「测试连通」→「添加全部 N 个模型」。
+       下拉只是测试/默认预览，保存时拉回来的全部入组。
+     ctx / max 不手填 —— 从 provider 返回的模型元数据里带出来，没有就走 pi 兜底。 -->
 <div class="mask hidden" id="mask-model-add">
   <div class="win dialog dialog-madd">
     <div class="win-bar">
@@ -479,9 +518,9 @@
 
       <div class="set-sec">② 从这个服务商拉模型（填完 key 点一下「获取模型列表」）</div>
       <div class="set-row madd-act-row">
-        <label class="set-lb" for="madd-model">模型 ID</label>
+        <label class="set-lb" for="madd-model">测试用模型</label>
         <select class="set-in" id="madd-model" size="1">
-          <option value="">— 先点右边「获取模型列表」 —</option>
+          <option value="">— 先点「获取模型列表」 —</option>
         </select>
       </div>
       <div class="madd-tools">
@@ -490,9 +529,9 @@
       </div>
       <p class="set-note" id="madd-note"></p>
 
-      <p class="set-note">上下文窗口 / 最大输出 从 API 自动读取，选完模型后自动填入，不需要手填。</p>
+      <p class="set-note">保存时，服务商返回的<b>所有模型</b>都会加进这个组（不只是选的这个）；已在组里的会跳过。上下文窗口 / 最大输出自动读取，不需要手填。</p>
       <p class="dlg-tip">
-        新服务商会默认用 <code>openai-completions</code> 协议（pi 里最通用的）。
+        新服务商会默认用 <code>openai-completions</code> 协议（最通用）。
         同名 provider 保留原有 baseUrl/apiKey —— 空着不动它们。
       </p>
     </div>
@@ -500,6 +539,32 @@
       <span class="sb-spacer"></span>
       <button class="px-btn" id="madd-cancel" type="button">取消</button>
       <button class="px-btn primary" id="madd-save" type="button">添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 首次运行引导：没有模型配置时盖在最上层 ============ -->
+<div id="wl-overlay" class="hidden">
+  <div class="wl-card">
+    <div class="wl-head">欢迎用 PixelAgent</div>
+    <div class="wl-sub">第一次用，先接一个 AI 模型 —— 填三样就能聊</div>
+    <div class="wl-lab">1 · 接入地址（OpenAI 兼容接口）</div>
+    <input id="wl-base" type="text" spellcheck="false" autocomplete="off"
+           placeholder="https://api.example.com（结尾自动补 /v1）">
+    <div class="wl-lab">2 · API 密钥（Key）</div>
+    <input id="wl-key" type="password" spellcheck="false" autocomplete="off" placeholder="填 sk- 开头的密钥">
+    <div class="wl-lab">3 · 模型</div>
+    <div class="wl-row">
+      <select id="wl-model"><option value="">← 先点右边「拉取」拿模型列表</option></select>
+      <button class="px-btn" id="wl-fetch" type="button">拉取</button>
+    </div>
+    <input id="wl-model-manual" type="text" spellcheck="false" autocomplete="off" class="hidden"
+           placeholder="手动填模型 ID，例如 gpt-4o-mini">
+    <div id="wl-toggle-manual">列表里没有？手动填模型 ID</div>
+    <div id="wl-msg" class="hidden"></div>
+    <div class="wl-actions">
+      <button class="px-btn" id="wl-skip" type="button">跳过，稍后配置</button>
+      <button class="px-btn primary" id="wl-save" type="button">测试并保存</button>
     </div>
   </div>
 </div>

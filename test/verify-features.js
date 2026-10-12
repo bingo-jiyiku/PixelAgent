@@ -520,7 +520,9 @@ app.whenReady().then(async () => {
   // ★ 这里刻意调**渲染层**的 exportSession（不是裸 IPC），
   //   因为"界面有没有把结果说出来"也是要验的一部分；
   //   直接调 IPC 就把渲染层整段跳过了，等于只验了半个功能。
-  const exp = await js(`(function(){ return window.__pixelExport(${TMP_SESS_SEQ}, ${JSON.stringify(tmpExportFile)}); })()`);
+  // ★ 格式显式传 'html'：老板 2026-10-12 要求默认改成 MD（见下面第二条导出），
+  //   这条老断言是保 HTML 链路（pi --export 自包含查看器）的，别被默认值变化带红。
+  const exp = await js(`(function(){ return window.__pixelExport(${TMP_SESS_SEQ}, ${JSON.stringify(tmpExportFile)}, 'html'); })()`);
   console.log('  ℹ 导出结果: ' + JSON.stringify(exp));
   t('导出成功', !!(exp && exp.ok), true);
   t('导出的文件真的落在指定路径', fs.existsSync(tmpExportFile), true);
@@ -556,6 +558,41 @@ app.whenReady().then(async () => {
   const expBad = await js(`window.pixelAPI.exportSession(9988, ${JSON.stringify(tmpExportFile)})`);
   t('导出不存在的会话报 NOT_FOUND', expBad && expBad.reason, 'NOT_FOUND');
   t('导出失败时不产出文件', fs.existsSync(path.join(tmpExportDir, 'sess-9988.html')), false);
+
+  /* ---- 老板 2026-10-12：「我希望它导出会话是导出成 MD 格式的，不是 html」 ----
+     不传格式（用户在界面上点「导出」就是这种）→ 必须走 MD，且内容是真 Markdown。
+     反向验证也在这：要是哪天默认被改回 html，这条会红。 */
+  const tmpExportMd = path.join(tmpExportDir, 'sess-997.md');
+  const expMd = await js(`(function(){ return window.__pixelExport(${TMP_SESS_SEQ}, ${JSON.stringify(tmpExportMd)}); })()`);
+  console.log('  ℹ 默认格式导出: ' + JSON.stringify(expMd));
+  t('不传格式时导出成功', !!(expMd && expMd.ok), true);
+  t('默认格式就是 MD（不是 html）', expMd && expMd.format, 'md');
+  t('MD 文件真的落盘', fs.existsSync(tmpExportMd), true);
+  if (fs.existsSync(tmpExportMd)) {
+    const md = fs.readFileSync(tmpExportMd, 'utf8');
+    t('MD 内容是 Markdown（一级标题 + 二级消息头）', /^# .+/m.test(md) && /## 你/m.test(md) && /## 助手/m.test(md), true);
+    t('MD 里带着会话正文', md.indexOf('一次性会话') >= 0, true);
+    t('MD 不是 HTML（没有 html 标签）', /<html[\s>]/i.test(md), false);
+  }
+
+  /* ---- 老板 2026-10-12：「有一些文件它还是没办法拉进去，比如 Html 的」 ----
+     拖 .html 进窗口时 Chromium 只给 file:// 路径（dt.files 空），
+     renderer 靠 pi:stat-file 补 name/size/mime 再走附件把关。
+     这里验 IPC 本体：真文件能 stat、目录要拒、不存在的要拒。 */
+  const statOk = await js(`window.pixelAPI.statFile(${JSON.stringify(path.join(__dirname, '..', 'package.json').replace(/\\/g, '\\\\'))})`);
+  console.log('  ℹ statFile(package.json): ' + JSON.stringify(statOk));
+  t('stat-file：真文件返回 ok', statOk && statOk.ok === true, true);
+  t('stat-file：带回了文件名', statOk && statOk.name, 'package.json');
+  t('stat-file：带回了字节数（>0）', statOk && statOk.size > 0, true);
+  t('stat-file：json 扩展名认得出 mime', statOk && statOk.mime, 'application/json');
+
+  const statDir = await js(`window.pixelAPI.statFile(${JSON.stringify(path.join(__dirname, '..').replace(/\\/g, '\\\\'))})`);
+  t('stat-file：目录被拒（说清不是文件）', statDir && statDir.ok === false, true);
+
+  const statMiss = await js(`window.pixelAPI.statFile('E:\\\\no-such-file-xyz-12345.html')`);
+  console.log('  ℹ statFile(不存在): ' + JSON.stringify(statMiss));
+  t('stat-file：不存在的文件被拒且不抛异常', statMiss && statMiss.ok === false, true);
+  t('stat-file：拒绝原因说人话', /不存在|读不了/.test((statMiss && statMiss.error) || ''), true);
 
   // 删除：走回收站（可恢复），文件从会话目录消失。
   // ⚠ 本机（沙箱环境）实测 shell.trashItem 会把文件移走**之后仍然 reject**
@@ -652,6 +689,9 @@ app.whenReady().then(async () => {
   await sleep(6000);   // 真跑 pi list，要等子进程
   const extN = await js(`document.querySelectorAll('#ext-list .agent-item').length`);
   t('扩展清单至少有自带的那一个', extN >= 1, true);
+  // 老板 2026-10-12：标题数量要和列表条目数一致（不用自己数）
+  const cntTxt = await js(`document.getElementById('ext-count').textContent`);
+  t('已装扩展标题显示数量且与条目数一致', cntTxt, '（' + extN + '）');
   const extNames = await js(`Array.prototype.map.call(document.querySelectorAll('#ext-list .agent-item .ag-n'), function(e){ return e.textContent; })`);
   console.log('  ℹ 清单: ' + JSON.stringify(extNames));
   await shot('13-agents.png');
@@ -862,7 +902,9 @@ app.whenReady().then(async () => {
   })()`);
   console.log('  ℹ 设置面板控件: ' + JSON.stringify(ctl));
   t('工作目录是真输入框（不是只读一行）', ctl.cwd, 'INPUT');
-  t('默认模型是真下拉', ctl.model, 'SELECT');
+  // 老板 2026-10-11 22:41 拍板：设置面板删掉"默认模型"下拉（模型都在模型菜单里切）。
+  // 改成反向断言：控件必须不存在 —— 它要是又回来了，说明有人把删掉的功能加回去了。
+  t('默认模型下拉已删（老板拍板：模型走模型菜单切）', ctl.model, 'MISSING');
   t('思考档位是真下拉', ctl.think, 'SELECT');
   t('思考档位有 7 档 + 默认', ctl.thinkOpts, 8);
   t('图片上限是 number 框', ctl.maxT, 'number');
@@ -872,6 +914,46 @@ app.whenReady().then(async () => {
   t('主题色有 4 个色块', ctl.accents, 4);
   t('Enter 行为有两个选项', ctl.enterSeg, 2);
   t('导出格式有三个选项', ctl.exportSeg, 3);
+
+  /* ---- 8b. 应用更新提醒（老板 2026-10-12：客户机器要有新版本提示）----
+     链路：启动时 api.checkAppUpdate() → 主进程读 GitHub Release 公开 API
+     → 有新版本时**像素冒泡说出来**（老板 2026-10-12 19:xx 明确要求"由像素那边说出来"，
+       气泡可点、点开下载页）+ 状态栏徽章兜底。
+     真网络部分不可控（GitHub 可达性/有没有发过 Release 都不确定），
+     这里只验行为断言，不验网络结果：
+       ① IPC 能调通、返回结构合法（不抛异常就是胜利）；
+       ② 徽章默认隐藏（平时绝不打扰）；
+       ③ 模拟"有更新"的返回 → 徽章真的出现、版本号真的填进去；
+       ④ 像素气泡能带 onClick 冒出来（点了真的执行 + 收起）。 */
+  const updR = await js(`window.pixelAPI.checkAppUpdate()`);
+  console.log('  ℹ 更新检查返回: ' + JSON.stringify(updR));
+  t('更新检查 IPC 调通且返回合法结构', updR && typeof updR.ok === 'boolean', true);
+  t('更新徽章默认隐藏（没更新时绝不打扰）',
+    await js(`document.getElementById('sb-update').classList.contains('hidden')`), true);
+  await js(`(function(){
+    var badge = document.getElementById('sb-update');
+    document.getElementById('sb-update-ver').textContent = 'v9.9.9';
+    badge.classList.remove('hidden');
+    return 1; })()`);
+  t('有更新时徽章显示且带版本号',
+    await js(`(function(){
+      return !document.getElementById('sb-update').classList.contains('hidden')
+        && document.getElementById('sb-update-ver').textContent === 'v9.9.9';
+    })()`), true);
+  // ④ 像素冒泡（girlSay 的 onClick 参数）：冒出来 → 点了执行回调 → 自动收起
+  const sayR = await js(`(function(){
+    var clicked = 0;
+    girlSay('发现新版本 v9.9.9，点我去更新', 12000, function(){ clicked = 1; });
+    var b = document.getElementById('of-bubble-txt');
+    var shown = b.classList.contains('on') && /v9.9.9/.test(b.textContent) && b.style.pointerEvents === 'auto';
+    b.click();
+    var gone = !b.classList.contains('on') && b.onclick === null && clicked === 1;
+    return { shown: shown, gone: gone };
+  })()`);
+  console.log('  ℹ 像素更新气泡: ' + JSON.stringify(sayR));
+  t('更新提醒由像素气泡说出（文案带版本号、可点）', sayR && sayR.shown, true);
+  t('点气泡执行回调并自动收起（不会挂着一个可点气泡）', sayR && sayR.gone, true);
+  await js(`document.getElementById('sb-update').classList.add('hidden')`);   // 复原，别污染后面的截图
 
   /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
      原来的 bug：文档级 keydown 只有 mask-input / mask-model 两支，
@@ -966,7 +1048,7 @@ app.whenReady().then(async () => {
   const clampRes = await js(`window.pixelAPI.setCfg({ maxImages: 999, accent: '彩虹', exportFormat: 'exe' })`);
   t('越界的 maxImages 被夹回默认 4', clampRes && clampRes.cfg && clampRes.cfg.maxImages, 4);
   t('不存在的主题色被夹回默认', clampRes && clampRes.cfg && clampRes.cfg.accent, 'lav');
-  t('不存在的导出格式被夹回默认', clampRes && clampRes.cfg && clampRes.cfg.exportFormat, 'html');
+  t('不存在的导出格式被夹回默认', clampRes && clampRes.cfg && clampRes.cfg.exportFormat, 'md');
 
   // 关掉面板（取消会把预览回滚，这里已经保存过，直接关）
   await js(`(function(){ const b=document.getElementById('set-cancel'); if(b) b.click(); return 1; })()`);
@@ -1132,17 +1214,24 @@ app.whenReady().then(async () => {
     var bubble = document.getElementById('of-bubble-txt');
     if (!office || !scene || !bubble) return { ok:false };
     var st = getComputedStyle(office);
+    // 老板 2026-10-11 22:00：热区白名单只有 5 个（像素/电脑/键盘/窗户/水杯），
+    // cursor:pointer 也只给热区 —— 整个 office 变回 default 是**设计如此**。
+    var hot = ['.of-girl', '.of-monitor', '.of-keyboard', '.of-mug', '.of-window'];
+    var hotCursor = hot.every(function(sel) {
+      var el = scene.querySelector(sel);
+      return el && getComputedStyle(el).cursor === 'pointer';
+    });
     return {
       ok: true,
       border: st.borderTopWidth + '/' + st.borderTopStyle,
-      cursor: st.cursor,
+      hotCursor: hotCursor,
       bubbleExists: !!bubble,
       initialOn: bubble.classList.contains('on')
     };
   })()`);
   console.log('  ℹ 吉祥物初始状态: ' + JSON.stringify(girlInit));
   t('office 没有边框（border-top-width 应该是 0px）', girlInit.ok && girlInit.border.indexOf('0px') >= 0, true);
-  t('office 是可点的（cursor 应该不是 default）', girlInit.ok && girlInit.cursor !== 'default' && girlInit.cursor !== 'auto', true);
+  t('五个热区都是可点的（cursor=pointer）', girlInit.ok && girlInit.hotCursor, true);
   t('气泡元素存在', girlInit.ok && girlInit.bubbleExists, true);
 
   // 等 IDLE 自动气泡消失（girlSay 3s 后移除 .on）
@@ -1151,12 +1240,15 @@ app.whenReady().then(async () => {
   console.log('  ℹ IDLE 气泡自动消失后 .on 类: ' + girlAfterIdle);
   t('IDLE 气泡 3s 后自动消失（.on 类被移掉）', !girlAfterIdle, true);
 
-  // 触发一次点击 → 冒气泡
-  await js(`(function(){
-    var scene = document.getElementById('girl-scene');
-    scene.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    return 1;
+  // 触发一次点击 → 冒气泡。★ 必须点"像素"本体（.of-girl）：
+  //   老板 22:00 定了热区白名单，旧版直接点 scene 背景 —— 按现在的设计就该被无视。
+  const clickedGirl = await js(`(function(){
+    var g = document.querySelector('#girl-scene .of-girl');
+    if (!g) return false;
+    g.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return true;
   })()`);
+  t('热区元素 .of-girl 存在（能发起点击）', clickedGirl, true);
   await sleep(250);
   const girlAfterClick = await js(`(function(){
     var bubble = document.getElementById('of-bubble-txt');
@@ -1172,13 +1264,26 @@ app.whenReady().then(async () => {
   t('点击后气泡显示出来了（.on 类）', girlAfterClick.on, true);
   t('点击触发了点头动画（.girl-nod 类）', girlAfterClick.nod, true);
 
-  // 气泡 2s 后自动消失
-  await sleep(2400);
+  // 气泡点击后 2600ms 自动消失。★ 上一版只等 2400ms —— 边距只剩 ~100ms，
+  // executeJavaScript 往返稍有抖动就"还在淡出中"被误判成没消失（假红两连）。
+  // 等 3200ms，留 600ms 真边距。
+  await sleep(3200);
   const girlAfterWait = await js(`(function(){
     var bubble = document.getElementById('of-bubble-txt');
     return { text: bubble.textContent, on: bubble.classList.contains('on') };
   })()`);
   t('点击气泡 2s 后自动淡出（.on 类被移掉）', !girlAfterWait.on, true);
+
+  // 反向验证（老板 22:00 铁律）：点空白处必须**完全没反应** —— 气泡不许冒出来。
+  // 这里点 scene 本身（target=场景背景，不在任何热区内），等一会儿看气泡状态。
+  await js(`(function(){
+    var scene = document.getElementById('girl-scene');
+    scene.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return 1;
+  })()`);
+  await sleep(400);
+  t('点空白处不冒气泡（热区白名单外无反应）',
+    await js(`document.getElementById('of-bubble-txt').classList.contains('on')`), false);
 
   /* ================= 9b. 新增自定义模型 =================
      老板 2026-10-11：模型菜单要有"新增自定义模型"入口。
@@ -1189,7 +1294,13 @@ app.whenReady().then(async () => {
   const TEST_PROVIDER = 'verify-test-provider';
   const TEST_MODEL = 'verify-test-model-xyz';
   // 先把现有 models.json 备份（读回来，测试完了按原样写回）
-  const MJSON = path.join(__dirname, '..', '.pi-agent', 'models.json');
+  // ★ 互通改造后（老板 2026-10-11）：开发版 models.json 在 ~/.pi/agent（与终端 pi 共用），
+  //   旧的开发期隔离目录 .pi-agent 已废弃 —— 读它永远对不上账，还会让"清理"写错文件
+  //   （真实文件里攒下测试残留 → 下次重复添加被拒，新增链路全线假红）。
+  //   路径算法必须和 main.js 的 homeDir() 一致（PIXELAGENT_HOME 测试钩子优先）。
+  const MJSON = path.join(
+    process.env.PIXELAGENT_HOME || process.env.USERPROFILE || process.env.HOME,
+    '.pi', 'agent', 'models.json');
   const mjsonBackup = fs.readFileSync(MJSON, 'utf8');
 
   // 打开对话框
@@ -1315,6 +1426,71 @@ app.whenReady().then(async () => {
   const testR3 = await js(`window.pixelAPI.testConnection({ baseUrl: 'https://x', apiKey: 'k', modelId: '' })`);
   t('test-connection：modelId 空被拒', testR3 && testR3.ok === false, true);
 
+  /* ---- 老板 2026-10-12：服务商返回的所有模型都要入组（不是只加选中的那个） ----
+     走 window.pixelAPI.addModels（批量版）：拉回几个就加几个，已存在的跳过。
+     TEST_MODEL 上面已经加过了 → 这次应该 added=2 / skipped=1。 */
+  const bulkR1 = await js(`window.pixelAPI.addModels({
+    provider: ${JSON.stringify(TEST_PROVIDER)},
+    baseUrl: 'https://verify-bulk.example/v1',
+    apiKey: 'sk-bulk-5678',
+    models: [
+      { id: ${JSON.stringify(TEST_MODEL)}, contextWindow: 128000, maxTokens: 4096 },
+      { id: 'bulk-model-a', contextWindow: 262144, maxTokens: 8192 },
+      { id: 'bulk-model-b' }
+    ],
+    defaultModelId: 'bulk-model-a'
+  })`);
+  console.log('  ℹ 批量添加: ' + JSON.stringify(bulkR1));
+  t('add-models：批量添加成功', bulkR1 && bulkR1.ok === true, true);
+  t('add-models：新加了 2 个（跳过已存在的 1 个）',
+    bulkR1 && bulkR1.added && bulkR1.added.length, 2);
+  t('add-models：跳过名单里就是已存在的那个',
+    bulkR1 && bulkR1.skipped && bulkR1.skipped[0], TEST_MODEL);
+  t('add-models：组内总数 = 原来的 1 + 新加的 2', bulkR1 && bulkR1.total, 3);
+  t('add-models：defaultModelId 原样带回', bulkR1 && bulkR1.defaultModelId, 'bulk-model-a');
+
+  // 落盘确认：三个模型真在组里，ctx/max 按元数据写
+  const bulkDoc = JSON.parse(fs.readFileSync(MJSON, 'utf8'));
+  const bulkProv = bulkDoc.providers && bulkDoc.providers[TEST_PROVIDER];
+  const bulkIds = bulkProv && bulkProv.models ? bulkProv.models.map((m) => m.id) : [];
+  t('add-models：models.json 组里有全部三个模型',
+    bulkIds.indexOf(TEST_MODEL) >= 0 && bulkIds.indexOf('bulk-model-a') >= 0 && bulkIds.indexOf('bulk-model-b') >= 0, true);
+  const bulkA = bulkProv && bulkProv.models && bulkProv.models.find((m) => m.id === 'bulk-model-a');
+  t('add-models：bulk-model-a 的 contextWindow 按元数据写入', bulkA && bulkA.contextWindow, 262144);
+  const bulkB = bulkProv && bulkProv.models && bulkProv.models.find((m) => m.id === 'bulk-model-b');
+  t('add-models：bulk-model-b 没元数据就不写 ctx/max（pi 兜底）',
+    !!bulkB && bulkB.contextWindow === undefined && bulkB.maxTokens === undefined, true);
+
+  // 反向验证 1：models 空数组 → 拒（不能默默建个空组）
+  const bulkR2 = await js(`window.pixelAPI.addModels({
+    provider: 'bulk-empty', baseUrl: 'https://x/v1', apiKey: 'k', models: []
+  })`);
+  t('add-models：models 空数组被拒', bulkR2 && bulkR2.ok === false, true);
+
+  // 反向验证 2：provider 空 → 拒
+  const bulkR3 = await js(`window.pixelAPI.addModels({ provider: '', models: [{ id: 'x' }] })`);
+  t('add-models：provider 空被拒', bulkR3 && bulkR3.ok === false, true);
+
+  // 反向验证 3：元数据里的 contextWindow 是负数 → 拒（不能写坏数据进组）
+  const bulkR4 = await js(`window.pixelAPI.addModels({
+    provider: ${JSON.stringify(TEST_PROVIDER)}, models: [{ id: 'bulk-bad', contextWindow: -5 }]
+  })`);
+  t('add-models：负数 contextWindow 被拒', bulkR4 && bulkR4.ok === false, true);
+
+  // 反向验证 4：再来一次同样的三个 → 全部 skipped（幂等，不会重复入组）
+  const bulkR5 = await js(`window.pixelAPI.addModels({
+    provider: ${JSON.stringify(TEST_PROVIDER)},
+    models: [
+      { id: ${JSON.stringify(TEST_MODEL)} },
+      { id: 'bulk-model-a' },
+      { id: 'bulk-model-b' }
+    ]
+  })`);
+  t('add-models：重复调用全部跳过（幂等）',
+    bulkR5 && bulkR5.added && bulkR5.added.length, 0);
+  t('add-models：重复调用后 skipped=3',
+    bulkR5 && bulkR5.skipped && bulkR5.skipped.length, 3);
+
   // baseUrl 归一化：用户随便填 base / base/ / base/v1 / base/v1/ 都应该能拼成 {base}/v1/xxx
   // 这里直接看请求 URL 是不是被归一化了 —— 用无效域名 + 各种 base 形式，看请求有没有真的发出去
   // （invalid 域名会立即 DNS 失败，很快，不浪费时间）
@@ -1354,7 +1530,7 @@ app.whenReady().then(async () => {
      结论（三条独立证据，都在本机可取）：
        ① 界面显示的上下文 = pi `--list-models` 第 3 列（dist/cli/list-models.js 里
           `context: formatTokenCount(m.contextWindow)`）；
-       ② `agent-plan/ark-code-latest` 在 `.pi-agent/models.json` 里**只有** `{"id":...}`，
+       ② `agent-plan/ark-code-latest` 在 ~/.pi/agent/models.json 里**只有** `{"id":...}`，
           没声明 contextWindow；
        ③ pi 在 dist/core/provider-composer.js:109 写死 `contextWindow ?? 128000` ——
           所以它报 128K（128000，formatTokenCount 用 ÷1000）。
@@ -1389,9 +1565,10 @@ app.whenReady().then(async () => {
   console.log('  ℹ 用量明细弹框（截断）: ' + JSON.stringify(String(detailTxt).slice(0, 160)));
   t('点用量条能打开明细弹框', await js(`!document.getElementById('mask-input').classList.contains('hidden')`), true);
   t('明细里写清了「分母来源」', String(detailTxt).indexOf('分母来源') >= 0, true);
-  // 这条要**指名道姓**地断言，不能只断言"提到了 pi 表" ——
+  // 这条要**指名道姓**地断言，不能只断言"提到了模型表" ——
   // 那句话在"表里没有这个模型"时也会出现，恒真的断言等于没写。
-  t('明细里点名 pi 表写的就是 128K', String(detailTxt).indexOf('pi 表里写的是 128K') >= 0, true);
+  // 文案改版（老板 2026-10-11 去分发化）：界面不再出现"pi"字样 → "pi 表"改叫"模型表"。
+  t('明细里点名模型表写的就是 128K', String(detailTxt).indexOf('模型表里写的是 128K') >= 0, true);
   await js(`(function(){ const b=document.getElementById('inp-cancel'); if(b) b.click(); return 1; })()`);
   await sleep(300);
 
@@ -1451,8 +1628,10 @@ app.whenReady().then(async () => {
   t('配置框里明说这是「模型没声明 → pi 的兜底值」', String(repTxt).indexOf('兜底') >= 0, true);
   t('上下文输入框的 placeholder 就是 pi 报的值',
     await js(`document.getElementById('mcfg-ctx').placeholder`), '128K');
-  t('只读区告诉用户 pi 里有没有 key（但不回显内容）',
-    /(有|没在)/.test(await js(`document.getElementById('mcfg-auth').textContent`)), true);
+  // 文案改版（老板 2026-10-11 去分发化）：有 key → 「已配置密钥（内容不回显）」，
+  // 没 key → 「没在 models.json 里找到 key」。两种都算"告诉了但不回显"。
+  t('只读区告诉用户有没有 key（不回显内容）',
+    /(已配置密钥|没在)/.test(await js(`document.getElementById('mcfg-auth').textContent`)), true);
 
   // 改成 300K（300000 词元）→ 落盘 + 分母立刻跟着变
   // ★ 这一条上一轮是**红的**，而且是真 bug：
