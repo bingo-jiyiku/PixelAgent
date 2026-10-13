@@ -40,7 +40,16 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --f-px: 'Press Start 2P', 'Microsoft YaHei', 'SimHei', monospace;
   --f-tx: 'VT323', 'Microsoft YaHei', 'SimHei', monospace;
+  /* 正文基准字号（老板 2026-10-13：「输出的字可以小一点，现在太大了」）。
+     正文、Markdown 各级标题、工具/步骤输出、输入框、状态栏全部挂在这一个变量上，
+     设置里切「界面字号」三档只改这一行，全线联动，不会出现"正文小了表格还老大"。 */
+  --fs-base: 18px;
 }
+
+/* 界面字号三档（body 上的 class 覆盖 :root 的默认值）。
+   标准 = 不加 class（18px）；小 = 16px；更小 = 14px。 */
+body.fs-s   { --fs-base: 16px; }
+body.fs-xs  { --fs-base: 14px; }
 
 * { box-sizing: border-box; }
 
@@ -296,7 +305,7 @@ body {
 
 .m {
   display: flex; gap: 12px; margin-bottom: 10px;
-  line-height: 1.5; font-size: 21px;
+  line-height: 1.5; font-size: var(--fs-base);
   animation: msg-in 200ms var(--ease) both;
 }
 .m:last-child { margin-bottom: 0; }
@@ -336,13 +345,13 @@ body {
   -webkit-user-select: text; user-select: text; word-break: break-word;
 }
 .m.tool .who { background: var(--warn); color: var(--panel); }
-.m.tool .txt { color: var(--muted); font-size: 19px; font-family: var(--f-tx); }
+.m.tool .txt { color: var(--muted); font-size: calc(var(--fs-base) - 1px); font-family: var(--f-tx); }
 .m.think .who { background: var(--lav); }
 .m.think .txt { color: var(--muted); }
 .m.err .who { background: var(--err); color: var(--panel); }
 .m.err .txt { color: var(--err); }
 .m.step .who { background: var(--panel-3); }
-.m.step .txt { color: var(--muted); font-size: 19px; }
+.m.step .txt { color: var(--muted); font-size: calc(var(--fs-base) - 1px); }
 
 /* 打字机尾部光标 */
 .stream-caret {
@@ -524,7 +533,7 @@ body {
 #input {
   width: 100%; border: none; outline: none; background: transparent;
   font-family: 'Microsoft YaHei', 'SimHei', var(--f-tx);
-  font-size: 18px; color: var(--ink);
+  font-size: var(--fs-base); color: var(--ink);
   line-height: 1.5;
   -webkit-user-select: text; user-select: text;
 }
@@ -1201,7 +1210,7 @@ textarea.set-in { resize: vertical; min-height: 60px; line-height: 1.4; font-siz
 /* ---------- 设置项真的生效：关动画 / 紧凑 ---------- */
 body.no-anim .office *, body.no-anim .girl-scene *, body.no-anim .m { animation: none !important; }
 body.compact .log { padding: 8px 10px; }
-body.compact .m { margin-bottom: 5px; line-height: 1.34; font-size: 20px; }
+body.compact .m { margin-bottom: 5px; line-height: 1.34; font-size: calc(var(--fs-base) - 2px); }
 body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 
 /* ============================================================
@@ -1215,10 +1224,10 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   font-family: 'Microsoft YaHei', 'SimHei', sans-serif; font-weight: 900;
   line-height: 1.3; margin: 14px 0 8px; letter-spacing: 1px;
 }
-.md h1 { font-size: 26px; border-bottom: 3px solid var(--ink); padding-bottom: 4px; }
-.md h2 { font-size: 23px; border-bottom: 2px solid var(--panel-3); padding-bottom: 3px; }
-.md h3 { font-size: 21px; }
-.md h4, .md h5, .md h6 { font-size: 20px; color: var(--muted); }
+.md h1 { font-size: calc(var(--fs-base) * 1.22); border-bottom: 3px solid var(--ink); padding-bottom: 4px; }
+.md h2 { font-size: calc(var(--fs-base) * 1.11); border-bottom: 2px solid var(--panel-3); padding-bottom: 3px; }
+.md h3 { font-size: calc(var(--fs-base) * 1.06); }
+.md h4, .md h5, .md h6 { font-size: var(--fs-base); color: var(--muted); }
 .md ul, .md ol { margin: 0 0 8px; padding-left: 26px; }
 .md li { margin: 3px 0; }
 .md ul { list-style: none; }
@@ -1261,7 +1270,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 }
 /* 代码块里的 <code> 不要再套一层行内码的框和底色 */
 .md pre code { background: transparent; border: none; padding: 0; font-size: inherit; }
-.md table { border-collapse: collapse; margin: 0 0 10px; font-size: 19px; width: 100%; }
+.md table { border-collapse: collapse; margin: 0 0 10px; font-size: calc(var(--fs-base) - 1px); width: 100%; }
 .md th, .md td { border: 2px solid var(--ink); padding: 4px 8px; }
 .md th { background: var(--lav); font-family: var(--f-px); font-size: 10px; }
 .md tbody tr:nth-child(even) { background: var(--panel-2); }

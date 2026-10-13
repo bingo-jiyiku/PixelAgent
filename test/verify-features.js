@@ -1164,6 +1164,53 @@ app.whenReady().then(async () => {
   t('Enter 行为有两个选项', ctl.enterSeg, 2);
   t('导出格式有三个选项', ctl.exportSeg, 3);
 
+  /* ---- 8a-2. 界面字号三档（老板 2026-10-13：「输出的字可以小一点，现在太大了」）----
+     断言分两层：① 控件在不在 ② **实际渲染出来的 px** 对不对。
+     只查 body class 会漏掉「class 加上了但 CSS 变量没接上」这种假绿。
+     而且不止正文：Markdown 表格 / 工具输出 / 输入框也得跟着走，
+     否则会出现「正文小了、表格还是老大」的半吊子。 */
+  const fsCtl = await js(`(function(){
+    var host = document.querySelector('#set-fsize');
+    if (!host) return { segs: 0, vals: '' };
+    return { segs: host.querySelectorAll('.seg-b').length,
+      vals: Array.prototype.map.call(host.querySelectorAll('.seg-b'), function(b){ return b.dataset.v; }).join(',') };
+  })()`);
+  t('界面字号是三档分段按钮', fsCtl.segs, 3);
+  t('三档值 xs,s,m（排成"更小→标准"）', fsCtl.vals, 'xs,s,m');
+  t('启动后默认就是「小」档（老板嫌字大）', await js(`(window.__pixelCfg()||{}).fontSize || 'NONE'`), 's');
+
+  const fsRender = await js(`(function(){
+    var bak = (window.__pixelCfg()||{}).fontSize;
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:absolute;left:-9999px;top:0';
+    wrap.innerHTML = '<div class="m"><div class="txt">x</div></div>' +
+      '<div class="m tool"><div class="txt">x</div></div>' +
+      '<div class="md"><table><tbody><tr><td>x</td></tr></tbody></table></div>';
+    document.body.appendChild(wrap);
+    var probe = function(sel){ var el = wrap.querySelector(sel); return el ? getComputedStyle(el).fontSize : 'MISSING'; };
+    var out = {};
+    ['xs','s','m'].forEach(function(v){
+      window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { fontSize: v }));
+      out[v] = [probe('.m .txt'), probe('.m.tool .txt'), probe('.md table'),
+        getComputedStyle(document.querySelector('#input')).fontSize,
+        document.body.classList.contains('fs-s') ? 'S' : (document.body.classList.contains('fs-xs') ? 'XS' : 'M')];
+    });
+    window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), { fontSize: bak }));
+    document.body.removeChild(wrap);
+    return JSON.stringify(out);
+  })()`);
+  console.log('  ℹ 字号四路渲染值: ' + fsRender);
+  const fsMap = JSON.parse(fsRender);
+  // ⚠ 这个文件的 t() 是**严格相等**，数组/对象传进去永远不等（字面一样也红）。
+  // 所以拆成标量：失败时能看出是哪一路没跟着走，而不是只看到一坨 got/want。
+  t('更小档：正文 14px', fsMap.xs[0], '14px');
+  t('更小档：工具/表格/输入框/body 跟着走', fsMap.xs.slice(1).join('|'), '13px|13px|14px|XS');
+  t('小档：正文 16px', fsMap.s[0], '16px');
+  t('小档：工具/表格/输入框/body 跟着走', fsMap.s.slice(1).join('|'), '15px|15px|16px|S');
+  t('标准档：正文 18px', fsMap.m[0], '18px');
+  t('标准档：四路联动且 body 不挂 fs-* class', fsMap.m.slice(1).join('|'), '17px|17px|18px|M');
+  t('字号档位已还原成启动值（别把测试态留给用户）', await js(`(window.__pixelCfg()||{}).fontSize || 'NONE'`), 's');
+
   /* ---- 8b. 应用更新提醒（老板 2026-10-12：客户机器要有新版本提示）----
      链路：启动时 api.checkAppUpdate() → 主进程读 GitHub Release 公开 API
      → 有新版本时**像素冒泡说出来** + 状态栏徽章兜底。

@@ -69,6 +69,8 @@ const TODO_EXT = (IS_PACK && RES_DIR)
 const CONFIG_FILE = IS_PACK ? path.join(USER_DIR, 'pixelagent.json') : path.join(APP_DIR, '.pixelagent.json');
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+// 界面字号三档 → CSS body 上的 class（fs-s / fs-xs；标准档不加 class）
+const FONT_SIZES = ['m', 's', 'xs'];
 
 // ---------- 配置 ----------
 /*
@@ -86,6 +88,10 @@ const CFG_DEFAULTS = {
   accent: 'lav',            // 主题强调色
   mascotAnim: true,         // 吉祥物四态动画
   compact: false,           // 紧凑模式（行距更紧）
+  // 界面字号（正文基准 px，CSS 变量 --fs-base 一处生效）
+  // 默认 's' = 16px：老板 2026-10-13「输出的字可以小一点，现在太大了」。
+  // 别再加第四档 —— 再小中文会糊，而想要更密应该开紧凑模式（行距也一起收）。
+  fontSize: 's',            // 'm' 标准18 / 's' 小16 / 'xs' 更小14
   autoScroll: true,         // 新消息自动滚到底
   // 老板 2026-10-12：「我希望它导出会话是导出成 MD 格式的，不是 html」
   // ⇒ 默认从 html 改成 md。老配置文件里显式选过 html 的仍然尊重（loadCfg 只覆盖存在的键）。
@@ -141,6 +147,7 @@ function normalizeCfg(patch) {
   if ('accent' in p) out.accent = ACCENTS[p.accent] ? p.accent : CFG_DEFAULTS.accent;
   if ('mascotAnim' in p) out.mascotAnim = !!p.mascotAnim;
   if ('compact' in p) out.compact = !!p.compact;
+  if ('fontSize' in p) out.fontSize = FONT_SIZES.includes(p.fontSize) ? p.fontSize : CFG_DEFAULTS.fontSize;
   if ('autoScroll' in p) out.autoScroll = !!p.autoScroll;
   if ('exportFormat' in p) out.exportFormat = EXPORT_FORMATS.includes(p.exportFormat) ? p.exportFormat : CFG_DEFAULTS.exportFormat;
   if ('defaultModel' in p) out.defaultModel = typeof p.defaultModel === 'string' ? p.defaultModel : '';

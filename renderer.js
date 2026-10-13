@@ -3377,6 +3377,9 @@ function applyCfg(c, meta) {
   }
   document.body.classList.toggle('no-anim', CFG.mascotAnim === false);
   document.body.classList.toggle('compact', CFG.compact === true);
+  // 界面字号三档 → body class（CSS 变量 --fs-base 一处生效）
+  document.body.classList.toggle('fs-s', CFG.fontSize === 's');
+  document.body.classList.toggle('fs-xs', CFG.fontSize === 'xs');
 }
 
 async function loadCfg() {
@@ -3452,6 +3455,7 @@ function cfgToForm(c) {
   $('set-uname').value = c.userName || '';
   $('set-uprofile').value = c.userProfile || '';
   segOn($('set-persona'), c.persona || 'lively');
+  segOn($('set-fsize'), c.fontSize || 's');   // 老板 2026-10-13：界面字号三档，默认小
 }
 
 function formToCfg() {
@@ -3463,6 +3467,7 @@ function formToCfg() {
     maxImages: Number($('set-maximg').value),
     mascotAnim: $('set-mascot').checked,
     compact: $('set-compact').checked,
+    fontSize: segPick($('set-fsize')) || 's',
     autoScroll: $('set-scroll').checked,
     desktopNotify: $('set-notify') ? $('set-notify').checked : true,
     enterToSend: segPick($('set-enter')) === '1',
@@ -3479,7 +3484,12 @@ function formToCfg() {
 // 像素性格也算"看得见"：切了立刻用新腔调冒一句，不用保存就能听出差别。
 function previewDraftCfg() {
   const d = formToCfg();
-  applyCfg(Object.assign({}, CFG, { accent: d.accent, mascotAnim: d.mascotAnim, compact: d.compact, persona: d.persona }));
+  // fontSize 也要在这儿：seg 的即时预览走的是这个白名单，
+  // 漏了就会出现"点了『更小』没反应、保存后才有变化"（设置项最容易漏的一处接线）。
+  applyCfg(Object.assign({}, CFG, {
+    accent: d.accent, mascotAnim: d.mascotAnim, compact: d.compact,
+    persona: d.persona, fontSize: d.fontSize
+  }));
   if (d.persona && d.persona !== S.personaPreviewed) {
     S.personaPreviewed = d.persona;
     girlSay(pickLine('IDLE'), 2600);   // 用新性格的词库打招呼
