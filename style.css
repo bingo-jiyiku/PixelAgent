@@ -97,7 +97,7 @@ body {
 ::-webkit-scrollbar { width: 13px; height: 13px; display: block; }
 ::-webkit-scrollbar-track { background: var(--panel-3); border: 3px solid var(--ink); }
 ::-webkit-scrollbar-thumb { background: var(--panel); border: 3px solid var(--ink); }
-::-webkit-scrollbar-thumb:hover { background: var(--lav); }
+::-webkit-scrollbar-thumb:hover { background: var(--lav-deep); }
 ::-webkit-scrollbar-corner { background: var(--panel-3); border: 3px solid var(--ink); }
 
 .hidden { display: none !important; }
@@ -149,7 +149,7 @@ body {
   transition: background-color 110ms var(--ease), color 110ms var(--ease);
 }
 .tb-btn:hover { background: var(--panel); color: var(--ink); }
-.tb-btn.tb-close:hover { background: var(--lav); border-color: var(--lav); color: var(--ink); }
+.tb-btn.tb-close:hover { background: var(--panel); border-color: var(--lav-deep); color: var(--ink); }
 .tb-btn:focus-visible { outline: 2px solid var(--lav); outline-offset: 2px; }
 .tb-drag { -webkit-app-region: drag; app-region: drag; }
 .tb-btns, .tb-btns * { -webkit-app-region: no-drag; app-region: no-drag; }
@@ -548,7 +548,7 @@ body {
   box-shadow: 3px 3px 0 var(--lav-deep);
   transition: background-color 110ms var(--ease), transform 110ms var(--ease), box-shadow 110ms var(--ease);
 }
-.px-btn:hover { background: var(--lav); }
+.px-btn:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .px-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--lav-deep); }
 .px-btn:focus-visible { outline: 2px solid var(--lav-deep); outline-offset: 2px; }
 .px-btn.primary { background: var(--lav); }
@@ -593,7 +593,7 @@ body {
   background: var(--panel-2); color: var(--ink); cursor: pointer;
   display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
 }
-.sb-btn:hover { background: var(--lav); }
+.sb-btn:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .sb-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
 
 /* ============================================================
@@ -1056,8 +1056,8 @@ body {
    位置跟人物走：left:72 在人物左肩外侧 */
 .of-gear {
   position: absolute; left: 72px; top: 67px; width: 12px; height: 12px; display: none; z-index: 10;
-  background: #d17590;
-  box-shadow: -6px 0 0 #d17590, 6px 0 0 #d17590, 0 -6px 0 #d17590, 0 6px 0 #d17590;
+  background: var(--lav-deep);
+  box-shadow: -6px 0 0 var(--lav-deep), 6px 0 0 var(--lav-deep), 0 -6px 0 var(--lav-deep), 0 6px 0 var(--lav-deep);
   animation: of-pulse .7s steps(2) infinite;
 }
 .of-gear::before { content: ''; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; background: #fbe4ef; }
@@ -1136,7 +1136,7 @@ body.no-anim .of-dots i {
 }
 .win-btn:hover { background: var(--panel-2); }
 .win-btn:active { box-shadow: inset 3px 3px 0 rgba(25, 21, 16, .45), inset -3px -3px 0 rgba(255, 255, 255, .85); }
-.win-btn.win-x:hover { background: var(--lav); }
+.win-btn.win-x:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .dialog { width: min(580px, 92vw); max-height: 84vh; }
 .dlg-body { padding: 4px 0 0; background: var(--panel); overflow-y: auto; min-height: 0; }
 .dlg-body .kv { font-size: 19px; padding: 10px 14px; }
@@ -1282,13 +1282,13 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   font-family: var(--f-px); font-size: 8px; cursor: pointer; border-radius: 0;
   border: 2px solid var(--panel-3); background: var(--panel); color: var(--muted); padding: 3px 6px;
 }
-.m-btn:hover { border-color: var(--ink); background: var(--lav); color: var(--ink); }
+.m-btn:hover { border-color: var(--lav-deep); background: var(--panel); color: var(--ink); }
 
 /* ---------- 思考链可折叠 ---------- */
 .tk-toggle { cursor: pointer; }
 
 /* 状态栏「有新版本」提示（老板 2026-10-12）：粉色徽章，点击去 Release 页下载 */
-.sb-update { color: var(--pink, #ff9ecf); cursor: pointer; user-select: none; }
+.sb-update { color: var(--lav-deep); cursor: pointer; user-select: none; }
 .sb-update:hover { text-decoration: underline; }
 .sb-update b { font-weight: normal; }
 .tk-toggle:hover { color: var(--lav-deep); }
@@ -1327,7 +1327,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   background: transparent; cursor: pointer; color: var(--muted);
   font-family: var(--f-tx); font-size: 18px; gap: 5px;
 }
-.sb-pick:hover { background: var(--lav); color: var(--ink); }
+.sb-pick:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); color: var(--ink); }
 .sb-pick em { font-style: normal; color: var(--lav-deep); }
 .sb-pick:hover b, .sb-pick:hover em { color: var(--ink); }
 .sb-think { border-right: 2px solid var(--panel-3); }
@@ -1367,7 +1367,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   font-family: var(--f-px); font-size: 8px; cursor: pointer; border-radius: 0;
   border: 2px solid var(--ink); background: var(--panel); color: var(--ink); padding: 4px 6px;
 }
-.th-btn:hover { background: var(--lav); }
+.th-btn:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .th-btn.on { background: var(--ink); color: var(--panel); }
 .mdl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 /* 服务商分组标题：**可点折叠**。用 <button> 语义（键盘也能开），但要长得像标题条。 */
@@ -1393,7 +1393,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   border: 2px solid var(--ink); border-radius: 0; background: var(--panel); color: var(--ink);
   padding: 3px 5px;
 }
-.mi-op:hover { background: var(--lav); }
+.mi-op:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .mdl-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mdl-item {
   display: flex; align-items: baseline; gap: 8px; cursor: pointer;
@@ -1458,7 +1458,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   padding: 3px 2px; border: 2px solid var(--ink); background: var(--panel-2);
   color: var(--ink); cursor: pointer;
 }
-.ss-clear:hover { background: var(--lav); }
+.ss-clear:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 
 /* 搜索结果条目标题 */
 .search-hd {
@@ -1494,7 +1494,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   padding: 3px 2px; cursor: pointer;
   border: 2px solid var(--ink); background: var(--panel-2); color: var(--ink);
 }
-.sess-op:hover { background: var(--lav); }
+.sess-op:hover { background: var(--panel-2); border-color: var(--lav-deep); }
 .sess-op.del:hover { background: #b23b2e; color: #fff; }
 
 /* ---------- 右栏公共小标题 ---------- */
@@ -1558,7 +1558,7 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   padding: 3px 6px; border: 2px solid var(--ink); background: var(--panel-2);
   cursor: pointer; box-shadow: 1px 1px 0 var(--ink);
 }
-.ext-upd:hover { background: var(--lav); }
+.ext-upd:hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 .ext-upd:active { transform: translate(1px, 1px); box-shadow: none; }
 .ext-upd:disabled { opacity: .6; cursor: wait; }
 /* 「最新 ✓」徽标：本次会话更新成功过的扩展（老板 2026-10-11：更过的别再挂更新按钮） */
@@ -1589,7 +1589,30 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
   border: none; background: transparent; color: var(--ink);
   cursor: pointer;
 }
-.ctx-item:hover { background: var(--pink); color: #fff; }
+/* 原写 var(--pink) —— 该变量从未定义 ⇒ 背景是无效声明，只有 color:#fff 生效
+   （白色字压在透明底上 = 看不见）。改用 --lav 底 + --ink 字，对比度正常。 */
+.ctx-item:hover { background: var(--lav); color: var(--ink); }
+
+/* ============================================================
+   截图取证的 hover 复现（shot-hover.js 用）
+   ------------------------------------------------------------
+   鼠标 API 不可用：WebContents 没有 setMouseCursorPosition（那是 BrowserView
+   的）。所以脚本给元素挂 .test-hover，下面这 11 条**精确到元素**的组合选择器
+   把它映射成各自的 hover 样式。
+   ⚠ 必须写全选择器（.px-btn.test-hover 而不是裸 .test-hover）——
+     裸选择器会让所有 .test-hover 元素同时命中全部规则，样式互相覆盖（试过）。
+   ⚠ 每条的值都必须与对应 :hover 规则一致，改 hover 样式时这里要跟着改。
+   ============================================================ */
+.tb-btn.test-hover        { background: var(--panel); color: var(--ink); }
+.tb-btn.tb-close.test-hover{ background: var(--panel); border-color: var(--lav-deep); color: var(--ink); }
+.px-btn.test-hover        { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
+.sb-btn.test-hover        { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
+.win-btn.win-x.test-hover { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
+.m-btn.test-hover         { border-color: var(--lav-deep); background: var(--panel); color: var(--ink); }
+.sb-pick.test-hover       { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); color: var(--ink); }
+.th-btn.test-hover        { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
+.mi-op.test-hover         { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
+.ss-clear.test-hover      { background: var(--panel); box-shadow: inset 0 0 0 2px var(--lav-deep); }
 
 /* ---------- FILES：路径独立成行（长路径不能挤在按钮旁） ---------- */
 .filebar-p {
