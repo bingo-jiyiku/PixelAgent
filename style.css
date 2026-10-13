@@ -787,10 +787,36 @@ body {
   0%, 49% { transform: rotate(-3deg) translateY(-1px); }
   50%, 100% { transform: rotate(2deg) translateY(-3px); }
 }
-/* TOOL：敲键盘节奏 —— 2026-10-11 定稿：人物本体必须静止！
-   （人物一上下动，原图的手就脱开手层位置 → 双影）动作全部交给手层：
-   .of-hand-l/r 0.34s 反相敲击，与键帽闪烁(0.3s)节奏咬合。 */
-.office[data-state="TOOL"] .of-girl { animation: none; }
+/* TOOL：敲键盘 —— 老板 2026-10-13：「动作要更明显，手臂要在动」
+   根因（style.css 旧注释）：人物本体一上下动，原图的手就脱开手层位置 → 双影。
+   所以之前 TOOL 态把 .of-girl 锁成 animation:none，动作全靠手层 ±3.5px，看不出在敲。
+   解法：人物 + 左手 + 右手各绑一条 keyframes，共享同一俯身分量，周期完全对齐
+   （都 0.24s steps(1)）⇒ 相对位置恒定 ⇒ 不双影。
+   ⚠ 不用 CSS 变量同步 —— 实测 getComputedStyle 读不出变量插值结果，
+     手层 transform 恒 matrix(1,0,0,1,0,0)（手完全不动）。
+   幅度：俯身 1.4px + 旋转 0.7deg（人物本体，小）；敲击 ±9px（手，大）；
+   周期 0.24s（原来 0.4s 太慢，看着像停着）。 */
+.office[data-state="TOOL"] .of-girl  { animation: of-lean   .24s steps(1) infinite; }
+.office[data-state="TOOL"] .of-hand-l { display: block; animation: of-hand-l-type .24s steps(1) infinite; }
+.office[data-state="TOOL"] .of-hand-r { display: block; animation: of-hand-r-type .24s steps(1) infinite; }
+/* 俯身分量三条完全一致（-1.4 → 0 → -1.4，-0.7 → 0 → 0.7deg） */
+@keyframes of-lean {
+  0%      { transform: translateY(-1.4px) rotate(-0.7deg); }
+  50%     { transform: translateY(0)      rotate(0deg); }
+  100%    { transform: translateY(-1.4px) rotate(0.7deg); }
+}
+/* 左手：俯身分量 + 敲击 9px 下压 / 4px 抬起 */
+@keyframes of-hand-l-type {
+  0%      { transform: translateY(7.6px); }   /* -1.4 + 9  = 按下 */
+  50%     { transform: translateY(-4px);  }   /*  0 + -4   = 抬起 */
+  100%    { transform: translateY(7.6px); }
+}
+/* 右手：与左手反相 —— 左手按下时右手抬起 */
+@keyframes of-hand-r-type {
+  0%      { transform: translateY(-5.4px); }  /* -1.4 - 4  = 抬起 */
+  50%     { transform: translateY(8px);   }   /*  0 + 9    = 按下 */
+  100%    { transform: translateY(-5.4px); }
+}
 .office[data-state="DONE"] .of-girl { animation: of-hop 1.2s steps(2) infinite; }
 @keyframes of-hop { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-6px); } }
 
@@ -815,16 +841,10 @@ body {
 }
 .of-hand-l { left: 122.9px; top: 170.4px; }
 .of-hand-r { left: 157.5px; top: 170.4px; }
-.office[data-state="TOOL"] .of-hand-l { display: block; animation: of-hand-l .4s steps(2) infinite; }
-.office[data-state="TOOL"] .of-hand-r { display: block; animation: of-hand-r .4s steps(2) infinite; }
-@keyframes of-hand-l {
-  0%, 49%  { transform: translateY(3.5px); }  /* 左手按下（沉入键盘后沿） */
-  50%, 100% { transform: translateY(-2px); }  /* 左手抬起（露出原图的手） */
-}
-@keyframes of-hand-r {
-  0%, 49%  { transform: translateY(-2px); }   /* 右手抬起 */
-  50%, 100% { transform: translateY(3.5px); } /* 右手按下 */
-}
+/* TOOL 态的显隐 + 位移 + 反相节奏统一由上方的
+   `.office[data-state="TOOL"] .of-hand-l/.of-hand-r` + `@keyframes of-lean` 处理
+   （原 of-hand-l / of-hand-r 两条 keyframes 已删 —— 它们和 of-lean 争抢同一 transform，
+     后写的会整条覆盖掉俯身位移 ⇒ 手层脱离人物又双影）。 */
 /* 分区 hover：鼠标在人物身上时轻微放大提示可点 */
 .office .of-girl { transition: filter 100ms steps(2); }
 .office .of-girl:hover { filter: brightness(1.1) drop-shadow(0 0 0 var(--lav)); }
@@ -1015,8 +1035,8 @@ body {
 
 /* --- ⑦ 小盆栽：已删（老板 2026-10-11 22:00「墙上那两个东西去掉」） --- */
 
-/* --- ⑧ 状态特效（位置跟着人物 left:95 top:40 走） --- */
-/* 思考气泡：贴在人物头部左上侧（人物头 x≈120-175 y≈40-75） */
+/* --- ⑧ 状态特效（位置跟着人物 left:95 top:79 走） --- */
+/* 思考气泡：贴在人物头部左上侧（人物头 x≈120-175 y≈80-125） */
 .of-bubble {
   position: absolute; left: 75px; top: 49px; display: none;
   gap: 3px; padding: 5px; background: var(--panel); border: 3px solid var(--ink); z-index: 10;
@@ -1025,6 +1045,50 @@ body {
 .of-bubble i:nth-child(2) { animation: of-dot 1s steps(2) infinite; }
 .of-bubble i:nth-child(3) { animation: of-dot 1s steps(2) .3s infinite; }
 .office[data-state="THINKING"] .of-bubble { display: flex; }
+
+/* --- ⑧b 表情：恼火 / 烦躁的眉毛（老板 2026-10-13：干活时要有恼火、烦躁的表情）
+   倒八字像素眉毛，纯 box-shadow 拼（pixelated，2px 方块）：
+     左眉 ＼  = (0,0)(1,1)(2,2)     右眉 ／ = (2,0)(1,1)(0,2)
+     眉向脸中间下压 = 皱眉恼火。
+   位置：人物头左眼上方（girl.png 宽 100 显示 100px，脸中心 x≈140）
+   TOOL = 干活中 → 眉毛显出 + 0.8s 抖一下抖一下（越干越烦）
+   THINKING = 卡住 → 慢慢皱起（2s 呼吸式皱眉） */
+.of-brow {
+  position: absolute; left: 126px; top: 99px; width: 22px; height: 8px;
+  display: none; pointer-events: none; z-index: 7;
+  image-rendering: pixelated;
+}
+.of-brow::before, .of-brow::after {
+  content: ''; position: absolute; width: 2px; height: 2px;
+  background: var(--ink);
+}
+/* 左眉 ＼ */
+.of-brow::before {
+  left: 0; top: 0;
+  box-shadow: 2px 2px 0 var(--ink), 4px 4px 0 var(--ink);
+}
+/* 右眉 ／ */
+.of-brow::after {
+  left: 16px; top: 0;
+  box-shadow: 14px 0 0 var(--ink), 12px 2px 0 var(--ink), 10px 4px 0 var(--ink);
+}
+.office[data-state="TOOL"] .of-brow {
+  display: block;
+  animation: of-brow-angry .8s steps(2) infinite;
+}
+/* 越干越烦：整根眉毛下压 1px + 微抖 = 烦躁感 */
+@keyframes of-brow-angry {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(-1px, 1px); }
+}
+.office[data-state="THINKING"] .of-brow {
+  display: block;
+  animation: of-brow-frown 2.4s steps(4) infinite;
+}
+@keyframes of-brow-frown {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(0, -1px); }
+}
 
 /* 文字气泡：吉祥物"说话" —— 头顶冒字（不是 TTS） */
 /* 定位在人物头部右上方（人物 x:50-150，头顶最高 y=55，气泡放在 x>130、y<55） */

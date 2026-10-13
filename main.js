@@ -103,8 +103,11 @@ const CFG_DEFAULTS = {
   // 发现新版本、后台命令结束时，如果用户已经切去看别的窗口，就走系统通知。
   desktopNotify: true,
   // 老板 2026-10-12：「设置里面增加用户画像，给像素做一个性格进去」
-  // userName/userProfile：写给 AI 看的用户画像（每个会话的第一轮带上，之后不重复烧 token）
-  // persona：像素（吉祥物）的性格，只影响本地气泡语库，不发给 AI
+  // 老板 2026-10-13：「像素的性格不仅仅只是为了好看」—— persona 参考 OpenHanako 的 SOUL.md 思路，
+  //   不再只是"吉祥物气泡语库"，而是**同时也注入 AI 的 system prompt**，让模型本身按这套腔调回话。
+  //   每个会话的第一轮带上，之后不重复烧 token；改了性格 → 下一轮重带（见 pi:cfg-set 的重置触发）。
+  // userName/userProfile：写给 AI 看的用户画像
+  // persona：像素（吉祥物）的性格 —— 既换气泡词库，也换 AI 的说话方式（见 PERSONA_PROMPT）
   userName: '',             // 称呼（≤20 字）
   userProfile: '',          // 自由文本画像（≤500 字）
   persona: 'lively',        // lively 活泼 / cool 高冷 / sharp 毒舌 / warm 温柔
@@ -126,12 +129,27 @@ const ACCENTS = {
 };
 const EXPORT_FORMATS = ['html', 'md', 'json'];
 // 像素性格（老板 2026-10-12：「给像素做一个性格进去」）。
-// 只影响吉祥物本地气泡语库，不发给 AI —— AI 的归画像管，像素的归性格管。
+// 老板 2026-10-13：「像素的性格不仅仅只是为了好看」—— 参考 OpenHanako 的 SOUL.md 思路，
+//   persona 同时做两件事：① 换吉祥物气泡词库（renderer.js 的 PERSONA_LINES）；
+//   ② **注入 AI 的 system prompt**（下面 PERSONA_PROMPT），让模型本身按这套腔调回话。
+//   prompt 片段刻意简短（≤120 字），一是省 token，二是别抢了用户画像的话头。
 const PERSONAS = {
   lively: { name: '活泼' },
   cool:   { name: '高冷' },
   sharp:  { name: '毒舌' },
   warm:   { name: '温柔' }
+};
+// persona → system prompt 片段。挂在用户画像后面、用户原话前面（见 profilePrefixFor）。
+// 每套都保持同一长度量级，切性格时"AI 变腔调"的体感是一致的、可预期的。
+const PERSONA_PROMPT = {
+  // 活泼：默认。轻快、口语、偶尔用表情，短句为主。
+  lively: '【像素·活泼】你用轻快口语回话，短句为主，可偶尔用表情符号或语气词（~、呀、啦），保持轻松不啰嗦。',
+  // 高冷：话少、句号多、不寒暄、不情绪化。
+  cool:   '【像素·高冷】你话很少，多用句号，不寒暄不情绪化。只回问题本身，别加表情、别加感叹号。',
+  // 毒舌：直接、点破、自嘲式吐槽，但不下作、不人身攻击。
+  sharp:  '【像素·毒舌】你说话直接、爱点破、常自嘲式吐槽，可以损但不下作、不做人身攻击。短句、有节奏。',
+  // 温柔：软语气、陪伴感、主动关心，但不矫情、不重复道谢。
+  warm:   '【像素·温柔】你语气温柔、带陪伴感，会主动关心，但不矫情、不重复道谢。多用"呀""呢""啦"等软语气词。'
 };
 
 let cfg = { ...CFG_DEFAULTS };
@@ -1108,21 +1126,30 @@ function createWindow() {
 
 module.exports = { getWindow, sessionFile };
 
-// 画像注入（老板 2026-10-12：「设置里面增加用户画像」）。
-// 写给 AI 的用户画像，拼在每轮 prompt 前面；**每个会话只带一次** ——
-// pi 的 session 文件持续追加，带过一次模型就记得，之后每轮都带纯属白烧 token。
-// 画像为空就不加（别发一段废话占上下文）。改了画像会重置，下一位…下一轮重新带。
+// 画像 + 像素性格 注入（老板 2026-10-12「设置里面增加用户画像」+ 2026-10-13「性格不仅仅只是为了好看」）。
+// 拼在每轮 prompt 前面；**每个会话只带一次** —— pi 的 session 文件持续追加，
+// 带过一次模型就记得，之后每轮都带纯属白烧 token。
+//   · 画像为空 **且** persona 是默认（活泼）就不加（别发一段废话占上下文）。
+//   · 改了画像 **或** 改了性格，profileInjectedFor 置 null → 下一轮重带一次（见 pi:cfg-set）。
 let profileInjectedFor = null;
 function profilePrefixFor(sessFile) {
   const name = String(cfg.userName || '').trim();
   const prof = String(cfg.userProfile || '').trim();
-  if (!name && !prof) return '';
+  const p = cfg.persona || 'lively';
+  const pPrompt = PERSONA_PROMPT[p];
+  // 画像和性格都空（= 默认活泼）→ 不加前缀，走裸 prompt，省 token。
+  if (!name && !prof && !pPrompt) return '';
   if (profileInjectedFor === sessFile) return '';
   profileInjectedFor = sessFile;
-  const L = ['[用户画像 —— 以下是关于你服务对象的信息，本次会话里请一直记住]'];
-  if (name) L.push('- 怎么称呼他：' + name);
-  if (prof) L.push('- 他的情况：' + prof);
-  L.push('[画像结束，下面是他这次说的话]');
+  const L = [];
+  if (name || prof) {
+    L.push('[用户画像 —— 以下是关于你服务对象的信息，本次会话里请一直记住]');
+    if (name) L.push('- 怎么称呼他：' + name);
+    if (prof) L.push('- 他的情况：' + prof);
+    L.push('[画像结束]');
+  }
+  if (pPrompt) L.push(pPrompt);
+  L.push('[下面是他这次说的话]');
   return L.join('\n');
 }
 
