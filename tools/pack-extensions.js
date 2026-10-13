@@ -17,9 +17,19 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const NPM_DIR = path.join(process.env.USERPROFILE || process.env.HOME, '.pi', 'agent', 'npm');
+const HOME = process.env.USERPROFILE || process.env.HOME;
+// 🔴 两个来源，缺一不可（老板 2026-10-13：「新版本没有的插件也加上」）：
+//   ~/.pi/agent/npm        开发版 pi 自己管的扩展（打包脚本原来的唯一来源）
+//   ~/.pixelagent/agent/npm 打包版播种 + 用户后来自己装的
+// 原来只看 .pi，于是**在打包版里启用过的扩展每次发版都消失**（老板机器上
+// pi-agnes-tools / billion-context / pi-cache-optimizer 就是这么丢的）。
+// 顺序有意义：同名包以先到的为准（.pi 优先），不改变原有行为。
+const NPM_DIRS = [
+  path.join(HOME, '.pi', 'agent', 'npm'),
+  path.join(HOME, '.pixelagent', 'agent', 'npm')
+].filter((d) => fs.existsSync(d));
 const OUT_DIR = path.join(ROOT, 'vendor', 'ext-npm');
-const SETTINGS = path.join(process.env.USERPROFILE || process.env.HOME, '.pi', 'agent', 'settings.json');
+const SETTINGS_FILES = NPM_DIRS.map((d) => path.join(d, '..', 'settings.json'));
 
 // 剪枝规则：目录名命中就整个跳过（都是运行时不要的）
 const PRUNE_DIRS = new Set(['.git', '.github', 'build', 'test', 'tests', '__tests__', '.cache']);
@@ -33,16 +43,21 @@ const PRUNE_SUBPATHS = [
 
 function fail(msg) { console.log('❌ ' + msg); process.exit(1); }
 
-if (!fs.existsSync(NPM_DIR)) fail('找不到 ' + NPM_DIR + '（本机没装过 pi 扩展？）');
+if (!NPM_DIRS.length) fail('找不到任何 pi 扩展目录（.pi/agent/npm 或 .pixelagent/agent/npm）');
 
-// ① 启用中的扩展（只认 npm: 前缀；本地路径源不跟安装包走）
+// ① 启用中的扩展：**两处 settings.json 合并**（只认 npm: 前缀；本地路径源不跟安装包走）
+//   合并而不是二选一：开发版清单是"我开发时启用的"，打包版清单是"这台机器实际在用的"，
+//   后者常有前者没有的扩展（老板在打包版里 pi add 装的），漏了就等于发版把它们抹掉。
 let enabled = [];
-try {
-  const s = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
-  enabled = (Array.isArray(s.packages) ? s.packages : []).filter((p) => /^npm:/.test(p));
-} catch (e) { fail('读不了 settings.json：' + e.message); }
-if (!enabled.length) fail('settings.json 里没有启用中的 npm 扩展');
-console.log('启用中的扩展（' + enabled.length + '）：' + enabled.join(' '));
+for (const f of SETTINGS_FILES) {
+  try {
+    const s = JSON.parse(fs.readFileSync(f, 'utf8'));
+    const list = (Array.isArray(s.packages) ? s.packages : []).filter((p) => /^npm:/.test(p));
+    for (const p of list) if (!enabled.includes(p)) enabled.push(p);   // 去重且保序
+  } catch (e) { /* 这个源没有/读不了就跳过，另一个源仍然权威 */ }
+}
+if (!enabled.length) fail('两处 settings.json 里都没找到启用中的 npm 扩展');
+console.log('启用中的扩展（' + enabled.length + '，来自 ' + SETTINGS_FILES.length + ' 处配置）：' + enabled.join(' '));
 
 const appPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -59,32 +74,82 @@ if (!process.env.PIXELAGENT_EXT_FORCE) {
   if (prev) console.log('ℹ 版本号变了（v' + prev.app + ' → v' + appPkg.version + '），看闭包要不要重打…');
 }
 
-// ② 真实闭包
-const closure = new Set();
+// ② 真实闭包（两个 npm 目录都能解析：扩展本体和它的依赖可能分处两边）
+const closure = new Set();      // 绝对目录路径（待拷）
+const closureTop = new Set();   // 顶层包名（**跨目录去重**：同名包只拷一份，.pi 优先）
 const queue = [];
 const unresolved = [];
-for (const p of enabled) queue.push(path.join(NPM_DIR, 'node_modules', p.replace(/^npm:/, '')));
+// 平台变体（<包名>-<平台>-<架构>[...]）在只发 win-x64 的包里必然缺，属正常。
+// 用于过滤 optionalDependencies 里解析不到的那批（dependencies 里缺一律是错）。
+const PLATFORM_VARIANT = /^(@[^/]+\/)?[^/]+-(win32|linux|darwin|android|freebsd|netbsd|openbsd|sunos|haiku)-(x64|ia32|arm64|arm|armv7l|ppc64|ppc64le|riscv64|s390x|s390|loong64|mips64|mips64el|wasm32)([-._].*)?$/;
+let optSkipped = 0;
+
+function nmUnder(base) { return path.join(base, 'node_modules'); }
+function inAnyNm(absDir) {
+  return NPM_DIRS.some((b) => absDir.startsWith(nmUnder(b) + path.sep));
+}
+// 顶层包名（相对它自己所在的 node_modules）：pi-agnes-tools / @scope/pkg / @scope/pkg/sub
+function topOf(absDir) {
+  for (const b of NPM_DIRS) {
+    const nm = nmUnder(b);
+    if (absDir.startsWith(nm + path.sep)) return path.relative(nm, absDir).split(path.sep)[0];
+  }
+  return path.basename(absDir);
+}
+// 两个目录里按优先级找
+function locate(topName) {
+  for (const b of NPM_DIRS) {
+    const d = path.join(nmUnder(b), topName);
+    if (fs.existsSync(d)) return d;
+  }
+  return null;
+}
+function pushTop(topName, fromDir) {
+  if (closureTop.has(topName)) return;
+  const d = locate(topName);
+  if (!d) { unresolved.push(topName + ' (from ' + path.basename(fromDir) + ')'); return; }
+  closureTop.add(topName);
+  queue.push(d);
+}
+
+for (const p of enabled) pushTop(p.replace(/^npm:/, ''), 'settings');
+
 while (queue.length) {
   const dir = queue.pop();
-  if (closure.has(dir) || !fs.existsSync(dir)) continue;
+  if (closure.has(dir)) continue;
   closure.add(dir);
   let pj = null;
   try { pj = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); } catch (e) { continue; }
+  const optDeps = pj.optionalDependencies || {};
   for (const dep of Object.keys(Object.assign({}, pj.dependencies, pj.optionalDependencies))) {
     let r = null;
     try { r = require.resolve(path.join(dep, 'package.json'), { paths: [dir] }); } catch (e) { r = null; }
-    if (!r) { unresolved.push(dep + ' (from ' + path.basename(dir) + ')'); continue; }
+    if (!r) {
+      // 缺失分两类，处理方式按 **npm 语义**而不是"我猜哪些是平台变体"：
+      //  ① optionalDependencies 里缺失 → 放行（npm 官方语义：optional 装不上也能跑；
+      //     而 @img/sharp-* / @ast-grep/*-* 这类几乎全在 optional 里，只发 win-x64 一个平台）。
+      //     ⚠ 原来靠一个 @ast-grep 硬编码白名单，加带 sharp 的扩展后直接卡死；
+      //       平台形态是 linuxmusl / webcontainers / musl… 穷举永远漏（2026-10-13 实测）。
+      //  ② dependencies 里缺失 → 真缺失，必须报出来（新机器上当场 Cannot find module）。
+      const isOptional = Object.prototype.hasOwnProperty.call(optDeps, dep);
+      if (isOptional || PLATFORM_VARIANT.test(dep)) { optSkipped++; continue; }
+      unresolved.push(dep + ' (from ' + path.basename(dir) + ')');
+      continue;
+    }
     const dd = path.dirname(r);
-    if (!dd.startsWith(NPM_DIR)) continue;
-    const rel = path.relative(path.join(NPM_DIR, 'node_modules'), dd).split(path.sep);
-    if (rel[0] === '@earendil-works') continue;   // pi 内核自己走 vendor/pi，不重复捆
-    queue.push(dd);
+    if (!inAnyNm(dd)) continue;          // 解析到 npm 全局目录等第三方地方 → 不捆
+    const top = topOf(dd);
+    if (top === '@earendil-works') continue;   // pi 内核自己走 vendor/pi，不重复捆
+    pushTop(top, dir);
   }
 }
-// 平台专属的可选依赖解析不到是正常的（只发 win-x64），其余的必须报出来
-const OPTIONAL_PLATFORM = /^@ast-grep\/(cli|napi)-(?!win32-x64)/;
-const realMiss = unresolved.filter((u) => !OPTIONAL_PLATFORM.test(u.split(' ')[0]));
-if (realMiss.length) fail('有依赖解析不到，打进去会是坏的：\n  ' + realMiss.join('\n  '));
+
+// 🔴 守卫：optional 里的平台变体已就地放过，剩下的解析不到一律是**真缺失**，
+// 打进去新机器上扩展当场 "Cannot find module"。别删这条（我改白名单时顺手删过一次）。
+if (unresolved.length) {
+  fail('有依赖解析不到，打进去会是坏的：\n  ' + unresolved.join('\n  '));
+}
+if (optSkipped) console.log("ℹ 已跳过 " + optSkipped + " 个可选依赖（非本机平台，不进包）");
 
 // 第二条守卫：只有**版本号**变了、扩展清单和闭包顶层集合都没变（发新版 bump
 // version 的典型场景）→ 只把 manifest 的 app 字段原位改掉，不重打。
@@ -95,8 +160,7 @@ if (realMiss.length) fail('有依赖解析不到，打进去会是坏的：\n  '
 if (!process.env.PIXELAGENT_EXT_FORCE && fs.existsSync(OUT_DIR)) {
   let prev = null;
   try { prev = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'pixelagent-extensions.json'), 'utf8')); } catch (e) {}
-  const nmRoot0 = path.join(NPM_DIR, 'node_modules');
-  const copyNow = [...new Set([...closure].map((d) => path.relative(nmRoot0, d).split(path.sep)[0]))].sort();
+  const copyNow = [...closureTop].sort();
   if (prev && JSON.stringify(prev.packages) === JSON.stringify(enabled)
       && JSON.stringify((prev.copy || []).slice().sort()) === JSON.stringify(copyNow)) {
     fs.writeFileSync(path.join(OUT_DIR, 'pixelagent-extensions.json'), JSON.stringify({
@@ -123,9 +187,16 @@ if (fs.existsSync(OUT_DIR)) {
 }
 const seenInode = new Set();
 let files = 0, bytes = 0, skipped = 0;
-const nmRoot = path.join(NPM_DIR, 'node_modules');
 
-function relOf(p) { return path.relative(nmRoot, p); }
+// 相对路径要按**包自己所在的目录**算：两个来源的包都要落成 npm 的规范嵌套结构
+// （pi-agnes-tools → pi-agnes-tools；@scope/pkg/sub → @scope/pkg/sub）。
+function relOf(p) {
+  for (const b of NPM_DIRS) {
+    const nm = nmUnder(b);
+    if (p.startsWith(nm + path.sep)) return path.relative(nm, p);
+  }
+  return path.basename(p);
+}
 
 function shouldPruneDir(rel) {
   const segs = rel.split(path.sep);

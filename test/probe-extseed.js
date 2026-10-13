@@ -5,11 +5,11 @@
    验「下载安装就可以直接用」这条链路在**新用户**场景下真的通：
      假家目录 + FORCE_PACKAGED + PIXELAGENT_RES=vendor（资源钩子）
      → 起真应用 → 播种 → 断言四件事：
-       ① 六个扩展真的落到 ~/.pixelagent/agent/npm/node_modules
+       ① 九个扩展真的落到 ~/.pixelagent/agent/npm/node_modules
        ② settings.json 的 packages 被加性合并，用户原有键一根头发都没少
        ③ 标记文件记了账（下次启动不会重复播种）
      ④ **真跑一次 pi list**（PI_CODING_AGENT_DIR 指到播种后的目录）——
-        六个扩展都列出来才算数。这条是实锤：光看文件在盘上不算，
+        九个扩展都列出来才算数。这条是实锤：光看文件在盘上不算，
         pi 认不出来等于白捆。
    ============================================================ */
 'use strict';
@@ -54,7 +54,12 @@ fs.writeFileSync(path.join(fakeUserData, '.ext-seeded.json'), JSON.stringify({
 }, null, 2), 'utf8');
 const staleMarker = path.join(fakeUserData, '.ext-seeded.json');
 
-const SIX = ['pi-background-tasks', 'pi-subagents', 'pi-hermes-memory', 'pi-web-access', 'pi-lens', 'pi-simplify'];
+// 九个：前六个是开发版清单，后三个（pi-agnes-tools / billion-context / pi-cache-optimizer）
+// 只在**打包版**配置里启用过 —— 打包脚本原来只看 ~/.pi 一个来源，每次发版就把它们丢了
+// （老板 2026-10-13：「新版本没有的插件也加上」）。这里跟着 manifest 一起长，
+// 断言写死 6 个的话新增的三个播没播根本没测试管。
+const ALL = ['pi-background-tasks', 'pi-subagents', 'pi-hermes-memory', 'pi-web-access', 'pi-lens', 'pi-simplify',
+  'pi-agnes-tools', 'billion-context', 'pi-cache-optimizer'];
 
 process.env.PIXELAGENT_FORCE_PACKAGED = '1';
 process.env.PIXELAGENT_HOME = fakeHome;
@@ -105,20 +110,20 @@ app.whenReady().then(async () => {
     ? JSON.parse(fs.readFileSync(staleMarker, 'utf8')).app : '(没了)';
   t('USER_DIR 里的旧标记被无视（没被改写成新账本）', staleNow, '0.2.0');
 
-  // ① 六个扩展真的在盘上
-  const onDisk = SIX.filter((p) => fs.existsSync(path.join(agentDir, 'npm', 'node_modules', p, 'package.json')));
-  t('六个扩展全部落盘', onDisk.length, 6);
+  // ① 九个扩展真的在盘上
+  const onDisk = ALL.filter((p) => fs.existsSync(path.join(agentDir, 'npm', 'node_modules', p, 'package.json')));
+  t('九个扩展全部落盘', onDisk.length, 9);
   t('落位目录带嵌套依赖（pi-web-access 的 undici 也在）',
     fs.existsSync(path.join(agentDir, 'npm', 'node_modules', 'undici', 'package.json')), true);
 
   // ② settings.json 加性合并，用户键不动
   const set = JSON.parse(fs.readFileSync(path.join(agentDir, 'settings.json'), 'utf8'));
-  t('packages = 用户原有的 + 六个捆绑的（去重后排后面）',
-    set.packages, ['npm:pi-simplify'].concat(SIX.filter((p) => p !== 'pi-simplify').map((p) => 'npm:' + p)));
+  t('packages = 用户原有的 + 九个捆绑的（去重后排后面）',
+    set.packages, ['npm:pi-simplify'].concat(ALL.filter((p) => p !== 'pi-simplify').map((p) => 'npm:' + p)));
   t('用户的 defaultModel 没被碰', set.defaultModel, 'ark-code-latest');
   t('用户的 theme 没被碰', set.theme, 'dark');
 
-  // 实锤：真跑 pi list，六个扩展都要认出来。
+  // 实锤：真跑 pi list，九个扩展都要认出来。
   // ⚠ stdio 绝不能交给 spawnSync 默认的管道 —— 本机沙箱会拦 node 系进程的
   //   管道 spawn（EBUSY，见记忆 2026-10-10 的变量隔离实验）。改开临时文件
   //   把 fd 传给子进程，绕开管道；输出落盘后再读回来断言。
@@ -141,8 +146,8 @@ app.whenReady().then(async () => {
   console.log('  ℹ pi list spawn: status=' + r.status + ' error=' + (r.error && r.error.message) +
     ' outLen=' + out.length + ' cli=' + cliPath);
   console.log('  ℹ pi list 输出（前 600 字）：\n' + out.slice(0, 600));
-  const listed = SIX.filter((p) => out.indexOf(p) >= 0);
-  t('pi list 认出全部六个扩展（实锤）', listed.length, 6);
+  const listed = ALL.filter((p) => out.indexOf(p) >= 0);
+  t('pi list 认出全部九个扩展（实锤）', listed.length, 9);
   t('pi list 没报加载错误', /Error|Cannot find|failed/i.test(out), false);
 
   try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) { /* 删不掉算了 */ }
