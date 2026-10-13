@@ -24,6 +24,7 @@
     "shot:settings": "electron test/shot-settings.js",
     "shot:model": "electron test/shot-model.js",
     "shot:girl": "electron test/shot-girl.js",
+    "shot:face": "electron test/shot-face.js",
     "shot:sky": "electron test/shot-sky.js",
     "zoom:parts": "electron test/zoom-parts.js",
     "zoom:scene": "electron test/zoom-scene.js",

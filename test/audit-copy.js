@@ -160,7 +160,13 @@ report('字符串里混进了 Markdown 标记（会在界面上显示成字面�
 // index.html：文本节点 + 提示属性
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
-const nodes = noScript.replace(/<[^>]*>/g, '\u0000').split('\u0000').map((s) => s.trim()).filter(Boolean);
+// 🔴 必须**先剥 HTML 注释**再剥标签（2026-10-14 踩）：
+//   注释里写了 `从 <img> 改成 <div>` 这种带尖括号的说明文字时，
+//   下面的 /<[^>]*>/ 会在注释**内部**的 `>` 处提前闭合，
+//   把注释后半截当成"文本节点"吐出来 ⇒ 注释里的 `**重点**` 被误报成裸 Markdown。
+//   剥注释要放在剥标签之前，且用非贪婪匹配吃完整段 `<!-- ... -->`。
+const noComment = noScript.replace(/<!--[\s\S]*?-->/g, '\u0000');
+const nodes = noComment.replace(/<[^>]*>/g, '\u0000').split('\u0000').map((s) => s.trim()).filter(Boolean);
 report('index.html 文本节点', nodes.filter((s) => /[A-Za-z]{2,}/.test(s) && !CJK.test(s) && !KEEP.has(s))
   .map((s) => JSON.stringify(s)));
 // 上面那把 `**` 就是在这里漏出来的（提示语是 HTML 纯文本，不解析 Markdown）

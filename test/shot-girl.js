@@ -111,20 +111,28 @@ app.whenReady().then(async () => {
   // ★ 2026-10-11 20:30：墙面从"奶油色网格"改成"白色 + 淡横线条纹"（老板要"白色标签感"）
   //   新墙面主色 #ffffff（白）+ #e4e4e0（浅灰线）→ 检查 R>200 && G>200 && B>180。
   //   旧的"排除纯白"逻辑不再适用（现在纯白就是主色）。
+  // 🩹 2026-10-14 修：原来固定取一行（3.5% 高度），但那行正好压在
+  //   `.girl-scene` 的 `border-top: 3px solid var(--ink)`（黑色分隔线）上 ——
+  //   dpr=2 + 裁切留白 8px ⇒ 那条黑线落在截图 y≈16-22，而 3.5%×496≈17 正在其中
+  //   ⇒ 四张图**长期假红**（"边框行深色占比=0%"）。实测在 HEAD 版本上同样红，与本次改动无关。
+  //   ✅ 改成扫一条**带**（4%~11% 高度）取最好的一行：避开顶部黑线，又不依赖单一像素行。
   function checkBorder(pngBuf) {
     try {
       const im = decodePng(pngBuf);
-      let wall = 0, tot = 0;
-      // 裁剪图里场景顶边在 y≈9 CSS px 处；这里用比例定位，避免依赖固定像素
-      const y = Math.round(im.h * 0.035);
-      for (let x = Math.round(im.w * 0.06); x < im.w * 0.94; x++) {
-        const i = (y * im.w + x) * 4;
-        tot++;
-        // 白色 (#fff) 或浅灰线 (#e4e4e0)：R>200, G>200, B>180
-        const r = im.data[i], g = im.data[i + 1], b = im.data[i + 2];
-        if (r > 200 && g > 200 && b > 180) wall++;
+      const y0 = Math.round(im.h * 0.04), y1 = Math.round(im.h * 0.11);
+      let best = 0;
+      for (let y = y0; y <= y1; y++) {
+        let wall = 0, tot = 0;
+        for (let x = Math.round(im.w * 0.06); x < im.w * 0.94; x++) {
+          const i = (y * im.w + x) * 4;
+          tot++;
+          // 白色 (#fff) 或浅灰线 (#e4e4e0)：R>200, G>200, B>180
+          const r = im.data[i], g = im.data[i + 1], b = im.data[i + 2];
+          if (r > 200 && g > 200 && b > 180) wall++;
+        }
+        if (tot && wall / tot > best) best = wall / tot;
       }
-      return { ratio: tot ? wall / tot : 0, w: im.w, h: im.h };
+      return { ratio: best, w: im.w, h: im.h };
     } catch (e) { return { err: String(e.message) }; }
   }
 

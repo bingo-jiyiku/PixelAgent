@@ -79,8 +79,49 @@
         <!-- ② 墙上装饰：老板 2026-10-11 22:00「墙上那两个东西可以去掉」
            → 书架、盆栽都删了，墙上只留窗户 -->
         <!-- ③ 人物：往右挪 + 露出更多上半身（老板 2026-10-11）
-           left:95 让显示器（left:8 宽 80）不压脸，键盘（left:95 宽 100）在人物前面 -->
-        <img class="of-girl" src="assets/girl.png" alt="">
+           left:95 让显示器（left:8 宽 80）不压脸，键盘（left:95 宽 100）在人物前面。
+
+           ★★ 老板 2026-10-14：「像素这个吉祥物是真的有表情的，眼睛要有动画，
+             会眨眼/愤怒/发愁/思考/大笑，而不是加两个笔画上去」
+           ⇒ 从 <img> 改成 <div> 容器，里面两层：
+             ① img.girl-body：**无眼底图** assets/girl-blank.png
+                （原图的眼睛是烧在位图里的，用工具擦掉了 —— 生成脚本见下方 assets 注释）
+             ② .of-eyes：叠在脸上的**活眼睛**，纯 div 画的像素眼，CSS 动画驱动。
+             ⚠ 眼睛必须是 .of-girl 的**子元素**：人物怎么动（呼吸/俯身/旋转），
+               眼睛自动跟着 ⇒ 不会出现"手层脱开人物"那种双影。
+             几何换算：显示宽 100px / 原图宽 315 = 缩放 k=0.31746（下文所有 px 同此换算）。 -->
+        <div class="of-girl">
+          <img class="girl-body" src="assets/girl-blank.png" alt="">
+          <!-- 活眼睛（老板 2026-10-14）：
+               ★ 用**从原图裁下来的真眼睛**做贴图（assets/eye-l/r.png），不是拿色块拼 ——
+                 我第一版用 div 色块画，出来是"横条/黑方块"，一点都不像眼睛（已弃）。
+               ★ 动作靠**眼皮遮罩**（.lid）实现，不让眼球位移 ——
+                 眼球一动，贴图自带的刘海/皮肤背景就跟着动，边缘会露馅；
+                 眼皮盖下来则永远和原图对齐（眼皮色 = 原图睫毛色）。
+                 眨眼 = 眼皮盖满；瞪眼 = 盖一半斜切；眯眼 = 盖三分之一。
+               ★ 大笑另外用一条"笑眼弧"（.smile）—— 眼睛弯成月牙 ^ ^。
+               坐标：左眼原图 (86,132) 52×62 → 显示 left 27.30 top 41.90 16.51×19.68px
+                     右眼原图 (176,132) 54×62 → 显示 left 55.87 同尺寸高 -->
+          <div class="of-eyes" aria-hidden="true">
+            <div class="of-eye of-eye-l">
+              <img class="ball" src="assets/eye-l.png" alt="">
+              <i class="smile"></i><i class="lid"></i><i class="blink"></i>
+            </div>
+            <div class="of-eye of-eye-r">
+              <img class="ball" src="assets/eye-r.png" alt="">
+              <i class="smile"></i><i class="lid"></i><i class="blink"></i>
+            </div>
+          </div>
+          <!-- 活眉毛（老板 2026-10-14：「而不是加两个笔画上去」）：
+               原来那对静止的倒八字飘在**刘海**上（office y99 → 原图 y63 是头发），
+               所以看着就是"贴了两笔"。现在改成跟着人物的**可旋转眉毛**：
+                 平静=水平；愤怒=内侧下压 ＼／；发愁=内侧上抬 ／＼；思考=一侧上挑。
+               位置 = 眼框上方 4px（原图 y124 一线），用 transform: rotate 变形。 -->
+          <div class="of-brows" aria-hidden="true">
+            <i class="of-brow-l"></i>
+            <i class="of-brow-r"></i>
+          </div>
+        </div>
         <!-- ③b 她自己的手：girl-hand-l/r.png 是从 girl.png 原图裁下来的「袖口+手」，
              静止时隐藏（原手的画像不动）；TOOL（敲键盘/输出回复）时手层图片
              左右交替下沉 2px = 她自己的手在敲键盘（老板 2026-10-11 定稿方案） -->
@@ -119,9 +160,8 @@
         <div class="of-mug"><i></i></div>
         <!-- ⑦ 状态特效 -->
         <div class="of-bubble"><i></i><i></i><i></i></div>
-        <!-- 表情：倒八字眉毛。TOOL 态抖一下抖一下（干活烦躁），THINKING 态慢慢皱起。
-             纯 box-shadow 拼像素，无图。见 style.css ⑧b -->
-        <div class="of-brow" aria-hidden="true"></div>
+        <!-- 表情（眉毛）已并入 .of-girl 内部（见 ③c）—— 旧版这里是两个静止笔画，
+             飘在刘海上且不跟人物动，老板 2026-10-14 明确否掉 -->
         <div class="of-gear"><i></i></div>
         <div class="of-stars"><i></i><i></i><i></i></div>
         <!-- ⑧ 文字气泡（吉祥物"说话"用）：头顶冒字而不是 TTS。renderer.js girlSay() 填字+显隐 -->

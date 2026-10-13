@@ -774,81 +774,184 @@ body {
    显示器 x=8-88、人物 x=95-195，水平无重叠。 */
 /* --- ③ 人物：回到「显示器左 / 人物中 / 键盘前」三件套布局
    （老板 2026-10-11 深夜反馈：电脑要保留、要坐着敲键盘）
-   left:95 top:40 width:100 → 图底 y=177，桌顶 y=165 挡下半身 12px。 */
+   left:95 top:40 width:100 → 图底 y=177，桌顶 y=165 挡下半身 12px。
+
+   ★ 2026-10-14 改成容器（原为 <img>）：里面 girl-body（无眼底图）+ .of-eyes（活眼睛）。
+     所有状态动画仍挂在 .of-girl 上 —— 眼睛是子元素，自动跟着动。 */
 .of-girl {
   position: absolute; left: 95px; top: 79px; width: 100px;
   z-index: 5; transform-origin: 50% 100%;
 }
-.office[data-state="IDLE"] .of-girl { animation: of-breathe 3.4s steps(2) infinite; }
-@keyframes of-breathe { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-2px); } }
-/* THINKING：头往左上抬 + 微前倾（老板要求"作出思考的动作"）
-   原来只是 ±1.5deg 摇摆 → 现在明显抬起 4deg + 上抬 2px，能看见她在"抬头想" */
-.office[data-state="THINKING"] .of-girl { animation: of-think 1.6s steps(2) infinite; }
-@keyframes of-think {
-  0%, 49% { transform: rotate(-3deg) translateY(-1px); }
-  50%, 100% { transform: rotate(2deg) translateY(-3px); }
-}
-/* TOOL：敲键盘 —— 老板 2026-10-13：「动作要更明显，手臂要在动」
-   根因（style.css 旧注释）：人物本体一上下动，原图的手就脱开手层位置 → 双影。
-   所以之前 TOOL 态把 .of-girl 锁成 animation:none，动作全靠手层 ±3.5px，看不出在敲。
-   解法：人物 + 左手 + 右手各绑一条 keyframes，共享同一俯身分量，周期完全对齐
-   （都 0.24s steps(1)）⇒ 相对位置恒定 ⇒ 不双影。
-   ⚠ 不用 CSS 变量同步 —— 实测 getComputedStyle 读不出变量插值结果，
-     手层 transform 恒 matrix(1,0,0,1,0,0)（手完全不动）。
-   幅度：俯身 1.4px + 旋转 0.7deg（人物本体，小）；敲击 ±9px（手，大）；
-   周期 0.24s（原来 0.4s 太慢，看着像停着）。 */
-.office[data-state="TOOL"] .of-girl  { animation: of-lean   .24s steps(1) infinite; }
-.office[data-state="TOOL"] .of-hand-l { display: block; animation: of-hand-l-type .24s steps(1) infinite; }
-.office[data-state="TOOL"] .of-hand-r { display: block; animation: of-hand-r-type .24s steps(1) infinite; }
-/* 俯身分量三条完全一致（-1.4 → 0 → -1.4，-0.7 → 0 → 0.7deg） */
-@keyframes of-lean {
-  0%      { transform: translateY(-1.4px) rotate(-0.7deg); }
-  50%     { transform: translateY(0)      rotate(0deg); }
-  100%    { transform: translateY(-1.4px) rotate(0.7deg); }
-}
-/* 左手：俯身分量 + 敲击 9px 下压 / 4px 抬起 */
-@keyframes of-hand-l-type {
-  0%      { transform: translateY(7.6px); }   /* -1.4 + 9  = 按下 */
-  50%     { transform: translateY(-4px);  }   /*  0 + -4   = 抬起 */
-  100%    { transform: translateY(7.6px); }
-}
-/* 右手：与左手反相 —— 左手按下时右手抬起 */
-@keyframes of-hand-r-type {
-  0%      { transform: translateY(-5.4px); }  /* -1.4 - 4  = 抬起 */
-  50%     { transform: translateY(8px);   }   /*  0 + 9    = 按下 */
-  100%    { transform: translateY(-5.4px); }
-}
-.office[data-state="DONE"] .of-girl { animation: of-hop 1.2s steps(2) infinite; }
-@keyframes of-hop { 0%, 49% { transform: translateY(0); } 50%, 100% { transform: translateY(-6px); } }
+.of-girl > .girl-body { display: block; width: 100%; }
 
-/* 点击点头（renderer.js 加/移除 .girl-nod） */
-.office.girl-nod .of-girl { animation: of-nod 700ms steps(2); }
-@keyframes of-nod {
-  0%, 100% { transform: rotate(0); }
-  25% { transform: rotate(-4deg); }
-  75% { transform: rotate(4deg); }
+/* --- ③a 活眼睛（老板 2026-10-14：「要真的会眨眼/愤怒/发愁/思考/大笑」）
+   ★ 方案演进（两次返工，都是"看起来对、实际不对"）：
+     ① 第一版用 div 色块拼眼睛 → 截图里是"横条/黑方块"，根本不像眼睛。
+     ② 第二版按"虹膜宽 30px"画眼框 → 眼框真实宽度是 50px（虹膜两侧还有眼白），
+        画出来是**竖条**。
+     ③ ✅ 现在：**直接用原图裁下来的真眼睛** assets/eye-l/r.png 做贴图，
+        情绪全部靠**眼皮遮罩 .lid** 覆盖（盖多少/盖成什么斜度），
+        不让眼球位移 —— 贴图自带刘海/皮肤背景，一动边缘就露馅。
+        边缘吻合靠 .lid 的颜色 = 原图睫毛深色 + 遮盖从眼部上沿往下压。
+
+   坐标换算：原图 315 宽 → 显示 100px，k = 100/315 = 0.31746
+     左眼原图 (86,132) 52×62 → left 27.30px top 41.90px 16.51×19.68px
+     右眼原图 (176,132) 54×62 → left 55.87px（中距 90×k = 28.57px）
+     眼框（眼白+虹膜+睫毛）实测 50×48，含余量裁 52×62。 */
+.of-eyes { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.of-eye {
+  position: absolute; top: 41.9px; width: 16.51px; height: 19.68px;
+  overflow: hidden;
+}
+.of-eye-l { left: 27.30px; }
+.of-eye-r { left: 55.87px; }
+.of-eye .ball { display: block; width: 100%; height: 100%; }
+/* 眼皮：从眼部上沿往下盖的深色遮罩。
+   ★ 用**固定高度 + clip-path 按整眼高度（19.68px）切斜边**，不要让高度自己去凑：
+     第一版把 clip-path 写在 7.4px 高的元素上 —— clip 的百分比是**相对元素自身**算的，
+     结果斜切被压缩在 7px 里、看着像"眼睛整块变黑"，实测深色一路盖到 y67（应到 y52）。
+   ⇒ 现在 .lid 一律 height:100%（铺满整只眼），用 clip-path 的百分比精确控制"露出多少"。 */
+.of-eye .lid {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: block; height: 0;
+  /* ★★★ 眼皮（第四版，终于对）：**眼皮是肤色的**，底边一条睫毛线。
+     返工史：
+       ①② 用纯黑矩形 → 像给眼睛贴黑胶布/眼罩
+       ③  改成肤色但用 full-height + clip 露顶部 → 渐变里的睫毛线在元素底部、被 clip 切掉，
+          压下来是一条"生硬的横切"（拍出来就是眼睛被拦腰截断）
+       ✅ 现在：**按状态直接给 .lid 设高度**（= 盖住多少），皮肤底 + 底边 1.6px 睫毛线。
+          高度值 = 眼高 19.68px × 遮盖比例：
+            思考 33% = 6.6px ｜ 干活 58% = 11.4px ｜ 发愁 48% = 9.4px ｜ 发怒 72% = 14.2px
+          斜切（皱眉/耷拉）用 clip-path polygon，**百分比相对 .lid 自身高度**（因为 .lid 就是眼睑本体）。 */
+  background: linear-gradient(to bottom, #fbd6d6 0%, #fbd6d6 calc(100% - 1.6px), #1b1114 100%);
+  border-radius: 0 0 62% 62% / 0 0 26% 26%;
+}
+/* 笑眼弧：只有 DONE（大笑）显示 —— 眼睛弯成月牙 ^ ^
+   ★ 用**描边弧**（只留上边框 + 顶部圆角）画 ∩ 形，不是填一块实心黑：
+     实心块在 6px 高度下拍出来就是"一条扁平黑杠"（第三版实拍如此），不像笑眼。
+     描边弧的做法 = 无底色 + 上/左/右边框 + 顶部 50% 圆角 ⇒ 天然的月牙。 */
+.of-eye .smile {
+  position: absolute; display: none;
+  left: 2.0px; right: 2.0px; top: 6.4px; height: 6.4px;
+  background: none; box-sizing: border-box;
+  border: 2.3px solid #1b1114; border-bottom: none;
+  border-radius: 50% 50% 0 0;
 }
 
-/* --- ③b 她自己的手（2026-10-11 定稿）：手层 = 原图裁下的「袖口+手」矩形
-   静止（IDLE/THINKING/DONE）：隐藏 —— 原图的手就是她的手，完整无缺
-   TOOL：左右手层交替下沉 2.5px（0.34s 反相）= 她自己在敲键盘
-   几何：girl.png 显示宽 100（缩放 0.31746），手层坐标 = 95/67 + 原图坐标×k
-     左手层 (88,288)→ left:122.9 top:158.4；右手层 (197,288)→ left:157.5
-   z：6（在人物 5 之上盖住原手，在键盘 9 之下 = 手在键盘后方敲） */
-.of-hand {
-  position: absolute; width: 9.5px; z-index: 6;
-  display: none; pointer-events: none;
-  image-rendering: pixelated;
+/* 眨眼：把眼皮**临时**盖满再弹回（用 scaleY 拉伸眼皮，不改高度）
+   ★ 为什么不用"改 .lid 的 height"做眨眼（第一版就是这个，错了）：
+     CSS 动画声明**优先于**普通声明 ⇒ 带上改 height 的动画后，
+     各表情按状态写的 `.of-eye .lid { height: 6.4px }` 会被动画覆盖 ⇒
+     发愁/发怒的眯眼全失效（实测六态眼皮高全变 2px 一个值）。
+   ✅ 眨眼改成独立覆盖层 .blink，只在眨的那一瞬铺满，其余时间 scaleY(0)。 */
+.of-eye .blink {
+  position: absolute; left: 0; right: 0; top: 0; height: 100%;
+  background: #1b1114; transform-origin: 50% 0%;
+  transform: scaleY(0); display: block; z-index: 3;
 }
-.of-hand-l { left: 122.9px; top: 170.4px; }
-.of-hand-r { left: 157.5px; top: 170.4px; }
-/* TOOL 态的显隐 + 位移 + 反相节奏统一由上方的
-   `.office[data-state="TOOL"] .of-hand-l/.of-hand-r` + `@keyframes of-lean` 处理
-   （原 of-hand-l / of-hand-r 两条 keyframes 已删 —— 它们和 of-lean 争抢同一 transform，
-     后写的会整条覆盖掉俯身位移 ⇒ 手层脱离人物又双影）。 */
-/* 分区 hover：鼠标在人物身上时轻微放大提示可点 */
-.office .of-girl { transition: filter 100ms steps(2); }
-.office .of-girl:hover { filter: brightness(1.1) drop-shadow(0 0 0 var(--lav)); }
+@keyframes of-blink {
+  0%, 92%   { transform: scaleY(0); }
+  94%, 97%  { transform: scaleY(1); }
+  100%      { transform: scaleY(0); }
+}
+.of-eye .blink { animation: of-blink 4.6s steps(1) infinite; }
+/* 两只眼一起眨（人不会左右眼错开眨） */
+
+/* ---------- 表情：按 .office[data-state] / .mood-* 切换 ---------- */
+/* ① IDLE 待机：正常睁眼（上面就是）+ 偶尔眨眼 */
+
+/* ② THINKING 思考：眼睛上飘、眯一点（视线往上，配人物抬头） */
+.office[data-state="THINKING"] .of-eye .lid { height: 6.6px; }   /* 33%：思考时眼睛上飘眯起 */
+.office[data-state="THINKING"] .of-eye { transform: translateY(-1.2px); }
+
+/* ③ TOOL 干活：**恼火/烦躁** —— 眯眼 + 上眼皮压成斜的（生闷气）。
+   左眼压右角、右眼压左角 = 皱眉瞪眼（内侧低外侧高）。 */
+/* 46%，内侧（靠鼻梁）压得低 = 皱眉瞪眼。polygon 的 % 相对 .lid 自身高度 */
+.office[data-state="TOOL"] .of-eye .lid { height: 11.4px; }
+.office[data-state="TOOL"] .of-eye-l .lid { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 76%); }
+.office[data-state="TOOL"] .of-eye-r .lid { clip-path: polygon(0 0, 100% 0, 100% 76%, 0 100%); }
+.office[data-state="TOOL"] .of-eye { animation: of-glare 1.6s steps(2) infinite; }
+@keyframes of-glare {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(0.6px); }
+}
+
+/* ④ DONE 完成：**大笑** —— 眼睛弯成月牙（^ ^）
+   月牙 = 笑眼弧（向上弯的深色块）盖住整只眼 + 眼皮不收 */
+.office[data-state="DONE"] .of-eye .ball { visibility: hidden; }
+.office[data-state="DONE"] .of-eye .smile { display: block; }
+.office[data-state="DONE"] .of-eye .lid { height: 0; }
+.office[data-state="DONE"] .of-eye { animation: of-laugh 1.2s steps(2) infinite; }
+@keyframes of-laugh {
+  0%, 100% { transform: translateY(0)     scaleY(1); }
+  50%      { transform: translateY(-0.6px) scaleY(0.84); }
+}
+
+/* ⑤ 发愁（老板要的第四种）：眼睛下垂 + 眉毛耷拉。
+   触发方式见 renderer.js：临时 .mood-worry 类（出错/失败时）。 */
+/* 38%，外眼角压得低 = 耷拉眼（发愁）—— 方向与"干活"相反 */
+.office.mood-worry .of-eye .lid { height: 9.4px; }
+.office.mood-worry .of-eye-l .lid { clip-path: polygon(0 0, 100% 0, 100% 78%, 0 100%); }
+.office.mood-worry .of-eye-r .lid { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 78%); }
+.office.mood-worry .of-eye { transform: translateY(0.9px); }   /* 眼神往下垂 */
+
+/* ⑥ 发怒（独立于 TOOL —— 出错/被打断时更强烈）：眼皮压得最低、还在抖 */
+/* 62%（最狠），压到只剩一条缝 = 暴怒 */
+.office.mood-angry .of-eye .lid { height: 14.2px; }
+.office.mood-angry .of-eye-l .lid { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 82%); }
+.office.mood-angry .of-eye-r .lid { clip-path: polygon(0 0, 100% 0, 100% 82%, 0 100%); }
+.office.mood-angry .of-eye { animation: of-rage .28s steps(2) infinite; }
+@keyframes of-rage {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(-0.6px, 0.4px); }
+}
+
+/* --- ③c 活眉毛（老板 2026-10-14：「而不是加两个笔画上去」）
+   ❌ 旧版（本段下方已删）把两笔静止的倒八字放在 office y99 —— 那是**刘海**的位置
+      （原图 y63 是头发），所以看着就像往头上贴了两道。而且它不跟着人物动。
+   ✅ 新版是 .of-girl 的子元素，跟眼睛同一套坐标（眼睛上方 5px = 原图 y128 一线）：
+      每根眉毛 = 一条 2px 粗的深色横线，用 transform: rotate 变成各种情绪角度。
+      平静  0deg（默认几乎不显，只留很淡的一点）
+      愤怒  ＼／ 内侧下压（左眉 +18deg、右眉 -18deg）
+      发愁  ／＼ 内侧上抬（左眉 -14deg、右眉 +14deg）
+      思考  一侧上挑（左眉 -10deg、右眉 +4deg） */
+.of-brows { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.of-brows i {
+  /* 原图眉位（眼框上方约 5px）。★ 上一版放在 39.4px（眼框上方 2.5px）且 2.2px 高，
+     实际拍出来眉毛和着眼皮、像两条粗黑杠（尤其在 TOOL/发怒旋转后）。
+     现在上移到 37.4px、压细到 1.7px、颜色用带一点暖调的深棕（比纯黑柔和）。 */
+  position: absolute; top: 37.4px;
+  width: 12px; height: 1.7px; background: #2a1a1e;
+  display: block; border-radius: 1px;
+  transition: transform 160ms steps(3);
+}
+.of-brow-l { left: 26.6px; transform-origin: 100% 50%; }
+.of-brow-r { left: 56.2px; transform-origin: 0% 50%; }
+
+/* 愤怒（干活烦躁 / 出错）：内侧下压 */
+.office[data-state="TOOL"] .of-brow-l,
+.office.mood-angry .of-brow-l { transform: rotate(18deg); }
+.office[data-state="TOOL"] .of-brow-r,
+.office.mood-angry .of-brow-r { transform: rotate(-18deg); }
+.office[data-state="TOOL"] .of-brows { animation: of-brow-shake .8s steps(2) infinite; }
+@keyframes of-brow-shake {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(0, 0.6px); }
+}
+/* 发愁：内侧上抬（八字的反方向）+ 整对眉往下垂一点 */
+.office.mood-worry .of-brow-l { transform: rotate(-14deg) translateY(0.8px); }
+.office.mood-worry .of-brow-r { transform: rotate(14deg)  translateY(0.8px); }
+/* 思考：一侧上挑（像在琢磨）+ 缓慢起伏 */
+.office[data-state="THINKING"] .of-brow-l { transform: rotate(-10deg) translateY(-0.5px); }
+.office[data-state="THINKING"] .of-brow-r { transform: rotate(4deg); }
+.office[data-state="THINKING"] .of-brows { animation: of-brow-think 2.4s steps(4) infinite; }
+@keyframes of-brow-think {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-0.7px); }
+}
+/* 大笑（DONE）：眉毛抬高放平（笑到眉开） */
+.office[data-state="DONE"] .of-brow-l { transform: rotate(6deg)  translateY(-1.4px); }
+.office[data-state="DONE"] .of-brow-r { transform: rotate(-6deg) translateY(-1.4px); }
 
 /* --- ④ 桌子：矮一截，把上半身露出来（老板 2026-10-11："桌子太大了"）
    原高度 90 → 新高度 55，桌面顶 y=220-55=165，人物 y=35-185，
@@ -880,23 +983,27 @@ body {
    IDLE 态循环打字动画（width 0→目标值 --cl-w），TOOL 态加速，THINKING/DONE 隐藏
    --cl-w 由 renderer.js triggerMonitorCycle() 在点击显示器时切换 */
 .of-code {
-  position: absolute; left: 5px; top: 5px; right: 5px; bottom: 5px;
+  /* ★ 老板 2026-10-14：「电脑屏幕上的绿色字放到它电脑右上角」
+     ⇒ 从"铺满整屏"改成**右上角一块**（右贴边 + 内容右对齐），代码行从右往左生长。 */
+  position: absolute; right: 4px; top: 4px;
+  width: 40px;
+  display: flex; flex-direction: column; align-items: flex-end;
 }
 .of-cl {
   display: block;
   height: 3px;
   margin-bottom: 5px;
-  background: var(--lav);
-  opacity: .88;
+  background: #7ee787;         /* 终端绿（老板说的是"绿色字"；原来粉/蓝/黄三色太花） */
+  opacity: .92;
   border-radius: 0;
   width: 0;
 }
 .office[data-state="IDLE"] .of-cl { animation: of-type 3.2s steps(1) infinite; }
 .office[data-state="TOOL"] .of-cl { animation: of-type .8s steps(1) infinite; }
-.of-cl:nth-child(1) { animation-delay: 0s;    background: var(--lav);    --cl-w: 34px; }
-.of-cl:nth-child(2) { animation-delay: .4s;   background: #8ab4c4;        --cl-w: 26px; }
-.of-cl:nth-child(3) { animation-delay: .8s;   background: var(--warn);    --cl-w: 44px; }
-.of-cl:nth-child(4) { animation-delay: 1.2s;  background: var(--lav);     --cl-w: 28px; }
+.of-cl:nth-child(1) { animation-delay: 0s;    --cl-w: 34px; }
+.of-cl:nth-child(2) { animation-delay: .4s;   --cl-w: 24px; }
+.of-cl:nth-child(3) { animation-delay: .8s;   --cl-w: 38px; }
+.of-cl:nth-child(4) { animation-delay: 1.2s;  --cl-w: 20px; }
 @keyframes of-type {
   0%   { width: 0; opacity: 0; }
   5%   { opacity: 1; }
@@ -921,8 +1028,8 @@ body {
 
 /* 光标：跟随最后一行代码闪烁 */
 .of-cursor {
-  position: absolute; left: 46px; bottom: 6px; width: 3px; height: 6px;
-  background: var(--lav);
+  position: absolute; right: 5px; top: 22px; width: 3px; height: 6px;
+  background: #7ee787;
   animation: of-cursor-blink 0.8s steps(2) infinite;
   display: none;
 }
