@@ -175,8 +175,16 @@
     </div>
 
     <div class="rail-scroll tab-body hidden" id="tab-sub">
+      <!-- 老板 2026-10-13：「后台有任务的话我希望可以显示在右上角智能体栏目里面
+           并显示数量，子代理也是」—— 后台任务区（主进程登记的 pi 轮次/! 命令）
+           带计数；子代理区标题也带数量（运行中/总数）。 -->
       <div class="agents-sec">
-        <div class="agents-hd">本次会话的子代理</div>
+        <div class="agents-hd">后台任务 <b id="bg-count" class="ext-count"></b></div>
+        <div class="agentlist" id="bg-list"></div>
+        <div class="empty" id="bg-empty">现在没有后台任务</div>
+      </div>
+      <div class="agents-sec">
+        <div class="agents-hd">本次会话的子代理 <b id="sub-count" class="ext-count"></b></div>
         <div class="agentlist" id="sub-list"></div>
         <div class="empty" id="sub-empty">还没有子代理调用</div>
       </div>
@@ -240,6 +248,12 @@
     <span class="sb-usage" id="sb-usage" title="上下文占用">
       <span class="ub-bar"><i id="ub-fill"></i></span>
       <b id="ub-text">— / —</b>
+    </span>
+    <!-- 老板 2026-10-13：「加个缓存命中到最下方栏」—— prompt cache 命中率。
+         pi 的 usage 里有 cacheRead/cacheWrite：命中率 = cacheRead / 提示词总量。
+         模型不支持缓存时一直是 —（不编 0%）。title 里给绝对数。 -->
+    <span class="sb-item sb-cache" id="sb-cache" title="提示词缓存命中率（点一下看明细）">
+      缓存 <b id="kv-cache">—</b>
     </span>
     <span class="sb-spacer"></span>
     <!-- 有新版本时出现的小铃铛（平时隐藏） -->
@@ -364,6 +378,11 @@
         <span class="set-lb">新消息自动到底</span>
         <label class="chk"><input type="checkbox" id="set-scroll" /><i></i><span>开启</span></label>
       </div>
+      <!-- 老板 2026-10-13：「还要有桌面提醒功能」—— 只在窗口不在前台时发系统通知 -->
+      <div class="set-row">
+        <span class="set-lb">桌面提醒</span>
+        <label class="chk"><input type="checkbox" id="set-notify" /><i></i><span>开启（切到别的窗口时，干完活/发现新版本弹系统通知）</span></label>
+      </div>
       <div class="set-row">
         <span class="set-lb">导出格式</span>
         <span class="seg" id="set-export">
@@ -381,6 +400,11 @@
       <div class="kv"><span>凭据</span><b id="set-auth">—</b></div>
       <div class="kv"><span>会话文件</span><b id="set-session">—</b></div>
       <div class="kv"><span>内核入口</span><b id="set-cli">—</b></div>
+      <!-- 老板 2026-10-13：「我让她自己扫描自己，发现很多的缺失」—— 设置里常驻体检入口 -->
+      <div class="set-row">
+        <span class="set-lb">自检体检</span>
+        <button class="px-btn" id="set-doctor" type="button">扫一遍这台机器</button>
+      </div>
       <p class="dlg-tip">
         扩展、模型、登录状态都保存在本机配置里；
         点「全部更新」会把扩展一起更到最新。
@@ -547,7 +571,20 @@
 <div id="wl-overlay" class="hidden">
   <div class="wl-card">
     <div class="wl-head">欢迎用 PixelAgent</div>
-    <div class="wl-sub">第一次用，先接一个 AI 模型 —— 填三样就能聊</div>
+    <div class="wl-sub">第一次用，先接一个 AI 模型 —— 选好服务商，粘上 Key 就能聊</div>
+    <!-- 老板 2026-10-13：「新电脑新用户安装根本不能立马使用，我要的是精装房」——
+         常见服务商预设：选中就把接入地址填好，用户只剩「粘 Key + 拉模型」两步，
+         不用去翻文档找 base URL。 -->
+    <div class="wl-lab">0 · 选服务商（接入地址自动填好）</div>
+    <select id="wl-preset">
+      <option value="">— 自己填地址 —</option>
+      <option value="https://ark.cn-beijing.volces.com/api/v3">火山方舟（豆包 / Ark）</option>
+      <option value="https://api.deepseek.com/v1">DeepSeek</option>
+      <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">阿里百炼（通义千问）</option>
+      <option value="https://api.openai.com/v1">OpenAI</option>
+      <option value="https://api.moonshot.cn/v1">月之暗面（Kimi）</option>
+      <option value="https://open.bigmodel.cn/api/paas/v4">智谱（GLM）</option>
+    </select>
     <div class="wl-lab">1 · 接入地址（OpenAI 兼容接口）</div>
     <input id="wl-base" type="text" spellcheck="false" autocomplete="off"
            placeholder="https://api.example.com（结尾自动补 /v1）">
@@ -563,8 +600,32 @@
     <div id="wl-toggle-manual">列表里没有？手动填模型 ID</div>
     <div id="wl-msg" class="hidden"></div>
     <div class="wl-actions">
+      <!-- 老板 2026-10-13：「我让她自己扫描自己，发现很多的缺失」—— 引导页也放个体检入口，
+           配不下去的时候先看看这台机器到底缺什么。 -->
+      <button class="px-btn" id="wl-doctor" type="button" title="扫描这台机器现在缺什么">自检体检</button>
       <button class="px-btn" id="wl-skip" type="button">跳过，稍后配置</button>
       <button class="px-btn primary" id="wl-save" type="button">测试并保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 自我扫描体检报告（欢迎页 / 设置面板共用） ============ -->
+<div id="mask-doctor" class="hidden">
+  <div class="win dialog dialog-doctor">
+    <div class="win-bar">
+      <span class="win-name" id="doctor-title">体检报告</span>
+      <span class="win-grip" aria-hidden="true"></span>
+      <span class="win-ctl">
+        <button class="win-btn win-x" id="doctor-x" type="button" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="dlg-body">
+      <div id="doctor-list"></div>
+      <p class="dlg-tip" id="doctor-tip"></p>
+      <div class="dlg-foot">
+        <span style="flex:1"></span>
+        <button class="px-btn primary" id="doctor-ok" type="button">知道了</button>
+      </div>
     </div>
   </div>
 </div>

@@ -37,6 +37,9 @@ const CJK = /[\u3000-\u9fff\uff00-\uffef]/;
 // API Key：技术术语，业界通用叫法（中文写「API 密钥」反而怪），留着
 // openai-completions：pi 里的协议名，界面在提示语里会显示（"新服务商默认用它"）
 const PUBLIC_KEEP = new Set(['PixelAgent', 'PIXELAGENT', 'pi', 'JSON', 'ESC', 'HTML', 'API Key', 'openai-completions',
+  // 2026-10-13：欢迎页服务商预设里的品牌名（火山方舟/DeepSeek/阿里百炼/OpenAI/Kimi/智谱）——
+  //   和 PixelAgent 一样是"用户看得见的专有名词"，译成中文反而不知道去哪找
+  'DeepSeek', 'OpenAI',
   // 老板 2026-10-11 18:54：吉祥物气泡里可能出现的快捷键
   'Ctrl+C']);
 // 用户看不见的内部值：二进制魔数、mime、IPC/CLI 标识、路径片段、抽屉按钮的 props、事件键名
@@ -56,7 +59,10 @@ const INTERNAL_KEEP = new Set([
   , 'GET', 'POST', 'Authorization', 'Accept', 'Content-Type',  // HTTP 方法 / 标准请求头
   // 2026-10-12：应用更新检查（GitHub Release）——仓库路径 / API mime / UA 头，
   // 全是网络层内部值，界面只显示版本号和中文提示
-  'User-Agent', 'application/vnd.github+json', 'bingo-jiyiku/PixelAgent', 'api.github.com'
+  'User-Agent', 'application/vnd.github+json', 'bingo-jiyiku/PixelAgent', 'api.github.com',
+  // 2026-10-13：桌面提醒 app:notify 的失败原因码（UNSUPPORTED=系统不支持通知 /
+  //   THREW=new Notification 抛了）—— 回给渲染层后**不显示**，只用于静默分类
+  'UNSUPPORTED', 'THREW'
 ]);
 // 内部"词汇表"：消息标签 / 状态值 / 错误码 / 快捷键。
 // 这些字面量**不会单独显示给用户**（显示前都过 WHO_ZH / STATE_ZH / REASON_ZH / TH_ZH 翻译），

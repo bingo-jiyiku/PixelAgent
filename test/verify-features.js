@@ -2239,7 +2239,11 @@ app.whenReady().then(async () => {
   console.log('  ℹ 点「测试」: ' + testClick);
   t('模型行点「测试」能找到并打开弹框', testClick, 'OK');
   let outSt = { cls: '', txt: '' };
-  for (let i = 0; i < 60; i++) {          // 最多等 30 秒
+  // ★ 等 80 秒不是 30 秒：主进程 modelTest 自己的预算就是 90 秒（runPiQuery timeout），
+  //   实测这一轮 23.3s（Electron 起 pi 要带全部扩展，机器上还跑着别的 Electron 时更慢）。
+  //   2026-10-13 就因为这个窗口只开 30s，连续两轮假红 —— 「等模型/等真实调用」必须
+  //   轮询等条件 + 窗口跟主进程预算匹配，不能写死一个短时长（项目老规矩，又踩一次）。
+  for (let i = 0; i < 160; i++) {          // 最多等 80 秒
     outSt = await js(`(function(){ const o=document.getElementById('mcfg-out'); return { cls:o.className, txt:o.textContent }; })()`);
     if (outSt.txt && outSt.cls.indexOf('busy') < 0) break;
     await sleep(500);
@@ -2347,6 +2351,219 @@ app.whenReady().then(async () => {
   if (typeof beforeSeq === 'number') { await js(`window.__pixelOpenSession(${beforeSeq})`); await sleep(800); }
   t('当前会话已还回原来那条',
     await js(`window.pixelAPI.sessions().then(function(r){ return r.current; })`), beforeSeq);
+
+  /* ================= 11. 2026-10-13 老板新增四件套 =================
+     桌面提醒 / 缓存命中 / 后台任务计数 / 自我扫描体检（精装房） */
+  console.log('\n[11] 2026-10-13 新功能：桌面提醒 + 缓存命中 + 后台任务 + 体检');
+
+  /* ---- 11a. 缓存命中（老板：「加个缓存命中到最下方栏」）----
+     喂**真实形状**的 turn_end（usage 结构照 vendor/pi 的 message-types.md）：
+     {input, output, cacheRead, cacheWrite, totalTokens}。
+     命中率 = cacheRead / (input + cacheRead + cacheWrite)。
+     totalTokens 含 output，**不能**当分母（这是最容易写错的一处）。 */
+  const feedUsage = (u) => js(`(function(){
+    window.__pixelFeed({kind:'ev', ev:{type:'turn_end', message:{role:'assistant', usage:${JSON.stringify(u)}, model:'m'}}});
+    return 1; })()`);
+  await feedUsage({ input: 1000, output: 200, cacheRead: 3000, cacheWrite: 500, totalTokens: 4700 });
+  await sleep(150);
+  t('缓存命中率 = cacheRead/(input+read+write) = 3000/4500 ≈ 67%',
+    await js(`document.getElementById('kv-cache').textContent`), '67%');
+  t('命中过半点亮 hot 样式',
+    await js(`document.getElementById('sb-cache').classList.contains('hot')`), true);
+  t('title 里给的是绝对数（读/写/新输入分别多少）',
+    /缓存读|命中（缓存读）/.test(await js(`document.getElementById('sb-cache').title`)), true);
+  t('S.cache 记下了这一轮的结构', await js(`JSON.stringify(window.__pixel.cache && window.__pixel.cache.hit)`), '0.6666666666666666');
+
+  // 反向验证：分母写错（拿 totalTokens 当分母）时数字会变小 —— 把"错误算法"的样子钉住，
+  // 防止以后有人"顺手简化"成 totalTokens。
+  t('若错用 totalTokens 当分母会得到 64%（不是 67%）—— 确认我们没走错那条',
+    Math.round(3000 / 4700 * 100), 64);
+
+  // 模型不支持缓存：全是 0 → **未知**，不是 0%（编一个 0% 会让用户以为缓存坏了）
+  await feedUsage({ input: 500, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 600 });
+  await sleep(150);
+  t('没有缓存数据时显示 —（不编 0%）',
+    await js(`document.getElementById('kv-cache').textContent`), '—');
+  t('这时 S.cache 是 null', await js(`window.__pixel.cache === null`), true);
+  t('这时 hot 不亮', await js(`document.getElementById('sb-cache').classList.contains('hot')`), false);
+
+  // 纯缓存轮（首轮刚写完缓存、这轮全命中）：input 0 也必须是合法形状，不能除零
+  await feedUsage({ input: 0, output: 50, cacheRead: 2000, cacheWrite: 0, totalTokens: 2050 });
+  await sleep(150);
+  t('纯缓存轮命中率 100%', await js(`document.getElementById('kv-cache').textContent`), '100%');
+
+  /* ---- 11b. 后台任务计数（老板：「后台有任务的话…显示在右上角智能体栏目里面并显示数量」）---- */
+  await js(`document.querySelector('.rtab[data-tab="sub"]').click()`);
+  await sleep(300);
+  const bgFeed = (tasks) => js(`(function(){
+    window.__pixelFeed({kind:'bg', tasks:${JSON.stringify(tasks)}}); return 1; })()`);
+  await bgFeed([{ id: 'turn', kind: 'turn', label: '帮我修个 bug', state: 'running', at: Date.now() }]);
+  await sleep(150);
+  t('后台任务计数显示「1 个在跑」',
+    await js(`document.getElementById('bg-count').textContent`), '（1 个在跑）');
+  t('后台任务列表画出 1 条', await js(`document.querySelectorAll('#bg-list .agent-item').length`), 1);
+  t('条目上看得见是什么类型', await js(`document.querySelector('#bg-list .ag-n').textContent`), '对话轮次');
+  t('条目上看得见是哪一轮（label 透传）',
+    await js(`document.querySelector('#bg-list .ag-p').textContent`), '帮我修个 bug');
+  t('条目上显示「跑着」和秒表', /跑着 · \d+s/.test(await js(`document.querySelector('#bg-list .ag-tag').textContent`)), true);
+
+  await bgFeed([
+    { id: 'turn', kind: 'turn', label: '帮我修个 bug', state: 'running', at: Date.now() },
+    { id: 'shell:1', kind: 'shell', label: 'npm test', state: 'running', at: Date.now() }
+  ]);
+  await sleep(150);
+  t('两个任务时计数变成 2', await js(`document.getElementById('bg-count').textContent`), '（2 个在跑）');
+  t('shell 类型显示成「终端命令」',
+    await js(`document.querySelectorAll('#bg-list .ag-n')[1].textContent`), '终端命令');
+
+  await bgFeed([]);
+  await sleep(150);
+  t('任务清空后回到空态提示', await js(`document.getElementById('bg-empty').classList.contains('hidden')`), false);
+  t('空态时计数消失', await js(`document.getElementById('bg-count').textContent`), '');
+
+  // 主进程登记口的快照 IPC（形状契约）
+  const bgSnap = await js(`window.pixelAPI.bgTasks()`);
+  t('pi:bg-tasks 快照口返回 ok', bgSnap.ok, true);
+  t('快照口返回的是数组', Array.isArray(bgSnap.tasks), true);
+
+  /* ---- 11c. 真机接线：跑一条真 `!` 命令，后台任务表里必须真的出现它 ----
+     「验接线不只验逻辑」—— 上面喂的是假事件，这里让主进程自己登记。 */
+  const runId = 'verify-bg-' + Date.now();
+  await js(`window.pixelAPI.runShell({id:${JSON.stringify(runId)}, cmd:'sleep 1.2'})`);
+  let sawShellBg = false;
+  for (let i = 0; i < 30; i++) {
+    await sleep(200);
+    const snap = await js(`window.pixelAPI.bgTasks()`);
+    if (snap.tasks.some((x) => x.kind === 'shell' && x.state === 'running')) { sawShellBg = true; break; }
+  }
+  t('真跑 `!` 命令时，后台任务表里真的出现了它（接线生效）', sawShellBg, true);
+  // 等它跑完：表里必须**消失**（幽灵任务比不显示更糟）
+  let bgCleared = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    const snap = await js(`window.pixelAPI.bgTasks()`);
+    if (!snap.tasks.some((x) => x.id === 'shell:' + runId)) { bgCleared = true; break; }
+  }
+  t('命令结束后后台任务被摘掉（不留幽灵）', bgCleared, true);
+  // 渲染层也收到了整表推送（S.bg 最终是空的）
+  t('渲染层的后台任务表也同步清了', await js(`window.__pixel.bg.length`), 0);
+
+  /* ---- 11d. 子代理计数（老板：「…子代理也是」）---- */
+  await js(`(function(){
+    window.__pixelFeed({kind:'ev', ev:{type:'tool_execution_start', toolName:'subagent',
+      toolCallId:'call_bg_1', args:{agent:'scout', task:'数一下文件'}, parentToolCallId:null}});
+    return 1; })()`);
+  await sleep(150);
+  t('子代理计数显示「1 运行中 / 共 1」',
+    await js(`document.getElementById('sub-count').textContent`), '（1 运行中 / 共 1）');
+  await js(`(function(){
+    window.__pixelFeed({kind:'ev', ev:{type:'tool_execution_end', toolName:'subagent',
+      toolCallId:'call_bg_1', result:{content:[{type:'text',text:'53 个'}]}, isError:false}});
+    return 1; })()`);
+  await sleep(150);
+  t('子代理干完后计数变成「0 运行中 / 共 1」',
+    await js(`document.getElementById('sub-count').textContent`), '（0 运行中 / 共 1）');
+  t('列表里仍有这条记录（看得见刚才派过谁）',
+    await js(`document.querySelectorAll('#sub-list .agent-item').length`), 1);
+
+  /* ---- 11e. 桌面提醒（老板：「还要有桌面提醒功能」）---- */
+  // 判断"该发的时候发没发"读 S.notifyLog（为什么不拦 window.pixelAPI.notify：
+  // contextBridge 暴露的对象属性改不动，硬改只会让测试自己假红 —— 2026-10-13 实测）。
+  await js(`window.__pixel.notifyLog.length = 0`);
+  const focused = await js(`document.hasFocus()`);
+  await js(`window.__pixelNotify('测试提醒', '这是正文')`);
+  await sleep(200);
+  t('焦点状态 ' + focused + ' 时，通知发没发符合规矩（前台不发/后台发）',
+    await js(`window.__pixel.notifyLog.length`), focused ? 0 : 1);
+  if (!focused) {
+    t('发出去的通知标题正文都在记录里',
+      await js(`window.__pixel.notifyLog[0].title + '|' + window.__pixel.notifyLog[0].body`), '测试提醒|这是正文');
+  }
+  // 老板的场景原话是"切去看别的窗口"—— 本机恰好聚焦时上面那条会走"不发"分支，
+  // 最重要的"失焦该发"方向就没被测到。blur 一下把失焦钉死（Windows 上可靠）。
+  try { if (win.blur) win.blur(); } catch (e) { /* 某些平台没有 blur */ }
+  await sleep(400);
+  const focused2 = await js(`document.hasFocus()`);
+  await js(`window.__pixel.notifyLog.length = 0`);
+  await js(`window.__pixelNotify('切窗场景', '用户不在前台也该收到')`);
+  await sleep(200);
+  t('前提：blur 之后窗口真的失焦了（不失焦这条就是空转）', focused2, false);
+  t('窗口失焦时桌面提醒真的发（老板的场景：切去看别的窗口）',
+    await js(`window.__pixel.notifyLog.length`), 1);
+  try { if (win.focus) win.focus(); } catch (e) { /* ignore */ }
+  await sleep(200);
+  // 主进程那条 IPC 真的能发（isSupported 在测试机上应为 true；
+  // 2026-10-13 实测：Notification 忘了在 main.js 解构里 import，这里会一直 ok:false）
+  const notifyRet = await js(`window.pixelAPI.notify('PixelAgent 自检', '如果你看到了这条，系统通知是通的')`);
+  t('app:notify 主进程返回 ok', notifyRet.ok, true);
+
+  // 设置开关：关掉之后一封都不发（"只显示不生效"的假设置比没有更坏）。
+  // 两条通道都要改：渲染层内存（desktopNotify 读的是它）+ 落盘（normalizeCfg 白名单）。
+  await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), {desktopNotify:false}))`);
+  const setRet = await js(`window.pixelAPI.setCfg({desktopNotify:false}).then(function(r){ return r; })`);
+  t('主进程认这个键（没被 droppedKeys 吞掉）',
+    (setRet.droppedKeys || []).indexOf('desktopNotify'), -1);
+  t('落盘后读回来是 false', setRet.cfg.desktopNotify, false);
+  await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), {desktopNotify:false}))`);
+  await js(`window.__pixel.notifyLog.length = 0`);
+  await js(`window.__pixelNotify('这条不该发', '设置关了')`);
+  await sleep(200);
+  t('关掉桌面提醒后一封都没发', await js(`window.__pixel.notifyLog.length`), 0);
+  // 再打开：恢复发射（证明是"开关生效"而不是"别的地方坏了"）。
+  // 期望值按**当前**焦点算 —— 上面 blur/focus 过，窗口焦点可能已经变了，
+  // 拿最初的 focused 做期望会假红（2026-10-13 实测踩到）。
+  await js(`window.__pixelApplyCfg(Object.assign({}, window.__pixelCfg(), {desktopNotify:true}))`);
+  await js(`window.pixelAPI.setCfg({desktopNotify:true})`);
+  const focused3 = await js(`document.hasFocus()`);
+  await js(`window.__pixelNotify('这条该发', '设置又开了')`);
+  await sleep(200);
+  t('重新打开后恢复发射（前台则不发，符合规矩）',
+    await js(`window.__pixel.notifyLog.length`), focused3 ? 0 : 1);
+
+  /* ---- 11f. 自我扫描体检 + 精装房预设（老板：「我让她自己扫描自己…精装房」）---- */
+  // 预设：选中服务商 → 接入地址自动填好（新用户不用去翻文档找 base URL）
+  await js(`(function(){
+    var s = document.getElementById('wl-preset');
+    s.value = 'https://api.deepseek.com/v1';
+    s.dispatchEvent(new Event('change'));
+    return 1; })()`);
+  t('选 DeepSeek 预设后接入地址自动填好',
+    await js(`document.getElementById('wl-base').value`), 'https://api.deepseek.com/v1');
+  // 选回"自己填"不清空（用户可能刚手工改过）
+  await js(`(function(){
+    var s = document.getElementById('wl-preset');
+    s.value = '';
+    s.dispatchEvent(new Event('change'));
+    return 1; })()`);
+  t('选回「自己填地址」不清空已填的地址',
+    await js(`document.getElementById('wl-base').value`), 'https://api.deepseek.com/v1');
+
+  // 体检：结构契约（不依赖本机配置状态 —— 干净机器上 model 项就该是 fail+fix）
+  const docRep = await js(`window.pixelAPI.doctor()`);
+  t('pi:doctor 返回 ok', docRep.ok, true);
+  t('体检项是数组', Array.isArray(docRep.items), true);
+  t('体检覆盖：模型/运行时/扩展/附件目录/会话目录/工作目录/网络',
+    docRep.items.map((x) => x.key).join(','), 'model,runtime,ext,attdir,sessdir,workdir,net');
+  // 精装房契约：每一项状态合法；**不正常就必须带「怎么补」** ——
+  // 这是"新用户照着清单能自己修好"的最低要求，缺了 fix 的 fail 项等于没说。
+  const docBad = docRep.items.filter((x) =>
+    ['ok', 'warn', 'fail'].indexOf(x.state) < 0 || !x.name || (x.state !== 'ok' && !x.fix));
+  t('每一项状态都合法；不正常的项都带修复指引（' + docBad.length + ' 项不合格）', docBad.length, 0);
+  t('ready 与"有没有 fail 项"对得上',
+    docRep.ready, !docRep.items.some((x) => x.state === 'fail'));
+  // 对话框真的能开（欢迎页那个按钮）
+  await js(`document.getElementById('wl-doctor').click()`);
+  let docOpened = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    const st = await js(`window.__pixelDoctor && window.__pixelDoctor.open`);
+    if (st) { docOpened = true; break; }
+  }
+  t('点「自检体检」对话框真的开了', docOpened, true);
+  t('对话框里画出了全部体检项', await js(`document.querySelectorAll('#doctor-list .doc-item').length`), docRep.items.length);
+  await js(`document.getElementById('doctor-ok').click()`);
+  await sleep(200);
+  t('「知道了」能关掉体检对话框', await js(`document.getElementById('mask-doctor').classList.contains('hidden')`), true);
 
   /* ================= 9. 收尾截图 ================= */
   await js(`document.querySelector('.rtab[data-tab="tools"]').click()`);

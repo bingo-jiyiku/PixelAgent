@@ -66,6 +66,14 @@ const S = {
   imgWarned: false,   // 这一轮已经就图片问题提过醒，别重复刷屏
   todos: [],          // 真 todo 工具吐出来的待办
   subs: [],           // 会话内子代理/嵌套调用活动
+  // 老板 2026-10-13：「后台有任务的话我希望可以显示在右上角智能体栏目里面并显示数量」——
+  // 主进程登记（pi 轮次 / `!` 命令）后整表推过来，这里只存快照负责画。
+  bg: [],             // [{id, kind, label, state, at}]
+  // 缓存命中（老板 2026-10-13：「加个缓存命中到最下方栏」）：
+  // 最近一轮的 {hit, read, write, input}；null = 还没有用量数据。
+  cache: null,
+  // 桌面提醒发送记录（验收读这个，见 desktopNotify 的注释）
+  notifyLog: [],
   exts: null,         // 已装扩展（真跑 pi list）
   extUpd: {},         // 本次会话更新成功的扩展（pkgId -> 时间戳）：渲染成「最新 ✓」
   extOutdated: null,  // 启动时自动检查的待更新包名集合（null = 还没查完）
@@ -415,6 +423,24 @@ function girlSay(text, ms, onClick, sticky) {
   if (ms > 0) girlSayTimer = setTimeout(() => girlSay(''), ms);
 }
 
+// 桌面提醒（老板 2026-10-13：「还要有桌面提醒功能」）—— 系统级 Notification。
+// 三条规矩缺一不可：
+//   ① 设置里能关（CFG.desktopNotify，默认开）—— 不摆"只显示不生效"的假设置；
+//   ② **窗口在前台时绝不弹**：前台弹通知是纯骚扰。老板的场景就是"切去看别的窗口"，
+//      所以判据是 document.hasFocus()（渲染进程才是唯一知道焦点的）；
+//   ③ 失败静默 —— 通知是锦上添花，api.notify 抛了也不能反过来砸用户的脚。
+// 渲染进程没有 new Notification 的权限（contextIsolation），必须走主进程 IPC。
+// 每发一封都往 S.notifyLog 记一笔：验收读它来判断"该发的时候发没发"——
+// 不靠拦 window.pixelAPI.notify（contextBridge 暴露的对象属性改不动，
+// 硬改只会让测试自己假红，2026-10-13 实测过）。
+function desktopNotify(title, body) {
+  if (CFG && CFG.desktopNotify === false) return;
+  if (typeof document !== 'undefined' && document.hasFocus && document.hasFocus()) return;
+  if (!api || !api.notify) return;
+  S.notifyLog.push({ title: String(title || ''), body: String(body || ''), at: Date.now() });
+  try { api.notify(title, body).catch(() => {}); } catch (e) { /* 静默 */ }
+}
+
 // 有新版本时像素主动开口（老板 2026-10-12 23:xx：「我刚刚启动了像素，
 // 不会主动告诉用户有新更新啊」）。两条通道：
 //   ① 像素气泡：30 秒 + **粘性**——启动招呼和状态闲聊不许盖它（见 girlSay
@@ -442,6 +468,8 @@ function showUpdateReminder(r, api) {
     badge.classList.remove('hidden');
     badge.onclick = () => { if (api && api.openUpdatePage) api.openUpdatePage(); };
   }
+  // 老板 2026-10-13：「还要有桌面提醒功能」—— 窗口不在前台时，系统通知也报一份
+  desktopNotify('PixelAgent 发现新版本 ' + latest, '点开应用去更新；或点状态栏的「⬆ 新版」去下载页');
   return true;
 }
 
@@ -748,9 +776,54 @@ function paintCtxIdle() {
   $('sb-usage').title = ci.tokens
     ? ('上下文总窗口 ' + ci.tokens + ' 词元\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）')
     : ('上下文窗口未知\n分母来源：' + ctxSourceZh(ci.source) + '\n（点一下看明细）');
+  paintCache(null);   // 没有用量数据 → 缓存命中回到 —（不编 0%）
 }
 
-// 点用量条 → 把这几个数**分别**说清楚（已用 / 分母 / 占比 / 来源），
+// 缓存命中（老板 2026-10-13：「加个缓存命中到最下方栏」）。
+// pi 的 usage 结构（vendor/pi 的 message-types.md）：
+//   {input, output, cacheRead, cacheWrite, totalTokens, cost}
+// 提示词总量 = input + cacheRead + cacheWrite（totalTokens 还含 output，不能当分母）；
+// 命中率 = cacheRead / 提示词总量。
+// 纯函数放这里是为了验收能直接喂各种 usage 形状（模型不支持缓存 → 全 0 → null）。
+function cacheStats(usage) {
+  if (!usage) return null;
+  const read = Number(usage.cacheRead) || 0;
+  const write = Number(usage.cacheWrite) || 0;
+  const input = Number(usage.input) || 0;
+  // 读和写都是 0 = 这一轮**没有任何缓存活动**。两类模型都会长成这样：
+  //   ① 不支持 prompt cache 的（永远 0）；
+  //   ② 支持但还没开始写的（首轮之前）。
+  // 这两种都该显示 —（未知）而不是 0% —— 编一个 0% 会让用户以为"缓存坏了"，
+  // 而事实可能只是这个模型压根没有缓存。（一旦出现写入，下一轮就能看到真实命中率。）
+  if (read <= 0 && write <= 0) return null;
+  const prompt = input + read + write;
+  if (prompt <= 0) return null;              // 兜底：除零保护
+  return { hit: read / prompt, read, write, input, prompt };
+}
+function paintCache(st) {
+  S.cache = st;
+  const b = $('kv-cache');
+  const box = $('sb-cache');
+  if (!b || !box) return;
+  if (!st) {
+    b.textContent = '—';
+    box.classList.remove('hot');
+    box.title = '提示词缓存命中率\n这一轮还没有用量数据，或模型不支持缓存';
+    return;
+  }
+  const pct = Math.round(st.hit * 100);
+  b.textContent = pct + '%';
+  // 命中过半给个绿色小点亮 —— 缓存是真金白银（更便宜也更快），值得被看见
+  box.classList.toggle('hot', pct >= 50);
+  box.title =
+    '提示词缓存命中率 ' + pct + '%\n' +
+    '命中（缓存读）：' + fmtTokens(st.read) + ' 词元\n' +
+    '未命中（新输入）：' + fmtTokens(st.input) + ' 词元\n' +
+    '缓存写：' + fmtTokens(st.write) + ' 词元\n' +
+    '（命中部分按缓存价计费，也更快；模型不支持缓存时这里一直是 —）';
+}
+
+// 点用量条 → 把这几个数**分别**说清楚（已用 / 分母 / 占比 / 来源 / 缓存），
 // 顺便给一条"哪儿能改"的指路。含糊的总数只会引出下一个问题。
 function showUsageDetail() {
   const em = effModel();
@@ -761,9 +834,12 @@ function showUsageDetail() {
   const lines = [
     '当前模型：' + (em ? ((em.provider ? em.provider + '/' : '') + em.model) : '（还不知道）'),
     '本轮已用：' + fmtTokens(used) + ' 词元' + (S.lastUsage ? ('（输入 ' + fmtTokens(S.lastUsage.input || 0) +
-      ' · 输出 ' + fmtTokens(S.lastUsage.output || 0) + ' · 缓存读 ' + fmtTokens(S.lastUsage.cacheRead || 0) + '）') : ''),
+      ' · 输出 ' + fmtTokens(S.lastUsage.output || 0) + ' · 缓存读 ' + fmtTokens(S.lastUsage.cacheRead || 0) +
+      ' · 缓存写 ' + fmtTokens(S.lastUsage.cacheWrite || 0) + '）') : ''),
     '上下文窗口：' + (ci.tokens ? (ctxLabel(ci) + '（' + ci.tokens + ' 词元）') : '未知'),
     '占用比例：' + (ci.tokens ? pct + '%' : '—'),
+    '缓存命中：' + (S.cache ? (Math.round(S.cache.hit * 100) + '%（读 ' + fmtTokens(S.cache.read) +
+      ' / 写 ' + fmtTokens(S.cache.write) + ' / 新输入 ' + fmtTokens(S.cache.input) + '）') : '—'),
     '',
     '分母来源：' + ctxSourceZh(ci.source),
     hit ? ('模型表里写的是 ' + hit.context + '，最大输出 ' + hit.maxOut) : '模型表里没有这个模型',
@@ -778,6 +854,7 @@ function setUsage(usage, modelName) {
   if (!usage) return;
   S.lastUsage = usage;            // 存下来：模型目录晚到时好补算分母
   S.lastUsageModel = modelName;
+  paintCache(cacheStats(usage));
   const used = usage.totalTokens || 0;
   const em = effModel();
   const ci = ctxInfoOf(em && em.provider, em && em.model);
@@ -1296,6 +1373,11 @@ function endTurn(code) {
   setState('DONE');
   if (code !== 0 && code != null) {
     addMsg('err', 'ERR', '进程退出码 ' + code + '（看看是不是没认证 / 没 key）');
+  } else if (code === 0) {
+    // 老板 2026-10-13：「还要有桌面提醒功能」—— 一轮干完、用户已经切去看别的窗口时，
+    // 系统通知报一声。失败的一轮不走这里（界面里已经红着说了，不再补刀）。
+    const secs = S.startedAt ? ((Date.now() - S.startedAt) / 1000).toFixed(1) : '?';
+    desktopNotify('这一轮忙完了', '用了 ' + secs + ' 秒，点开看看结果');
   }
   refreshSessions();
 }
@@ -1374,16 +1456,33 @@ function onMsg(msg) {
   }
   if (msg.kind === 'state') return;
 
+  // 后台任务登记表整表推送（主进程起落点调用 bgBegin/bgEnd 时发）。
+  // 整表覆盖而不是增量 —— 表极小（同时最多几条），覆盖最简单也不会乱序。
+  if (msg.kind === 'bg') {
+    S.bg = Array.isArray(msg.tasks) ? msg.tasks : [];
+    renderBg();
+    return;
+  }
+
   // `!` shell 的流式输出
   if (msg.kind === 'shell') {
     const t = S.shellEls[msg.id];
-    if (!t) return;
     if (msg.done) {
-      t.code.textContent = '退出码 ' + msg.code;
-      if (msg.code !== 0) t.code.classList.add('bad');
-      delete S.shellEls[msg.id];
+      // 老板 2026-10-13：桌面提醒 —— `!` 命令也在后台跑，跑完（尤其跑砸了）
+      // 而用户已经切走时，系统通知报一声。
+      if (t) {
+        t.code.textContent = '退出码 ' + msg.code;
+        if (msg.code !== 0) t.code.classList.add('bad');
+        delete S.shellEls[msg.id];
+      }
+      desktopNotify(
+        msg.code === 0 ? '命令跑完了' : ('命令跑砸了（退出码 ' + msg.code + '）'),
+        msg.code === 0 ? '点开看输出' : '点开看看哪儿错了');
       scrollEnd();
-    } else if (msg.data) {
+      return;
+    }
+    if (!t) return;
+    if (msg.data) {
       t.out.appendChild(el('span', msg.stream === 'err' ? 'sh-err' : null, esc(msg.data)));
       scrollEnd();
     }
@@ -1586,6 +1685,9 @@ function onMsg(msg) {
 }
 // 验收/调试入口：可以把真实事件流喂进来重跑渲染（test/verify-tools.js 用）
 window.__pixelFeed = onMsg;
+// 验收入口（2026-10-13 桌面提醒）：直接调 desktopNotify 看"设置关没关 / 焦点在不在"
+// 这两条守卫生不生效 —— 不暴露的话这条决策表只能靠真弹系统通知来验，没法自动化。
+window.__pixelNotify = desktopNotify;
 // 验收入口：导出 / 删除结果处理都要能**绕过需要人工点的对话框**单独调用。
 // 它们各自绑着 system 保存框 / confirmBox，不抽出来就永远只能靠肉眼验。
 window.__pixelExport = (seq, outPath, fmt) => exportSession({ seq: seq, title: '' }, outPath, fmt);
@@ -2020,6 +2122,13 @@ function renderTodos() {
 function renderSubs() {
   const box = $('sub-list');
   const empty = $('sub-empty');
+  const cnt = $('sub-count');
+  // 老板 2026-10-13：「子代理也是」—— 标题带数量：运行中 x / 共 y。
+  // 运行中数单独数出来：忙碌时最想先看见的就是"还有几个在跑"。
+  if (cnt) {
+    const running = (S.subs || []).filter((s) => s.state === 'running').length;
+    cnt.textContent = S.subs.length ? ('（' + running + ' 运行中 / 共 ' + S.subs.length + '）') : '';
+  }
   if (!box) return;
   box.innerHTML = '';
   if (!S.subs.length) { empty.classList.remove('hidden'); return; }
@@ -2035,6 +2144,50 @@ function renderSubs() {
       '</span>';
     box.appendChild(d);
   });
+}
+
+/* ---------- 后台任务（老板 2026-10-13：「后台有任务的话我希望可以显示在
+   右上角智能体栏目里面并显示数量」） ----------
+   数据来自主进程的登记表（pi 对话轮次 + `!` shell 命令），整表推送。
+   只画"现在还在跑的"吗？不 —— 刚干完的那条也有价值（看得见刚才干了什么），
+   所以画全表；表里只留运行中的（主进程 bgEnd 就删），干完即消失。
+   计数 = 当前还在跑的数量。 */
+function renderBg() {
+  const box = $('bg-list');
+  const empty = $('bg-empty');
+  const cnt = $('bg-count');
+  const list = S.bg || [];
+  const running = list.filter((x) => x.state === 'running').length;
+  if (cnt) cnt.textContent = list.length ? ('（' + running + ' 个在跑）') : '';
+  if (!box) return;
+  box.innerHTML = '';
+  if (!list.length) {
+    if (empty) { empty.classList.remove('hidden'); empty.textContent = '现在没有后台任务'; }
+    bgTickSync();
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  list.forEach((x) => {
+    const d = el('div', 'agent-item live');
+    const secs = ((Date.now() - (x.at || Date.now())) / 1000).toFixed(0);
+    d.innerHTML =
+      '<span class="ag-n">' + esc(bgKindZh(x.kind)) + '</span>' +
+      (x.label ? '<span class="ag-p">' + esc(x.label) + '</span>' : '') +
+      '<span class="ag-tag">' + (x.state === 'running' ? ('跑着 · ' + secs + 's') : esc(x.state)) + '</span>';
+    box.appendChild(d);
+  });
+  bgTickSync();
+}
+function bgKindZh(k) {
+  return k === 'turn' ? '对话轮次' : k === 'shell' ? '终端命令' : (k || '任务');
+}
+// 「跑着 · Ns」里的 N 要真的在走：有运行中的任务就挂一个 1 秒的轻量重绘，
+// 没有就收摊（别让一个空转的 interval 常驻）。重绘只碰右栏那一小块。
+let bgTick = null;
+function bgTickSync() {
+  const running = (S.bg || []).some((x) => x.state === 'running');
+  if (running && !bgTick) bgTick = setInterval(() => renderBg(), 1000);
+  else if (!running && bgTick) { clearInterval(bgTick); bgTick = null; }
 }
 
 function renderExts() {
@@ -3194,6 +3347,12 @@ if ($('sb-usage')) {
   $('sb-usage').addEventListener('click', showUsageDetail);
   $('sb-usage').style.cursor = 'pointer';
 }
+// 老板 2026-10-13：「加个缓存命中到最下方栏」—— 点缓存那一格也看明细
+// （明细里现在有「缓存命中」一行：读/写/新输入分别多少）。
+if ($('sb-cache')) {
+  $('sb-cache').addEventListener('click', showUsageDetail);
+  $('sb-cache').style.cursor = 'pointer';
+}
 
 /* ============================================================
    设置：真能改（界面 → .pixelagent.json → 重启还在）
@@ -3283,6 +3442,9 @@ function cfgToForm(c) {
   $('set-mascot').checked = c.mascotAnim !== false;
   $('set-compact').checked = c.compact === true;
   $('set-scroll').checked = c.autoScroll !== false;
+  // 老板 2026-10-13：桌面提醒（默认开）。老配置里没这个键 → 主进程 normalizeCfg
+  // 会补默认值 true，所以这里 !== false 的判据是对的。
+  if ($('set-notify')) $('set-notify').checked = c.desktopNotify !== false;
   segOn($('set-enter'), c.enterToSend === false ? '0' : '1');
   segOn($('set-export'), c.exportFormat || 'md');   // 老板 2026-10-12：默认 MD
   segOn($('set-accent'), c.accent || 'lav');
@@ -3302,6 +3464,7 @@ function formToCfg() {
     mascotAnim: $('set-mascot').checked,
     compact: $('set-compact').checked,
     autoScroll: $('set-scroll').checked,
+    desktopNotify: $('set-notify') ? $('set-notify').checked : true,
     enterToSend: segPick($('set-enter')) === '1',
     exportFormat: segPick($('set-export')) || 'md',   // 老板 2026-10-12：默认 MD
     accent: segPick($('set-accent')) || 'lav',
@@ -3610,6 +3773,67 @@ if ($('wl-overlay')) {
 }
 
 /* ============================================================
+   自我扫描体检（老板 2026-10-13：「我让她自己扫描自己，发现很多的缺失」）
+   ------------------------------------------------------------
+   主进程 pi:doctor 逐项实测（模型配置/运行时/扩展/目录可写/工作目录/网络），
+   这里只负责画成一张清单。欢迎页和设置面板共用同一个对话框 ——
+   「精装房」的验收标准就一条：新用户照着这份清单，每项都能自己修好。
+   ============================================================ */
+const DOC_ST = { ok: '正常', warn: '要注意', fail: '缺失' };
+async function runDoctor() {
+  const list = $('doctor-list');
+  const tip = $('doctor-tip');
+  if (!list) return;
+  list.innerHTML = '<div class="empty">正在扫描这台机器（几秒钟）…</div>';
+  if (tip) tip.textContent = '';
+  $('mask-doctor').classList.remove('hidden');
+
+  let r = null;
+  try { r = api ? await api.doctor() : null; } catch (e) { r = null; }
+  if (!r || !r.ok || !Array.isArray(r.items)) {
+    list.innerHTML = '<div class="empty bad">体检没跑起来：' + esc((r && r.error) || '主进程没响应') + '</div>';
+    return;
+  }
+  list.innerHTML = '';
+  r.items.forEach((x) => {
+    const d = el('div', 'doc-item ' + esc(x.state || 'warn'));
+    d.innerHTML =
+      '<span class="doc-ic">' + (x.state === 'ok' ? '✅' : x.state === 'fail' ? '❌' : '⚠️') + '</span>' +
+      '<span class="doc-body">' +
+        '<span class="doc-name">' + esc(x.name) + ' · ' + esc(DOC_ST[x.state] || x.state) + '</span>' +
+        '<span class="doc-detail">' + esc(x.detail || '') + '</span>' +
+        (x.fix ? '<span class="doc-fix">怎么补：' + esc(x.fix) + '</span>' : '') +
+      '</span>';
+    list.appendChild(d);
+  });
+  if (tip) {
+    const bad = r.items.filter((x) => x.state !== 'ok').length;
+    tip.textContent = bad
+      ? ('有 ' + bad + ' 项要注意/缺失 —— 照着「怎么补」逐项处理就行')
+      : '全部正常，这台机器可以直接用';
+  }
+  // 体检入口（验收读这个判断"对话框开没开"）
+  window.__pixelDoctor = { open: true, ready: r.ready, items: r.items };
+}
+function closeDoctor() {
+  $('mask-doctor').classList.add('hidden');
+  window.__pixelDoctor = { open: false };
+}
+if ($('wl-doctor')) $('wl-doctor').addEventListener('click', () => runDoctor());
+if ($('set-doctor')) $('set-doctor').addEventListener('click', () => runDoctor());
+if ($('doctor-ok')) $('doctor-ok').addEventListener('click', closeDoctor);
+if ($('doctor-x')) $('doctor-x').addEventListener('click', closeDoctor);
+if ($('mask-doctor')) $('mask-doctor').addEventListener('click', (e) => { if (e.target === $('mask-doctor')) closeDoctor(); });
+
+// 老板 2026-10-13：「精装房，下载安装就可以用」—— 服务商预设：
+// 选中就把接入地址填好，用户只剩「粘 Key → 拉模型 → 测存」。
+// 选回「— 自己填地址 —」**不清空**已填的地址（用户可能刚手工改过，清了就得重打）。
+if ($('wl-preset')) $('wl-preset').addEventListener('change', () => {
+  const v = $('wl-preset').value;
+  if (v) $('wl-base').value = v;
+});
+
+/* ============================================================
    启动
    ============================================================ */
 syncCursor();
@@ -3619,6 +3843,7 @@ paintModelBar();
 loadCfg();        // 先把设置读回来（主题色 / 紧凑 / 动画 / Enter 行为…），再画界面动作
 renderTodos();
 renderSubs();
+renderBg();       // 老板 2026-10-13：右上角「智能体」栏的后台任务区（先画空态）
 renderExts();
 loadAgents();     // 启动就预读扩展清单（主进程串行排队，不会跟模型目录抢锁）
 setTimeout(() => input.focus(), 120);
@@ -3628,6 +3853,11 @@ if (api) {
     if (i && i.cwd) { $('kv-cwd').textContent = i.cwd; $('kv-cwd').title = i.cwd; }
     if (i && i.firstRun) showWelcome();   // 打包分发：对方第一次用，先接模型
   });
+  // 后台任务快照：主进程的起落点之后也会推 {kind:'bg'} 整表过来，
+  // 这里补一次开局状态 —— 页面加载完之前就起来的任务不会漏。
+  api.bgTasks().then((r) => {
+    if (r && r.ok && Array.isArray(r.tasks)) { S.bg = r.tasks; renderBg(); }
+  }).catch(() => {});
   // 启动后台悄悄查一次 GitHub Release：有新版本 → **像素冒泡说出来**（老板 2026-10-12：
   // "检查更新的提醒我希望是由像素那边说出来提醒"），状态栏徽章作为兜底。
   // 没网/超时/还没发过 Release 都静默（ok:false），绝不打扰使用。

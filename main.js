@@ -7,7 +7,7 @@
 // ============================================================
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell: electronShell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell: electronShell, Notification } = require('electron');
 const { spawn, execFile } = require('child_process');
 const https = require('https');
 const path = require('path');
@@ -92,6 +92,10 @@ const CFG_DEFAULTS = {
   exportFormat: 'md',        // 导出默认格式
   defaultModel: '',         // '' = 用 pi 默认
   defaultThinking: '',      // '' = 用 pi 默认
+  // 老板 2026-10-13：「还要有桌面提醒功能」—— 系统级 Notification。
+  // 只在**窗口不在前台**时提醒（在前边还弹通知是纯骚扰）：一轮对话干完、
+  // 发现新版本、后台命令结束时，如果用户已经切去看别的窗口，就走系统通知。
+  desktopNotify: true,
   // 老板 2026-10-12：「设置里面增加用户画像，给像素做一个性格进去」
   // userName/userProfile：写给 AI 看的用户画像（每个会话的第一轮带上，之后不重复烧 token）
   // persona：像素（吉祥物）的性格，只影响本地气泡语库，不发给 AI
@@ -154,6 +158,7 @@ function normalizeCfg(patch) {
     out.persona = PERSONAS[p.persona] ? p.persona : CFG_DEFAULTS.persona;
   }
   if ('cfgMigratedMd' in p) out.cfgMigratedMd = !!p.cfgMigratedMd;
+  if ('desktopNotify' in p) out.desktopNotify = !!p.desktopNotify;
   // 模型覆盖值：键和值都要过滤。整数、>0、有上限，
   // 免得界面把一个负数或 1e30 写进配置文件，用量条当场变成 0% 或永远 100%。
   if ('modelOverrides' in p) {
@@ -1181,12 +1186,19 @@ ipcMain.handle('pi:ask', async (_e, payload) => {
     onState(state, detail) { send({ kind: 'state', state, detail }); },
     onExit(info) {
       job = null;
+      bgEnd('turn');                 // 后台任务登记：这一轮结束了
       send({
         kind: 'exit', code: info.code, error: info.error || '',
         stderr: (info.stderr || '').slice(-2000)
       });
     }
   });
+  // 后台任务登记（右上角「智能体」栏要能看见"正在忙什么"）：
+  // label 取用户原话的前 24 字，认得出是哪一轮就行。
+  // ⚠ 必须判 job.child：找不到 cli 时 bridge.ask 会**同步**回调 onExit
+  //   （bgEnd 先跑，那时表里还没有这一轮），不加这个守卫就会留下一个
+  //   永远不消失的幽灵任务 —— 右上角计数恒为 1，比不显示更糟。
+  if (job && job.child) bgBegin('turn', 'turn', (text || '').replace(/\s+/g, ' ').trim().slice(0, 24) || '对话轮次');
 
   return { ok: true, attachments: files.length, rejected: att.rejected.concat(pathRejected) };
 });
@@ -1520,6 +1532,7 @@ ipcMain.handle('pi:run-shell', (_e, payload) => {
     return { ok: false, reason: 'SPAWN_FAILED', error: e.message };
   }
   shellJobs[id] = child;
+  bgBegin('shell:' + id, 'shell', cmd.replace(/\s+/g, ' ').trim().slice(0, 40) || 'shell 命令');
 
   const pump = (stream) => (chunk) => send({ kind: 'shell', id, stream, data: String(chunk) });
   child.stdout.setEncoding('utf8');
@@ -1528,11 +1541,13 @@ ipcMain.handle('pi:run-shell', (_e, payload) => {
   child.stderr.on('data', pump('err'));
   child.on('error', (e) => {
     delete shellJobs[id];
+    bgEnd('shell:' + id);
     send({ kind: 'shell', id, stream: 'err', data: String(e.message) + '\n' });
     send({ kind: 'shell', id, done: true, code: -1 });
   });
   child.on('close', (code) => {
     delete shellJobs[id];
+    bgEnd('shell:' + id);
     send({ kind: 'shell', id, done: true, code });
   });
 
@@ -1544,6 +1559,7 @@ ipcMain.handle('pi:shell-kill', (_e, id) => {
   if (!c) return { ok: false };
   try { c.kill(); } catch (e) { /* ignore */ }
   delete shellJobs[String(id)];
+  bgEnd('shell:' + String(id));
   return { ok: true };
 });
 
@@ -1744,13 +1760,11 @@ function verNewer(a, b) {
 }
 
 let updateCache = null;   // 启动后只查一次，重复调用直接给缓存
-// force=true 绕过缓存：渲染层的周期复检要用它 —— 启动时没网会把 ok:false
-// 永久缓存在这里（这轮会话再也查不出更新），周期复检必须能重来一次。
-ipcMain.handle('app:check-update', (_e, opts) => {
-  const force = !!(opts && opts.force);
-  if (updateCache && !force) return updateCache;
-  updateCache = new Promise((resolve) => {
-    const done = (r) => { updateCache = Promise.resolve(r); resolve(r); };
+// 真去 GitHub 拉一次最新 Release（不带缓存语义）。
+// 抽成具名函数是因为有**两个调用方**：app:check-update 的缓存链路、
+// 和 pi:doctor 的网络检查 —— 各写一份 https 必然漂（memory：同一件事不算两遍）。
+function fetchLatestRelease() {
+  return new Promise((resolve) => {
     const req = https.get({
       host: 'api.github.com',
       path: '/repos/' + UPDATE_REPO + '/releases/latest',
@@ -1761,23 +1775,150 @@ ipcMain.handle('app:check-update', (_e, opts) => {
       res.on('data', (c) => { body += c; });
       res.on('end', () => {
         try {
-          if (res.statusCode !== 200) { done({ ok: false }); return; }
+          if (res.statusCode !== 200) { resolve({ ok: false }); return; }
           const j = JSON.parse(body);
           const latest = parseVer(j.tag_name);
           const mine = parseVer(app.getVersion());
-          if (!latest || !mine) { done({ ok: false }); return; }
-          done({ ok: true, hasUpdate: verNewer(latest, mine), latest: j.tag_name });
-        } catch (e) { done({ ok: false }); }
+          if (!latest || !mine) { resolve({ ok: false }); return; }
+          resolve({ ok: true, hasUpdate: verNewer(latest, mine), latest: j.tag_name });
+        } catch (e) { resolve({ ok: false }); }
       });
     });
-    req.on('timeout', () => { req.destroy(); done({ ok: false }); });
-    req.on('error', () => done({ ok: false }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false }); });
+    req.on('error', () => resolve({ ok: false }));
   });
+}
+// force=true 绕过缓存：渲染层的周期复检要用它 —— 启动时没网会把 ok:false
+// 永久缓存在这里（这轮会话再也查不出更新），周期复检必须能重来一次。
+ipcMain.handle('app:check-update', (_e, opts) => {
+  const force = !!(opts && opts.force);
+  if (updateCache && !force) return updateCache;
+  updateCache = fetchLatestRelease();
   return updateCache;
 });
 
 ipcMain.handle('app:open-update-page', () => {
   electronShell.openExternal(UPDATE_PAGE);
+});
+
+// ============================================================
+// 桌面提醒（老板 2026-10-13：「还要有桌面提醒功能」）
+// 系统级 Notification。**只在窗口不在前台时由渲染层发起**（前台还弹通知
+// 是纯骚扰），主进程这里只管"发出去"，不自己决定什么时候发。
+// 渲染层没权限直接 new Notification（contextIsolation），必须过这条 IPC。
+// ============================================================
+ipcMain.handle('app:notify', (_e, p) => {
+  const title = String((p && p.title) || 'PixelAgent');
+  const body = String((p && p.body) || '');
+  try {
+    if (!Notification.isSupported()) return { ok: false, reason: 'UNSUPPORTED' };
+    const n = new Notification({ title, body: body.slice(0, 500), silent: false });
+    n.on('click', () => {
+      // 点通知 → 把窗口带到前台（最小化了就恢复）
+      if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    });
+    n.show();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: 'THREW', error: e.message };
+  }
+});
+
+// ============================================================
+// 后台任务登记（老板 2026-10-13：「后台有任务的话我希望可以显示在
+// 右上角智能体栏目里面并显示数量」）
+// 主进程是唯一知道"什么真的在跑"的地方：pi 对话轮次（job）、`!` shell
+// 命令（shellJobs）都在这里起落。渲染层只负责画。
+//   · bgBegin/bgEnd 由起落点调用，每次变动都整表推给渲染层（数据量极小）；
+//   · pi:bg-tasks 是快照口 —— 渲染层启动时补一次，漏了事件也不丢。
+// ============================================================
+const bgTasks = new Map();   // id -> {id, kind, label, state, at}
+function bgPush() {
+  send({ kind: 'bg', tasks: Array.from(bgTasks.values()) });
+}
+function bgBegin(id, kind, label) {
+  bgTasks.set(String(id), { id: String(id), kind, label: String(label || ''), state: 'running', at: Date.now() });
+  bgPush();
+}
+function bgEnd(id) {
+  if (!bgTasks.delete(String(id))) return;
+  bgPush();
+}
+ipcMain.handle('pi:bg-tasks', () => ({ ok: true, tasks: Array.from(bgTasks.values()) }));
+
+// ============================================================
+// 自我扫描体检（老板 2026-10-13：「我让她自己扫描自己，发现很多的缺失」+
+// 「新电脑新用户安装根本不能立马使用，我要的是精装房」）
+// 把"这台机器现在能不能用、缺什么、怎么补"一次说清。每项都是**实测**
+// （文件在不在、能不能写、进程起没起），不靠推测。
+// 返回 {ok, items:[{key,name,state,detail,fix}], ready} ——
+//   state: ok / warn / fail；ready = 有没有 fail（决定欢迎页要不要强制留人）。
+// ============================================================
+function canWriteDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch (e) { return false; }
+}
+ipcMain.handle('pi:doctor', async () => {
+  const items = [];
+  const push = (key, name, state, detail, fix) => items.push({ key, name, state, detail, fix: fix || '' });
+
+  // ① 模型配置：auth.json 或 models.json 里有 key 才算就绪
+  const st = ensureAgentDir();
+  push('model', '模型配置', st.ready ? 'ok' : 'fail',
+    st.ready ? ('配置目录就绪：' + AGENT_DIR) : '还没有任何模型密钥',
+    st.ready ? '' : '在启动引导里填「接入地址 + API Key」，测通就能聊');
+
+  // ② 运行时：node + pi cli 定位（打包版用内置内核）
+  const loc = bridge.locate();
+  push('runtime', '运行时', loc.cli ? 'ok' : 'fail',
+    loc.cli ? ('内核入口：' + loc.cli) : '找不到 pi 内核入口 cli.js',
+    loc.cli ? '' : '重装 PixelAgent（安装包自带内核）；或设 PIXELAGENT_PI_CLI 指向 cli.js');
+
+  // ③ 捆绑扩展：新机器 AGENT_DIR 是空的，不播种就"不会上网/没有 todo"
+  let extCount = 0;
+  try {
+    const setFile = path.join(AGENT_DIR, 'settings.json');
+    const sj = JSON.parse(fs.readFileSync(setFile, 'utf8'));
+    extCount = (sj && Array.isArray(sj.packages)) ? sj.packages.length : 0;
+  } catch (e) { /* 没有 settings.json 就是 0 */ }
+  if (!IS_PACK) {
+    push('ext', '捆绑扩展', 'ok', '开发版：直接用全局 ~/.pi/agent，扩展本来就在', '');
+  } else if (extCount > 0) {
+    push('ext', '捆绑扩展', 'ok', '已登记 ' + extCount + ' 个扩展（todo/子代理/联网/后台任务…）', '');
+  } else {
+    push('ext', '捆绑扩展', 'warn', '设置里还没登记任何扩展',
+      '重启一次应用会自动播种；或检查安装包是否完整');
+  }
+
+  // ④ 附件目录 / ⑤ 会话目录：拖进来的文件、会话记录都要能落盘
+  push('attdir', '附件目录', canWriteDir(ATT_DIR) ? 'ok' : 'fail',
+    ATT_DIR, canWriteDir(ATT_DIR) ? '' : '建不出来或写不进去：换安装位置或检查磁盘权限/杀软');
+  push('sessdir', '会话目录', canWriteDir(SESSION_DIR) ? 'ok' : 'fail',
+    SESSION_DIR, canWriteDir(SESSION_DIR) ? '' : '建不出来或写不进去：换安装位置或检查磁盘权限/杀软');
+
+  // ⑥ 工作目录：@ 引用文件都从这里找
+  const wdOk = !!cfg.workDir && fs.existsSync(cfg.workDir);
+  push('workdir', '工作目录', wdOk ? 'ok' : 'warn',
+    cfg.workDir || '（未设置）', wdOk ? '' : '在设置里选一个存在的目录（@ 引用文件从这里找）');
+
+  // ⑦ 网络：复用应用更新检查的同一条链路（fetchLatestRelease），顺带报告有没有新版本
+  let upd = null;
+  try { upd = await fetchLatestRelease(); } catch (e) { /* 没网不算机器坏 */ }
+  push('net', '网络（GitHub）', upd && upd.ok ? 'ok' : 'warn',
+    upd && upd.ok ? ('通' + (upd.hasUpdate ? '，而且有新版本 ' + upd.latest : '，已是最新')) : '连不上 GitHub（更新检查/下载安装包会受影响）',
+    upd && upd.ok ? '' : '不影响聊天；要更新就得能连上 github.com');
+
+  // ⑧ 终端 pi 遗产：本机装过终端版 pi 的话，它的配置本该在首次运行时拷过来
+  const legacy = path.join(homeDir(), '.pi', 'agent');
+  if (IS_PACK && fs.existsSync(legacy) && !fs.existsSync(path.join(AGENT_DIR, 'models.json'))) {
+    push('legacy', '终端 pi 配置', 'warn', '发现 ~/.pi/agent 但没接管',
+      '退出后手动把 ~/.pi/agent 下的 auth.json / models.json 拷到 ' + AGENT_DIR);
+  }
+
+  return { ok: true, items, ready: !items.some((x) => x.state === 'fail') };
 });
 
 app.whenReady().then(() => {

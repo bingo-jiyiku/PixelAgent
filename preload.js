@@ -82,6 +82,19 @@ contextBridge.exposeInMainWorld('pixelAPI', {
   checkAppUpdate: (force) => ipcRenderer.invoke('app:check-update', { force: !!force }),
   openUpdatePage: () => ipcRenderer.invoke('app:open-update-page'),
 
+  // 老板 2026-10-13：「还要有桌面提醒功能」—— 系统级 Notification。
+  // 渲染层不直接 new Notification（contextIsolation 没权限），走这条 IPC。
+  // 什么时候发由渲染层决定（默认只在窗口不在前台时发，见 CFG.desktopNotify）。
+  notify: (title, body) => ipcRenderer.invoke('app:notify', { title, body }),
+
+  // 老板 2026-10-13：「我让她自己扫描自己，发现很多的缺失」+「精装房」——
+  // 自我扫描体检：模型配置/运行时/扩展/目录可写/工作目录/网络，逐项给修复指引。
+  doctor: () => ipcRenderer.invoke('pi:doctor'),
+
+  // 后台任务快照（右上角「智能体」栏用）：主进程起落点登记，
+  // 每次变动也会主动推 {kind:'bg'} 过来，这里只是启动时补一次的快照口。
+  bgTasks: () => ipcRenderer.invoke('pi:bg-tasks'),
+
   // 设置：读 / 写 / 恢复默认
   cfg: () => ipcRenderer.invoke('pi:cfg'),
   setCfg: (patch) => ipcRenderer.invoke('pi:cfg-set', patch),

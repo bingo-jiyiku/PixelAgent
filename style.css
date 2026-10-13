@@ -1772,3 +1772,26 @@ body.compact .sess { padding-top: 4px; padding-bottom: 4px; }
 .wl-actions {
   margin-top: 16px; display: flex; gap: 10px; justify-content: flex-end;
 }
+
+/* ============================================================
+   2026-10-13 老板新增：桌面提醒开关 / 缓存命中 / 后台任务 / 体检报告
+   ============================================================ */
+/* 缓存命中（状态栏）：跟其它 sb-item 同规格，命中率高时给个绿色小点亮一下 */
+.sb-cache b { color: var(--ink); }
+.sb-cache.hot b { color: #2e7d32; font-weight: 700; }
+
+/* 体检对话框：要盖在欢迎引导（z-index 95）上面 */
+#mask-doctor { z-index: 96; }
+.dialog-doctor { width: min(560px, 92vw); }
+.doc-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px; border-bottom: 2px solid var(--panel-3);
+}
+.doc-item:last-child { border-bottom: none; }
+.doc-ic { flex: 0 0 auto; font-size: 18px; line-height: 1.4; }
+.doc-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.doc-name { font-size: 18px; color: var(--ink); font-weight: 700; }
+.doc-detail { font-size: 16px; color: var(--muted); word-break: break-all; }
+.doc-fix { font-size: 16px; color: var(--lav-deep); }
+.doc-item.fail .doc-name { color: var(--err); }
+.doc-item.warn .doc-name { color: #b26a00; }
