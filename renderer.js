@@ -3391,12 +3391,16 @@ async function loadCfg() {
 function segOn(host, v) {
   if (!host) return null;
   const btns = host.querySelectorAll('.seg-b');
+  // ★ 必须把整组都过一遍再决定返回谁 —— 原写法「命中就 return b」让被点按钮
+  //   **后面的兄弟**永远轮不到 toggle(false)：点第 3 个，第 4 个的 .on 留着
+  //   ⇒ 一组里两个同时亮（老板 2026-10-14 截图：毒舌+温柔 / 小+标准 同亮）。
+  let picked = null;
   for (const b of btns) {
     const hit = String(b.dataset.v) === String(v);
     b.classList.toggle('on', hit);
-    if (hit) return b;
+    if (hit) picked = b;
   }
-  return btns[0] || null;
+  return picked || btns[0] || null;
 }
 function segPick(host) {
   const b = host && host.querySelector('.seg-b.on');

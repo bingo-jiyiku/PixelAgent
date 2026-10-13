@@ -1225,6 +1225,69 @@ app.whenReady().then(async () => {
   t('标准档：四路联动且 body 不挂 fs-* class', fsMap.m.slice(1).join('|'), '15px|15px|16px|M');
   t('字号档位已还原成启动值（别把测试态留给用户）', await js(`(window.__pixelCfg()||{}).fontSize || 'NONE'`), 's');
 
+  /* ---- 8a-3. 分段按钮的**互斥性**（老板 2026-10-14 截图：一组里同时亮两个）----
+     根因在 renderer.js 的 segOn()：原写法「命中就 return b」⇒ 被点按钮**后面的兄弟**
+     永远轮不到 toggle(false)，点第 3 个则第 4 个的 .on 留着 ⇒ 多个同亮。
+     ⚠ 这里必须**真点 DOM**（click 事件 → 委托监听器 → segOn），不能直接调 segOn —— 
+       直接调等于自己验自己，而 bug 恰恰在「点击怎么走到 segOn、之后状态如何」。
+     ⚠ 断言一律取标量：本文件 t() 是严格相等，数组/对象必红。 */
+  const segExcl = await js(`(function(){
+    var out = {};
+    ['set-persona','set-enter','set-fsize','set-export'].forEach(function(id){
+      var host = document.getElementById(id);
+      if (!host) { out[id] = 'MISSING'; return; }
+      var btns = Array.prototype.slice.call(host.querySelectorAll('.seg-b'));
+      var worst = 0;
+      // ⚠⚠ 必须**升序 + 降序各点一轮**：
+      //   bug 的形状是「点前面的，后面的 .on 清不掉」⇒ 从前往后顺序点，每次都正好把
+      //   前面的清了 ⇒ 升序点**抓不到**（我第一版只升序点，反向验证时性格那条假绿）。
+      //   只有先点后面、再点前面才会两个同亮，所以降序那一轮才是抓 bug 的那轮。
+      var passes = [btns, btns.slice().reverse()];
+      passes.forEach(function(list){
+        list.forEach(function(b){
+          b.click();
+          var onCount = host.querySelectorAll('.seg-b.on').length;
+          if (onCount > worst) worst = onCount;
+        });
+      });
+      // 点最后一个之后，选中的必须真是它（否则"清干净了但没选上"也是坏的）
+      var last = btns[btns.length - 1];
+      last.click();
+      var cur = host.querySelector('.seg-b.on');
+      out[id] = worst + '|' + (cur ? cur.dataset.v : 'NONE') + '|' + last.dataset.v;
+    });
+    return JSON.stringify(out);
+  })()`);
+  console.log('  ℹ 分段按钮互斥性（最多同亮数|当前选中|点的最后一个）: ' + segExcl);
+  const sxl = JSON.parse(segExcl);
+  // 期望恒为 "1|<最后那个的值>|<最后那个的值>"
+  const exclWant = (lastV) => '1|' + lastV + '|' + lastV;
+  t('性格 4 档：点哪个只剩哪个亮（原 bug：毒舌+温柔同亮）', sxl['set-persona'], exclWant('warm'));
+  t('Enter 2 档：点哪个只剩哪个亮', sxl['set-enter'], exclWant('0'));
+  t('字号 3 档：点哪个只剩哪个亮（原 bug：小+标准同亮）', sxl['set-fsize'], exclWant('m'));
+  t('导出 3 档：点哪个只剩哪个亮', sxl['set-export'], exclWant('json'));
+  // 每个 seg 的选项数也顺手锚住（手写清单会漂，从 DOM 现数）
+  t('四个 seg 都存在且选项数对',
+    await js(`['set-persona','set-enter','set-fsize','set-export']
+      .map(function(id){ var h=document.getElementById(id); return h? h.querySelectorAll('.seg-b').length : 'X'; }).join('')`),
+    '4233');
+  // 复原：把三个会落盘的 seg 拨回启动值（别把测试态留给用户）
+  await js(`(function(){
+    var c = window.__pixelCfg() || {};
+    var put = function(id, v){ var h=document.getElementById(id);
+      if (h) h.querySelectorAll('.seg-b').forEach(function(b){ if (String(b.dataset.v)===String(v)) b.click(); }); };
+    put('set-persona', c.persona || 'lively');
+    put('set-enter', c.enterToSend === false ? '0' : '1');
+    put('set-fsize', c.fontSize || 's');
+    put('set-export', c.exportFormat || 'md');
+  })()`);
+  t('互斥性测试后已把 4 个 seg 拨回启动值',
+    await js(`['set-persona','set-enter','set-fsize','set-export'].map(function(id){
+      var h=document.getElementById(id); var c=h&&h.querySelector('.seg-b.on');
+      return c?c.dataset.v:'?'; }).join(',')`),
+    await js(`(function(){ var c=window.__pixelCfg()||{};
+      return [c.persona||'lively', c.enterToSend===false?'0':'1', c.fontSize||'s', c.exportFormat||'md'].join(','); })()`));
+
   /* ---- 8b. 应用更新提醒（老板 2026-10-12：客户机器要有新版本提示）----
      链路：启动时 api.checkAppUpdate() → 主进程读 GitHub Release 公开 API
      → 有新版本时**像素冒泡说出来** + 状态栏徽章兜底。
