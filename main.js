@@ -287,7 +287,7 @@ function ensureAgentDir() {
 // 首次运行播种进 agent 目录：
 //   · 逐包 tmp+rename 拷（中断不留半包）；
 //   · settings.json **只加性**合并 packages，其它键一根头发都不碰（ext-seed.js）；
-//   · USER_DIR/.ext-seeded.json 记"确保过在盘上"的包 —— 用户后来用 pi remove
+//   · AGENT_DIR/.ext-seeded.json 记"确保过在盘上"的包 —— 用户后来用 pi remove
 //     卸掉某个，下次启动不会又被播种回来（没这个标记就会）。
 // 只在打包版跑：开发版 AGENT_DIR 就是全局 ~/.pi/agent，扩展本来就在。
 let extSeedDone = null;
@@ -302,7 +302,15 @@ function seedBundledExtensions() {
     const want = Array.isArray(manifest.packages) ? manifest.packages : [];   // 扩展源（合进 settings）
     const copyList = Array.isArray(manifest.copy) ? manifest.copy : [];       // 全部顶层包（含 200+ 依赖）
     if (!want.length) return;
-    const markerFile = path.join(USER_DIR, '.ext-seeded.json');
+    // 🔴 marker 必须跟**播种目标同源**（都在 AGENT_DIR 下）。
+    // 原先放在 USER_DIR(%APPDATA%\\PixelAgent) —— 那里跟 AGENT_DIR 不是一个根：
+    // 只要 HOME 变了（漫游配置同步过来、重装系统保留 AppData、换用户、测试钩子
+    // PIXELAGENT_HOME），USER_DIR 里标记说"播过了"，AGENT_DIR 里却一个包都没有
+    // ⇒ pi 永远加载不到 subagents / background-tasks / web-access，
+    // 而且体检给出的修复建议（重启一次）也救不回来。
+    // 放回 AGENT_DIR 后两种场景自动分开：换 HOME ⇒ 这儿没标记 ⇒ 播；
+    // 用户自己 pi remove 掉某个 ⇒ 标记还在 ⇒ 不会被播回来（原设计意图）。
+    const markerFile = path.join(AGENT_DIR, '.ext-seeded.json');
     let seeded = [];
     try { seeded = JSON.parse(fs.readFileSync(markerFile, 'utf8')).packages || []; } catch (e) { /* 首次 */ }
     const pending = pendingPackages(want, seeded);

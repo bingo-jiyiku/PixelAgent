@@ -37,6 +37,23 @@ fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({
   packages: ['npm:pi-simplify']
 }, null, 2), 'utf8');
 
+// 🔴 预置"被污染的旧机器"状态（2026-10-13 实测踩到）：
+//   %APPDATA%/PixelAgent/.ext-seeded.json 里记着"六个都播过了"，
+//   而这个 agent 目录（换过 HOME / 漫游配置同步过来 / 重装保留 AppData）盘上一个包都没有。
+//   旧代码把 marker 记在 USER_DIR ⇒ pendingPackages 算出"没 pending" ⇒ 一个扩展都不播，
+//   而且体检给出的修复建议（重启一次）也救不回来 ⇒ 子代理/后台任务/联网永久缺失。
+//   有了这个前置条件，断言「六个扩展仍然落盘」才真的能钉住回归：
+//   把 markerFile 打回 path.join(USER_DIR, ...) 立刻就红。
+fs.writeFileSync(path.join(fakeUserData, '.ext-seeded.json'), JSON.stringify({
+  app: '0.2.0',
+  packages: [
+    'npm:pi-background-tasks', 'npm:pi-subagents', 'npm:pi-hermes-memory',
+    'npm:pi-web-access', 'npm:pi-lens', 'npm:pi-simplify'
+  ],
+  at: '2026-10-12T14:31:36.470Z'
+}, null, 2), 'utf8');
+const staleMarker = path.join(fakeUserData, '.ext-seeded.json');
+
 const SIX = ['pi-background-tasks', 'pi-subagents', 'pi-hermes-memory', 'pi-web-access', 'pi-lens', 'pi-simplify'];
 
 process.env.PIXELAGENT_FORCE_PACKAGED = '1';
@@ -65,7 +82,9 @@ app.whenReady().then(async () => {
   });
 
   // 等播种完成（190MB 拷贝，轮询标记文件，最多 120 秒）
-  const markerFile = path.join(fakeUserData, '.ext-seeded.json');
+  // 🔴 marker 现在必须落在 AGENT_DIR 里（跟播种目标同源）——
+  //   放 USER_DIR 会造成"标记说播过了、盘上零个扩展"，且永远救不回来。
+  const markerFile = path.join(agentDir, '.ext-seeded.json');
   const t0 = Date.now();
   while (!fs.existsSync(markerFile) && Date.now() - t0 < 120000) await sleep(500);
   const seedMs = Date.now() - t0;
@@ -80,7 +99,11 @@ app.whenReady().then(async () => {
   };
 
   console.log('  ℹ 播种耗时 ' + seedMs + 'ms');
-  t('标记文件写下来了（播种跑过了）', fs.existsSync(markerFile), true);
+  t('标记文件写在 AGENT_DIR 里（跟播种目标同源）', fs.existsSync(markerFile), true);
+  // 反向守卫：USER_DIR 那份脏标记必须被**无视**（既不读它算账，也不改写它）
+  const staleNow = fs.existsSync(staleMarker)
+    ? JSON.parse(fs.readFileSync(staleMarker, 'utf8')).app : '(没了)';
+  t('USER_DIR 里的旧标记被无视（没被改写成新账本）', staleNow, '0.2.0');
 
   // ① 六个扩展真的在盘上
   const onDisk = SIX.filter((p) => fs.existsSync(path.join(agentDir, 'npm', 'node_modules', p, 'package.json')));

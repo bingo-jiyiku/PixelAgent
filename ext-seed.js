@@ -15,7 +15,10 @@
 
 /**
  * 还差哪些包没播种：manifest 里有、已播种清单里没有的。
- * 已播种清单来自 USER_DIR/.ext-seeded.json（它记录"确保过在盘上"的包）。
+ * 已播种清单来自 **AGENT_DIR/.ext-seeded.json**（它记录"确保过在盘上"的包）。
+ * ⚠ 必须跟播种目标同源：清单放别处（比如 %APPDATA%）的话，
+ *   换一个 agent 目录时会被误判成"已经播过了"，扩展一个都不播且永远救不回来
+ *   （2026-10-13 实测，见 main.js seedBundledExtensions 里的说明）。
  * 返回原样条目（"npm:pi-web-access" 这种），顺序同 manifest。
  */
 function pendingPackages(manifestPackages, seededPackages) {

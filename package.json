@@ -1,6 +1,6 @@
 {
   "name": "pixelagent",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "复古像素终端风桌面AI助手：Electron 前端 + pi 后端流式对话",
   "main": "main.js",
   "author": "DSH",
