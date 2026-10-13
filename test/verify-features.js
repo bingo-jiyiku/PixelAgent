@@ -376,8 +376,9 @@ app.whenReady().then(async () => {
   const cfgBak = await js(`window.pixelAPI.cfg()`);
   const bakName = (cfgBak && cfgBak.cfg && cfgBak.cfg.userName) || '';
   const bakProf = (cfgBak && cfgBak.cfg && cfgBak.cfg.userProfile) || '';
-  console.log('  ℹ 老板原来的画像设置：称呼=' + JSON.stringify(bakName) + ' 画像=' + JSON.stringify(bakProf) + '（跑完会还回去）');
-  await js(`window.pixelAPI.setCfg({ userName: '称呼甲', userProfile: '画像乙：做跨境电商' })`);
+  const bakPersona = (cfgBak && cfgBak.cfg && cfgBak.cfg.persona) || 'lively';
+  console.log('  ℹ 老板原来的画像设置：称呼=' + JSON.stringify(bakName) + ' 画像=' + JSON.stringify(bakProf) + ' 性格=' + JSON.stringify(bakPersona) + '（跑完会还回去）');
+  await js(`window.pixelAPI.setCfg({ userName: '称呼甲', userProfile: '画像乙：做跨境电商', persona: 'cool' })`);
   await js(`(function(){ window.__exitSeen = 0;
     window.pixelAPI.onMsg(function(m){ if (m && m.kind === 'exit') window.__exitSeen = 1; }); return true; })()`);
 
@@ -401,11 +402,24 @@ app.whenReady().then(async () => {
   t('画像块有明确起止标记（不会被误当成用户说的话）',
     profUser.indexOf('用户画像') >= 0 && profUser.indexOf('画像结束') >= 0, true);
 
+  /* ---- 2c-2. 像素性格：真的发给 AI（老板 2026-10-13「性格不仅仅只是为了好看」）----
+     ★ 为什么必须验：persona 以前只换吉祥物气泡词库，不发给 AI —— 纯装饰。
+       老板要求参考 OpenHanako 的 SOUL.md 思路，让 AI 本身按性格回话。
+       这种"接进 AI prompt"的代码最容易静默坏掉 —— 保存成功、界面上选中态也对，
+       但模型还是按默认腔调回话，肉眼完全看不出来。
+     ★ 断言必须看"发出去的那条 user 消息"里有没有性格标记，不能看模型的回复
+       （模型可能忽略了 prompt，也可能复述了标记 —— 两头都不可靠）。 */
+  t('性格进了第一轮：带上了"像素·高冷"标记', profUser.indexOf('【像素·高冷】') >= 0, true);
+  t('性格进了第一轮：高冷风格描述在里面（不是空标记）',
+    profUser.indexOf('不寒暄不情绪化') >= 0, true);
+  t('画像和性格在同一轮一起注入（不重复烧 token）',
+    profUser.indexOf('用户画像') >= 0 && profUser.indexOf('【像素·') >= 0, true);
+
   // 等这一轮跑完再走 —— 不然 [3] 的 ask 会撞上 BUSY，变成"测试自己把产品测红"
   for (let i = 0; i < 45; i++) { await sleep(1000); if (await js(`window.__exitSeen`)) break; }
   t('画像轮跑完了（否则下面 [3] 会因为 BUSY 假红）', await js(`window.__exitSeen`), 1);
-  // 设置还回去 —— 绝不能把老板自己的画像覆盖成测试值
-  await js(`window.pixelAPI.setCfg({ userName: ${JSON.stringify(bakName)}, userProfile: ${JSON.stringify(bakProf)} })`);
+  // 设置还回去 —— 绝不能把老板自己的画像和性格覆盖成测试值
+  await js(`window.pixelAPI.setCfg({ userName: ${JSON.stringify(bakName)}, userProfile: ${JSON.stringify(bakProf)}, persona: ${JSON.stringify(bakPersona)} })`);
 
   /* ================= 3. 端到端：带图发出去，pi 请求里要有 image 块 ================= */
   console.log('\n[3] 端到端：附件 → 落盘 → pi 收到 image 块');
@@ -1203,12 +1217,12 @@ app.whenReady().then(async () => {
   const fsMap = JSON.parse(fsRender);
   // ⚠ 这个文件的 t() 是**严格相等**，数组/对象传进去永远不等（字面一样也红）。
   // 所以拆成标量：失败时能看出是哪一路没跟着走，而不是只看到一坨 got/want。
-  t('更小档：正文 14px', fsMap.xs[0], '14px');
-  t('更小档：工具/表格/输入框/body 跟着走', fsMap.xs.slice(1).join('|'), '13px|13px|14px|XS');
-  t('小档：正文 16px', fsMap.s[0], '16px');
-  t('小档：工具/表格/输入框/body 跟着走', fsMap.s.slice(1).join('|'), '15px|15px|16px|S');
-  t('标准档：正文 18px', fsMap.m[0], '18px');
-  t('标准档：四路联动且 body 不挂 fs-* class', fsMap.m.slice(1).join('|'), '17px|17px|18px|M');
+  t('更小档：正文 12px', fsMap.xs[0], '12px');
+  t('更小档：工具/表格/输入框/body 跟着走', fsMap.xs.slice(1).join('|'), '11px|11px|12px|XS');
+  t('小档：正文 14px', fsMap.s[0], '14px');
+  t('小档：工具/表格/输入框/body 跟着走', fsMap.s.slice(1).join('|'), '13px|13px|14px|S');
+  t('标准档：正文 16px', fsMap.m[0], '16px');
+  t('标准档：四路联动且 body 不挂 fs-* class', fsMap.m.slice(1).join('|'), '15px|15px|16px|M');
   t('字号档位已还原成启动值（别把测试态留给用户）', await js(`(window.__pixelCfg()||{}).fontSize || 'NONE'`), 's');
 
   /* ---- 8b. 应用更新提醒（老板 2026-10-12：客户机器要有新版本提示）----
@@ -1471,6 +1485,20 @@ app.whenReady().then(async () => {
   t('warm 至少一半的 IDLE 词是自己的',
     !!(personaR && personaR.uniqueRatio && personaR.uniqueRatio.warm >= 0.5), true);
   t('验证完把性格还回去了（不污染后面的截图）', personaR && personaR.restored, true);
+
+  /* ---- 8e-2. 性格真的发给 AI（老板 2026-10-13「性格不仅仅只是为了好看」）----
+     ★ 源码级验"接线"：上面 [2c] 段验的是"发出去的消息里有没有性格标记"，
+       这里是验 main.js 里 PERSONA_PROMPT 真的被 profilePrefixFor 用到了。
+       光有 PERSONA_PROMPT 定义但没被调用 = 纯装饰，老板的原话就是"不只是为了好看"。 */
+  const mainSrc2 = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  t('PERSONA_PROMPT 常量存在（四套性格都有 prompt 片段）',
+    /const\s+PERSONA_PROMPT\s*=/.test(mainSrc2)
+    && /lively:/.test(mainSrc2) && /cool:/.test(mainSrc2)
+    && /sharp:/.test(mainSrc2) && /warm:/.test(mainSrc2), true);
+  t('profilePrefixFor 真的调了 PERSONA_PROMPT（不是定义了没用）',
+    /profilePrefixFor[\s\S]{0,600}PERSONA_PROMPT/.test(mainSrc2), true);
+  t('改了 persona 会重置 profileInjectedFor（下一轮重带，不用等新会话）',
+    /'persona'\s+in\s+patch[\s\S]{0,200}profileInjectedFor\s*=\s*null/.test(mainSrc2), true);
   t('每种性格都有可用的 IDLE/DONE 词库', personaR && personaR.allTablesUsable, true);
 
   /* ---- 8a-2. Esc 必须关掉设置面板，而不是掉进 doAbort（那会误中断正在跑的这轮） ----
